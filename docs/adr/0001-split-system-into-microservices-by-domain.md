@@ -94,7 +94,7 @@ Proposed
 
 **Стек:** Python
 
-Схема архитектуры: <ссылка на диаграмму C4 L2>
+Схема архитектуры: [C4 L2: диаграмма контейнеров](../c4-l2-container-diagram.html)
 
 ## Consequences
 
