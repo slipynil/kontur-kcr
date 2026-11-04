@@ -1,0 +1,1085 @@
+openapi: 3.1.0
+info:
+  title: Контур КЦР — Публичное API (внешний контур)
+  version: 1.0.0
+  summary: Единое внешнее API системы «Контур КЦР» через Gateway / Identity Service.
+  description: |
+    Единое API, которое выходит наружу (к Web App / SPA). Единственная точка входа —
+    nginx → **Gateway / Identity Service (Go)**: он проверяет Bearer JWT и роль,
+    затем проксирует запрос во внутренние микросервисы (см. ADR-0001 и C4 L2).
+    Все остальные сервисы из внешней сети недоступны.
+
+    **Состав — по `spec.md` §3.1–3.4 (редакция 1.1).** Эндпоинты, которые следуют
+    из UI-требований (`spec.md` §4) и сценариев ADR-0001, но не зафиксированы в §3,
+    не описаны — они собраны в разделе «Открытые вопросы» ниже.
+
+    ## Аутентификация и роли
+
+    - Все запросы, кроме `POST /api/v1/auth/login`, требуют заголовок
+      `Authorization: Bearer <JWT>`.
+    - Роли: `ADMIN`, `OPERATOR`. Расширение `x-roles` у операции указывает роли,
+      которым она доступна.
+    - Ошибки доступа: `401` (нет/невалидный токен), `403` (роль не подходит).
+
+    ## Терминология
+
+    Слова «долг», «задолженность», «должник» в API запрещены (`spec.md` §1.2).
+    Используются только «неотправленные документы» / «непереданные оригиналы
+    документов».
+
+    ## Формат ошибок
+
+    Все ошибки возвращают `Error` с машиночитаемым `code`:
+
+    | Код | HTTP | Значение |
+    |-----|------|----------|
+    | `UNAUTHORIZED` | 401 | Токен отсутствует или недействителен |
+    | `FORBIDDEN` | 403 | Роль не имеет доступа к операции |
+    | `NOT_FOUND` | 404 | Объект не найден |
+    | `VALIDATION_ERROR` | 400 | Некорректные параметры запроса |
+    | `INVALID_CREDENTIALS` | 401 | Неверный логин или пароль |
+    | `LOGIN_ALREADY_EXISTS` | 409 | Логин занят |
+    | `CLIENT_ALREADY_TAKEN` | 409 | Клиент закреплён за другим оператором |
+    | `INVALID_STATE` | 409 | Недопустимое состояние объекта |
+    | `INVALID_QUERY` | 400 | Запрос «Отбор словами» не разобран |
+    | `INTERNAL_ERROR` | 500 | Внутренняя ошибка |
+
+    ## Открытые вопросы (не зафиксированы в spec.md, не входят в эту спеку)
+
+    1. **Загрузка Excel и отчёт об импорте** (`spec.md` §3.2, §4.1): публичные пути
+       загрузки `.xlsx`, статуса/отчёта пакета, скачивания файла с ошибками.
+    2. **Освобождение клиента** и **снятие клиента с оператора** администратором
+       (ADR-0001, сценарии оператора и администратора).
+    3. **Пулы на обзвон и очередь свободных клиентов** (`spec.md` §4.3, PR #9).
+    4. **Logout / refresh токена** (PR #1).
+    5. **Пагинация и сортировка** реестра: параметры `page` / `page_size` предложены
+       как конвенция, сортировка не определена.
+
+    Внутренние (межсервисные) контракты — в `docs/api/internal/*.yaml`.
+servers:
+  - url: https://{host}
+    description: Единая внешняя точка входа (nginx → Gateway / Identity).
+    variables:
+      host:
+        default: kcr.example.local
+        description: Имя хоста окружения (тестовые данные, внешний контур недоступен из интернета).
+tags:
+  - name: Auth
+    description: Аутентификация. Обрабатывает Gateway / Identity Service.
+  - name: Users
+    description: Управление пользователями и ролями. Только Admin. Gateway / Identity Service.
+  - name: Imports
+    description: Импорт из Excel. Проксируется в Import Worker.
+  - name: Clients
+    description: Реестр клиентов. Проксируется в Clients Service.
+  - name: OperatorWork
+    description: Рабочее место оператора. Проксируется в Operator Work Service.
+  - name: Assistant
+    description: ИИ-помощник. Проксируется в Assistant Service. Работает только на локальном контексте (spec.md §1.2).
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Аутентификация
+      description: Проверяет логин и пароль, выдаёт JWT и карточку пользователя.
+      security: []
+      x-roles: [ADMIN, OPERATOR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              login: ivanov
+              password: "********"
+      responses:
+        '200':
+          description: Успешная аутентификация.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Неверный логин или пароль.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_CREDENTIALS
+                message: Неверный логин или пароль
+  /api/v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: Список пользователей
+      description: Реестр пользователей с ролями. Только Admin (`spec.md` §3.1).
+      x-roles: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список пользователей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Создать пользователя
+      description: Создание учётной записи с ролью. Только Admin (`spec.md` §3.1).
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+            example:
+              login: petrov
+              password: "********"
+              role: OPERATOR
+      responses:
+        '201':
+          description: Пользователь создан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Логин уже занят.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: LOGIN_ALREADY_EXISTS
+                message: Логин уже занят
+  /api/v1/imports/{batch_id}/rollback:
+    post:
+      tags: [Imports]
+      operationId: rollbackImport
+      summary: Откатить импорт
+      description: |
+        Каскадный откат срезов текущего пакета, если файл был загружен по ошибке
+        (`spec.md` §3.2.3). Проксируется в Import Worker, который удаляет срезы
+        пакета через Clients Service и переводит пакет в статус `ROLLED_BACK`.
+      x-roles: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+      responses:
+        '200':
+          description: Пакет откачен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+              example:
+                id: 3f0b2a1e-8c4d-4c1a-9f2e-6b7d5a4c3e21
+                uploaded_by: 11111111-1111-1111-1111-111111111111
+                filename: reestr_2026_Q1.xlsx
+                status: ROLLED_BACK
+                total_rows: 1200
+                success_count: 1180
+                error_count: 20
+                created_at: "2026-01-15T09:30:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            Недопустимое состояние: пакет уже откачен (`ROLLED_BACK`) или ещё
+            обрабатывается (`PROCESSING`). Семантика отката незавершённого пакета —
+            открытый вопрос.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_STATE
+                message: Пакет уже откачен
+                details:
+                  status: ROLLED_BACK
+  /api/v1/clients:
+    get:
+      tags: [Clients]
+      operationId: listClients
+      summary: Реестр клиентов
+      description: |
+        Общая таблица клиентов с фильтрацией (`spec.md` §3.3). Возвращает бизнес-ключ
+        `kcr_code` (Код КЦР), признаки, последний срез по кварталу и рассчитанную
+        динамику. Один ИНН может иметь несколько Кодов КЦР (`spec.md` §1.2).
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - name: search
+          in: query
+          description: Поиск по Коду КЦР или ИНН (`spec.md` §3.3).
+          schema:
+            type: string
+          example: "6671"
+        - name: dynamics
+          in: query
+          description: |
+            Динамика числа непереданных документов; рассчитывается автоматически
+            по журналу изменений статуса передачи документов — две последние
+            записи последнего квартала (`spec.md` §3.3).
+          schema:
+            $ref: '#/components/schemas/Dynamics'
+          example: GROWING
+        - name: duration
+          in: query
+          description: Длительность непередачи документов.
+          schema:
+            $ref: '#/components/schemas/Duration'
+          example: REPEATED
+        - name: tags
+          in: query
+          description: Признаки клиента, перечисленные через запятую (`spec.md` §3.3).
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Tag'
+          style: form
+          explode: false
+          example: [VIP, NOVICE]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница реестра.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /api/v1/clients/{kcr_code}/snapshots/history:
+    get:
+      tags: [Clients]
+      operationId: listSnapshotHistory
+      summary: Журнал изменения статуса передачи документов
+      description: |
+        Append-only журнал: одна запись на каждое изменение числа непереданных
+        документов при импорте (`spec.md` §2.4). Свежие первыми; используется
+        карточкой клиента (`spec.md` §4.4) и расчётом динамики.
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница журнала изменений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotHistoryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/clients/{kcr_code}/take:
+    post:
+      tags: [OperatorWork]
+      operationId: takeClient
+      summary: Взять клиента в работу
+      description: |
+        Атомарная фиксация клиента за оператором (`spec.md` §1.2, §3.3): защита от
+        race condition на уровне БД (SELECT FOR UPDATE / ACID-транзакция).
+        Если клиент уже закреплён за другим оператором — `409` с именем текущего
+        владельца.
+      x-roles: [OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+      responses:
+        '200':
+          description: Клиент закреплён за текущим оператором.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TakeResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Клиент уже закреплён за другим оператором.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CLIENT_ALREADY_TAKEN
+                message: Клиент уже взят в работу другим оператором
+                details:
+                  assigned_operator_id: 11111111-1111-1111-1111-111111111111
+                  operator_name: petrov
+  /api/v1/clients/{kcr_code}:
+    get:
+      tags: [Clients]
+      operationId: getClientCard
+      summary: Карточка клиента
+      description: |
+        Карточка с полной историей взаимодействия (`spec.md` §3.3, §4.4): профиль
+        и теги, актуальные срезы по кварталам, закрепление, этап. Лента событий и
+        журнал изменений статуса передачи документов — подчинёнными эндпоинтами.
+        Gateway агрегирует данные Clients Service и Operator Work Service.
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+      responses:
+        '200':
+          description: Карточка клиента.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCard'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/clients/{kcr_code}/events:
+    get:
+      tags: [OperatorWork]
+      operationId: listClientEvents
+      summary: Лента событий клиента
+      description: |
+        История взаимодействия (звонки, комментарии, письма, смены этапов,
+        закрепления), свежие первыми (`spec.md` §3.3, §4.4). Включает события
+        прошлых дат (`historical_event_date`).
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница ленты событий.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [OperatorWork]
+      operationId: createClientEvent
+      summary: Добавить событие клиента
+      description: |
+        Добавление события в ленту: результат звонка, комментарий прошлой даты
+        (с ручной датой `historical_event_date`) и другие типы событий
+        (`spec.md` §3.3, §2.4).
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientEventCreate'
+            example:
+              event_type: CALL_RESULT
+              call_result: AGREEMENT
+              promised_date: "2026-02-10"
+              comment_text: Договорились передать оригиналы до 10 февраля
+      responses:
+        '201':
+          description: Событие создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientEvent'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/operator/today:
+    get:
+      tags: [OperatorWork]
+      operationId: getTodayQueue
+      summary: Очередь «Сегодня нужно»
+      description: |
+        Вычисление очереди на сегодня (`spec.md` §3.3): клиенты с истёкшим
+        `promised_date` и клиенты с изменившейся динамикой после нового среза.
+      x-roles: [OPERATOR]
+      responses:
+        '200':
+          description: Очередь «Сегодня нужно».
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodayResponse'
+  /api/v1/assistant/summary/{kcr_code}:
+    get:
+      tags: [Assistant]
+      operationId: getAssistantSummary
+      summary: Сводка «Контекст перед звонком»
+      description: |
+        Генерация текстового блока (5–7 строк) на основе последних 3 срезов и ленты
+        событий (`spec.md` §3.4). Строго на локальном контексте, без внешних
+        передач данных (`spec.md` §1.2).
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+      responses:
+        '200':
+          description: Сводка по клиенту.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSummaryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/assistant/filter-query:
+    post:
+      tags: [Assistant]
+      operationId: assistantFilterQuery
+      summary: "Отбор словами"
+      description: |
+        Разбор естественно-языкового запроса и отбор клиентов под обзвон
+        (`spec.md` §3.4). Вход — запрос вида «Не VIP, непереданных >25%, без
+        изменений»; выход — массив `kcr_code` с текстовыми причинами соответствия.
+      x-roles: [ADMIN, OPERATOR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterQueryRequest'
+            example:
+              query: Не VIP, непереданных >25%, без изменений
+      responses:
+        '200':
+          description: Подобранные клиенты с причинами соответствия.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterQueryResponse'
+        '400':
+          description: Запрос не удалось разобрать.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_QUERY
+                message: Не удалось разобрать текст запроса
+  /api/v1/assistant/chat:
+    post:
+      tags: [Assistant]
+      operationId: assistantChat
+      summary: Вопрос по карточке клиента
+      description: |
+        Ответы на вопросы по истории клиента строго на основе контекста БД, с
+        обязательными ссылками на даты событий (`spec.md` §3.4).
+      x-roles: [ADMIN, OPERATOR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            example:
+              kcr_code: "6671-0042"
+              message: Обещал ли клиент передать оригиналы и когда?
+      responses:
+        '200':
+          description: Ответ ассистента со ссылками на события.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    KcrCode:
+      name: kcr_code
+      in: path
+      required: true
+      description: Код КЦР — первичный бизнес-ключ клиента (`spec.md` §1.2).
+      schema:
+        type: string
+      example: "6671-0042"
+    BatchId:
+      name: batch_id
+      in: path
+      required: true
+      description: Идентификатор пакета импорта (`ImportBatch.id`).
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      description: Номер страницы (с 1).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      description: Размер страницы.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    Forbidden:
+      description: Роль не имеет доступа к операции.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: Недостаточно прав
+    NotFound:
+      description: Объект не найден.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: Объект не найден
+    ValidationError:
+      description: Некорректные параметры запроса.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: Некорректные параметры запроса
+  schemas:
+    Error:
+      type: object
+      description: Единый формат ошибок для всех эндпоинтов.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки (каталог — в описании API).
+        message:
+          type: string
+          description: Сообщение, пригодное для показа пользователю.
+        details:
+          type: object
+          additionalProperties: true
+          description: Контекст ошибки (например, текущий владелец клиента).
+    Role:
+      type: string
+      description: Роль пользователя (`spec.md` §2.1).
+      enum: [ADMIN, OPERATOR]
+    User:
+      type: object
+      description: Пользователь (`spec.md` §2.1).
+      required: [id, login, role, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        login:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    UserCreate:
+      type: object
+      required: [login, password, role]
+      properties:
+        login:
+          type: string
+          description: Уникальный логин.
+        password:
+          type: string
+          format: password
+          description: Пароль; хранится только как `password_hash`.
+        role:
+          $ref: '#/components/schemas/Role'
+    UserListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+        password:
+          type: string
+          format: password
+    LoginResponse:
+      type: object
+      required: [token, token_type, expires_in, user]
+      properties:
+        token:
+          type: string
+          description: "JWT для заголовка `Authorization: Bearer`."
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Время жизни токена, секунды.
+        user:
+          $ref: '#/components/schemas/User'
+    Tag:
+      type: string
+      description: "Признак клиента — справочник тегов (`spec.md` §2.2, docs/db)."
+      enum: [VIP, NOVICE, INTEGRATOR, TECH_PARTNER, MPP, DO_NOT_WORK]
+    ClientStatus:
+      type: string
+      description: Статус клиента (`spec.md` §2.2).
+      enum: [ACTIVE, INACTIVE]
+    Stage:
+      type: string
+      description: Этап работы по клиенту (`spec.md` §2.2).
+      enum: [POOL, IN_WORK, WAIT_DEADLINE, CLAIM, CLOSED]
+    Dynamics:
+      type: string
+      description: Динамика числа непереданных документов между срезами (`spec.md` §3.3).
+      enum:
+        - REDUCING
+        - NO_CHANGE
+        - GROWING
+        - ALL_SUBMITTED
+    NullableDynamics:
+      description: Динамика; `null`, если срезов меньше двух.
+      oneOf:
+        - $ref: '#/components/schemas/Dynamics'
+        - type: "null"
+    Duration:
+      type: string
+      description: Длительность непередачи документов (`spec.md` §3.3).
+      enum: [FIRST_TIME, REPEATED, LONG_DELAY_2Q]
+    QuarterSnapshotBrief:
+      type: object
+      description: Последний срез клиента по кварталу (`spec.md` §2.3).
+      required: [quarter, total_documents, unsubmitted_documents, snapshot_date]
+      properties:
+        quarter:
+          type: string
+          description: Квартал, формат `ГГГГ_QN`.
+          pattern: '^\d{4}_Q[1-4]$'
+          example: "2026_Q1"
+        total_documents:
+          type: integer
+          minimum: 0
+          description: Всего документов; фиксируется при первой загрузке квартала (`spec.md` §1.2).
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+          description: Непереданные документы; обновляется срезами.
+        snapshot_date:
+          type: string
+          format: date
+    ClientListItem:
+      type: object
+      description: Строка общей таблицы клиентов.
+      required: [kcr_code, inn, organization_name, status, tags, current_stage, assigned_operator_id, dynamics, latest_snapshot]
+      properties:
+        kcr_code:
+          type: string
+          description: Код КЦР — первичный бизнес-ключ.
+        inn:
+          type: string
+          description: ИНН; один ИНН может иметь несколько Кодов КЦР.
+        kpp:
+          type: string
+        organization_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+        is_blocked:
+          type: boolean
+        manager_name:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        current_stage:
+          $ref: '#/components/schemas/Stage'
+        assigned_operator_id:
+          type: [string, "null"]
+          format: uuid
+          description: Оператор, за которым закреплён клиент; `null` — клиент свободен.
+        dynamics:
+          $ref: '#/components/schemas/NullableDynamics'
+        latest_snapshot:
+          oneOf:
+            - $ref: '#/components/schemas/QuarterSnapshotBrief'
+            - type: "null"
+          description: Последний срез; `null`, если срезов ещё нет.
+    ClientListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientListItem'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    QuarterSnapshot:
+      type: object
+      description: Актуальный срез квартала (`spec.md` §2.3).
+      required: [kcr_code, quarter, total_documents, unsubmitted_documents, snapshot_date]
+      properties:
+        kcr_code:
+          type: string
+        quarter:
+          type: string
+          pattern: '^\d{4}_Q[1-4]$'
+          example: "2026_Q1"
+        total_documents:
+          type: integer
+          description: Фиксируется при первой загрузке квартала.
+        unsubmitted_documents:
+          type: integer
+          description: Обновляется каждым срезом того же квартала.
+        snapshot_date:
+          type: string
+          format: date
+    ClientAssignmentInfo:
+      type: object
+      description: Активное закрепление; `null`, если клиент свободен (`spec.md` §2.7).
+      required: [operator_id, operator_name, assigned_at]
+      properties:
+        operator_id:
+          type: string
+          format: uuid
+        operator_name:
+          type: string
+          description: Логин оператора (в модели User нет ФИО).
+        assigned_at:
+          type: string
+          format: date-time
+    ClientCard:
+      type: object
+      description: Карточка клиента с полной историей взаимодействия (`spec.md` §3.3, §4.4).
+      required: [kcr_code, inn, organization_name, status, tags, current_stage, assignment, snapshots]
+      properties:
+        kcr_code:
+          type: string
+        inn:
+          type: [string, "null"]
+        kpp:
+          type: [string, "null"]
+        organization_name:
+          type: [string, "null"]
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+        is_blocked:
+          type: boolean
+        manager_name:
+          type: [string, "null"]
+        contacts:
+          type: [object, "null"]
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        current_stage:
+          $ref: '#/components/schemas/Stage'
+        assignment:
+          oneOf:
+            - $ref: '#/components/schemas/ClientAssignmentInfo'
+            - type: "null"
+        snapshots:
+          type: array
+          description: Актуальные срезы по кварталам, свежие первыми.
+          items:
+            $ref: '#/components/schemas/QuarterSnapshot'
+        dynamics:
+          $ref: '#/components/schemas/NullableDynamics'
+    EventListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientEvent'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    SnapshotHistoryRecord:
+      type: object
+      description: Запись журнала изменения статуса передачи документов (`spec.md` §2.4).
+      required: [id, kcr_code, quarter, unsubmitted_documents, import_batch_id, snapshot_date, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        quarter:
+          type: string
+          pattern: '^\d{4}_Q[1-4]$'
+          example: "2026_Q1"
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+          description: Значение непереданных документов после изменения.
+        import_batch_id:
+          type: string
+          format: uuid
+          description: Пакет, вызвавший изменение.
+        snapshot_date:
+          type: string
+          format: date
+        created_at:
+          type: string
+          format: date-time
+    SnapshotHistoryResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SnapshotHistoryRecord'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    EventType:
+      type: string
+      description: Тип события ленты (`spec.md` §2.4).
+      enum: [CALL_RESULT, HISTORICAL_COMMENT, EMAIL_SENT, STAGE_CHANGE, CLAIM_UPDATE, OPERATOR_ASSIGN]
+    CallResult:
+      type: string
+      description: Результат звонка (`spec.md` §2.4).
+      enum: [AGREEMENT, REFUSAL, NO_ANSWER, WRONG_NUMBER]
+    ClientEventCreate:
+      type: object
+      description: Создание события (`spec.md` §3.3).
+      required: [event_type, comment_text]
+      properties:
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+          description: Обязателен при `event_type = CALL_RESULT`.
+        promised_date:
+          type: [string, "null"]
+          format: date
+          description: Обещанный срок передачи оригиналов.
+        comment_text:
+          type: string
+        historical_event_date:
+          type: [string, "null"]
+          format: date-time
+          description: Дата в прошлом; заполняется оператором для «прошлого комментария».
+    ClientEvent:
+      type: object
+      description: Событие ленты клиента (`spec.md` §2.4).
+      required: [id, kcr_code, author_id, event_type, comment_text, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        author_id:
+          type: string
+          format: uuid
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+        promised_date:
+          type: [string, "null"]
+          format: date
+        comment_text:
+          type: string
+        historical_event_date:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    TakeResponse:
+      type: object
+      description: Результат атомарного закрепления (`spec.md` §2.7 `ClientAssignment`).
+      required: [kcr_code, assigned_operator_id, assigned_at]
+      properties:
+        kcr_code:
+          type: string
+        assigned_operator_id:
+          type: string
+          format: uuid
+        assigned_at:
+          type: string
+          format: date-time
+    ImportBatch:
+      type: object
+      description: |
+        Журнал импортов (`spec.md` §2.6). Детальные строки ошибок хранятся в
+        таблице `ImportErrors` и публичным API не отдаются (отчёт об импорте —
+        открытый вопрос).
+      required: [id, uploaded_by, filename, status, total_rows, success_count, error_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        uploaded_by:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        status:
+          type: string
+          enum: [PROCESSING, COMPLETED, ROLLED_BACK, FAILED]
+        total_rows:
+          type: integer
+        success_count:
+          type: integer
+        error_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+    TodayReason:
+      type: string
+      description: Причина попадания клиента в очередь «Сегодня нужно» (`spec.md` §3.3).
+      enum: [PROMISED_DATE_EXPIRED, DYNAMICS_CHANGED]
+    TodayItem:
+      type: object
+      required: [kcr_code, organization_name, inn, reason]
+      properties:
+        kcr_code:
+          type: string
+        organization_name:
+          type: string
+        inn:
+          type: string
+        reason:
+          $ref: '#/components/schemas/TodayReason'
+        promised_date:
+          type: [string, "null"]
+          format: date
+          description: Истёкший обещанный срок (для `PROMISED_DATE_EXPIRED`).
+        dynamics:
+          $ref: '#/components/schemas/NullableDynamics'
+    TodayResponse:
+      type: object
+      required: [items, generated_at]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayItem'
+        generated_at:
+          type: string
+          format: date-time
+    AssistantSummaryResponse:
+      type: object
+      required: [kcr_code, summary, generated_at]
+      properties:
+        kcr_code:
+          type: string
+        summary:
+          type: string
+          description: Сводка «Контекст перед звонком», 5–7 строк (`spec.md` §3.4).
+          example: "VIP-клиент, закреплён за petrov.\nНепереданных документов: 12 из 40 (2026_Q1).\nДинамика: GROWING два среза подряд.\nПоследний звонок 2026-01-28: AGREEMENT, обещал 2026-02-10.\nОбещанный срок истёк."
+        generated_at:
+          type: string
+          format: date-time
+    FilterQueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Запрос на естественном языке.
+          example: Не VIP, непереданных >25%, без изменений
+    FilterQueryResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [kcr_code, reason]
+            properties:
+              kcr_code:
+                type: string
+              reason:
+                type: string
+                description: Текстовая причина соответствия запросу.
+                example: Не VIP, непереданных 32%, динамика NO_CHANGE
+    ChatRequest:
+      type: object
+      required: [kcr_code, message]
+      properties:
+        kcr_code:
+          type: string
+          description: Клиент, по которому задаётся вопрос.
+        message:
+          type: string
+          minLength: 1
+    EventReference:
+      type: object
+      description: Ссылка на событие, на котором основан ответ (`spec.md` §3.4).
+      required: [event_id, event_date]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_date:
+          type: string
+          format: date-time
+          description: Дата события (`historical_event_date`, если заполнена, иначе `created_at`).
+    ChatResponse:
+      type: object
+      required: [answer, event_references]
+      properties:
+        answer:
+          type: string
+          description: Ответ строго на основе контекста БД по клиенту.
+        event_references:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventReference'
+          description: Обязательные ссылки на даты событий; может быть пустым.

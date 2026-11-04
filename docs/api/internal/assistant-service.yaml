@@ -1,0 +1,220 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API — Assistant Service (Python)
+  version: 0.1.0-draft
+  summary: "Локальный ИИ-ассистент: сводка перед звонком, отбор словами, чат по клиенту."
+  description: |
+    **Микросервис:** Assistant Service (Python). MCP Server — внешний инструмент,
+    вне границы системы (как LLM, ADR-0001).
+    **Зона ответственности** (`spec.md` §1.1): генерация сводки «Контекст перед
+    звонком» (5–7 строк), обработка естественного языка для «Отбора словами»,
+    ответы на вопросы по истории клиента строго на основе контекста БД.
+
+    > **Статус: контракт-предложение.** Публичные эндпоинты зафиксированы в
+    > `spec.md` §3.4 и продублированы здесь под префиксом `/internal/v1` — Gateway
+    > проксирует публичные пути на эти операции.
+
+    ## Ограничение безопасности
+
+    **Zero External Data Leakage** (`spec.md` §1.2): персональные данные, ИНН,
+    тексты комментариев и содержимое Excel не передаются во внешние API/LLM;
+    ассистент работает исключительно на локальном провайдере/модели.
+
+    ## Кто вызывает
+
+    | Потребитель | Эндпоинты |
+    |-------------|-----------|
+    | Gateway / Identity (прокси публичного `/api/v1/assistant/*`) | все операции |
+
+    ## Куда вызывает сам
+
+    - **Clients Service**: `GET /internal/v1/clients/{kcr_code}` — клиент и
+      актуальные срезы; `GET /internal/v1/clients/{kcr_code}/snapshots/history` —
+      последние 3 записи журнала истории для сводки (`spec.md` §3.4).
+    - **Operator Work Service**: `GET /internal/v1/clients/{kcr_code}/events` и
+      действия через внешний MCP Server (ADR-0001: MCP Server — внешний
+      инструмент, вызывает только Operator Work Service; перечень инструментов —
+      в `operator-work-service.yaml`).
+
+    ## Открытые вопросы
+
+    1. Идентификация диалога (нужен ли `conversation_id`) и глубина истории чата.
+    2. Лимиты и таймауты локальной модели; поведение при её недоступности.
+    3. Кэширование сводки «Контекст перед звонком» и её сброс при новом срезе.
+    4. Поведение «Отбора словами» при большом числе совпадений (лимит выдачи).
+servers:
+  - url: http://assistant-service:8000/internal/v1
+    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+tags:
+  - name: Assistant
+    description: Операции ИИ-ассистента.
+paths:
+  /assistant/summary/{kcr_code}:
+    get:
+      tags: [Assistant]
+      operationId: getSummary
+      summary: Сводка «Контекст перед звонком»
+      description: |
+        Генерация текстового блока (5–7 строк) на основе последних 3 записей
+        журнала истории срезов и ленты событий (`spec.md` §3.4).
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+      responses:
+        '200':
+          description: Сводка по клиенту.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /assistant/filter-query:
+    post:
+      tags: [Assistant]
+      operationId: filterQuery
+      summary: "Отбор словами"
+      description: |
+        Разбор естественно-языкового запроса (например: «Не VIP, непереданных
+        >25%, без изменений») и отбор клиентов под обзвон (`spec.md` §3.4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterQueryRequest'
+            example:
+              query: Не VIP, непереданных >25%, без изменений
+      responses:
+        '200':
+          description: Совпавшие клиенты с причинами соответствия.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterQueryResponse'
+        '400':
+          description: Запрос не удалось разобрать.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /assistant/chat:
+    post:
+      tags: [Assistant]
+      operationId: chat
+      summary: Вопрос по карточке клиента
+      description: |
+        Ответ на вопрос по истории клиента строго на основе контекста БД, с
+        обязательными ссылками на даты событий (`spec.md` §3.4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            example:
+              kcr_code: "6671-0042"
+              message: Обещал ли клиент передать оригиналы и когда?
+      responses:
+        '200':
+          description: Ответ ассистента.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    KcrCode:
+      name: kcr_code
+      in: path
+      required: true
+      description: Код КЦР — первичный бизнес-ключ клиента.
+      schema:
+        type: string
+      example: "6671-0042"
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    SummaryResponse:
+      type: object
+      required: [kcr_code, summary, generated_at]
+      properties:
+        kcr_code:
+          type: string
+        summary:
+          type: string
+          description: Сводка «Контекст перед звонком», 5–7 строк.
+          example: "VIP-клиент, закреплён за petrov.\nНепереданных документов: 12 из 40 (2026_Q1).\nДинамика: GROWING два среза подряд.\nПоследний звонок 2026-01-28: AGREEMENT, обещал 2026-02-10.\nОбещанный срок истёк."
+        generated_at:
+          type: string
+          format: date-time
+    FilterQueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          example: Не VIP, непереданных >25%, без изменений
+    FilterQueryResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [kcr_code, reason]
+            properties:
+              kcr_code:
+                type: string
+              reason:
+                type: string
+                example: Не VIP, непереданных 32%, динамика NO_CHANGE
+    ChatRequest:
+      type: object
+      required: [kcr_code, message]
+      properties:
+        kcr_code:
+          type: string
+        message:
+          type: string
+          minLength: 1
+    EventReference:
+      type: object
+      description: Ссылка на событие, на котором основан ответ.
+      required: [event_id, event_date]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_date:
+          type: string
+          format: date-time
+          description: "Значение `historical_event_date`, если заполнена, иначе `created_at`."
+    ChatResponse:
+      type: object
+      required: [answer, event_references]
+      properties:
+        answer:
+          type: string
+          description: Ответ строго на основе контекста БД по клиенту.
+        event_references:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventReference'
+          description: Ссылки на даты событий; может быть пустым.

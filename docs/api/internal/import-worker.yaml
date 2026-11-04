@@ -1,0 +1,246 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API — Import Worker (Python)
+  version: 0.1.0-draft
+  summary: Приём Excel-файлов, асинхронная обработка и откат пакетов импорта.
+  description: |
+    **Микросервис:** Import Worker (Python); в контуре также синхронный Import API,
+    который принимает файл и ставит задачу в RabbitMQ (C4 L2, ADR-0001: Import API +
+    Import Worker).
+
+    **Зона ответственности** (`spec.md` §1.1): фоновая асинхронная обработка
+    `.xlsx`, парсинг, валидация по правилам КЦР, логика
+    сохранения/накопления срезов по кварталам, отчёт об импорте, выявление
+    проблемных строк.
+
+    > **Статус: контракт-предложение.** Единственный эндпоинт импорта,
+    > зафиксированный в `spec.md`, — публичный
+    > `POST /api/v1/imports/{batch_id}/rollback` (§3.2.3). Пути приёма файла и
+    > отчёта не зафиксированы — они отмечены `[Предложение]` и продублированы в
+    > открытых вопросах `../public-api.yaml`.
+
+    ## Кто вызывает
+
+    | Потребитель | Эндпоинты |
+    |-------------|-----------|
+    | Gateway / Identity (прокси публичного API) | `POST /imports`, `GET /imports/{batch_id}`, `POST /imports/{batch_id}/rollback` |
+    | RabbitMQ | Worker потребляет задачи импорта |
+
+    ## Куда вызывает сам
+
+    - **Clients Service**: `POST /internal/v1/import/apply` и
+      `POST /internal/v1/import/{batch_id}/rollback` — применить/откатить данные
+      (см. `clients-service.yaml`).
+
+    ## Правила обработки файла (`spec.md` §3.2)
+
+    1. Пропуск строк итогов (по ключевому слову `ИТОГО`).
+    2. Строки без Кода КЦР — отсев в `import_errors`.
+    3. Проверка дробных значений документов и дедупликация строк внутри листа
+       (повторный `kcr_code` в листе — отсев дубля).
+    4. Код КЦР из среза, отсутствующий в реестре, и составные периоды — отсев
+       в `import_errors`.
+    5. Первый срез квартала фиксирует `total_documents`; далее обновляется только
+       `unsubmitted_documents` + запись в журнал истории изменения статуса
+       передачи документов (через Clients Service).
+
+    ## Контракт очереди (RabbitMQ) [Предложение]
+
+    - Очередь: `kcr.import.tasks`.
+    - Сообщение (JSON):
+
+    ```json
+    {
+      "task_id": "0c9a2f0e-6f1a-4b3d-9c8e-1a2b3c4d5e6f",
+      "batch_id": "3f0b2a1e-8c4d-4c1a-9f2e-6b7d5a4c3e21",
+      "storage_key": "imports/2026/01/3f0b2a1e.xlsx",
+      "filename": "reestr_2026_Q1.xlsx",
+      "uploaded_by": "11111111-1111-1111-1111-111111111111",
+      "created_at": "2026-01-15T09:30:00Z"
+    }
+    ```
+
+    - Worker по завершении обновляет статус пакета: `PROCESSING` → `COMPLETED`
+      или `FAILED` (`spec.md` §2.5); откат переводит в `ROLLED_BACK`.
+
+    ## Открытые вопросы
+
+    1. Публичные пути загрузки файла, статуса и скачивания `.xlsx` с ошибками
+       (`spec.md` §4.1) — зафиксировать в `public-api.yaml`.
+    2. Можно ли откатывать пакет в статусе `PROCESSING` / `FAILED`.
+    3. Ретраи и DLQ для упавших задач; идемпотентность повторной обработки.
+    4. Хранение исходных файлов (S3-совместимое хранилище / диск) и срок жизни.
+servers:
+  - url: http://import-api:8000/internal/v1
+    description: Импорт-API, внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+tags:
+  - name: Imports
+    description: Пакеты импорта.
+paths:
+  /imports:
+    post:
+      tags: [Imports]
+      operationId: uploadImport
+      summary: Загрузить Excel-файл [Предложение]
+      description: |
+        Приём `.xlsx`, создание пакета (`ImportBatch`, `spec.md` §2.5) в статусе
+        `PROCESSING` и постановка задачи в очередь `kcr.import.tasks`. Отвечает
+        сразу, обработка идёт фоном (C4 L2). Публичный путь не зафиксирован в
+        `spec.md` — см. открытый вопрос 1.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Excel-файл `.xlsx`.
+      responses:
+        '202':
+          description: Файл принят в обработку.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+        '400':
+          description: Файл не передан или не является `.xlsx`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /imports/{batch_id}:
+    get:
+      tags: [Imports]
+      operationId: getImport
+      summary: Отчёт о пакете [Предложение]
+      description: |
+        Сводка импорта для дашборда (`spec.md` §4.1): счётчики успешно/ошибок и
+        строки `import_errors` с причинами отсева (для виджета скачивания
+        `.xlsx` с ошибками).
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Пакет найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+        '404':
+          description: Пакет не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /imports/{batch_id}/rollback:
+    post:
+      tags: [Imports]
+      operationId: rollbackImport
+      summary: Откатить импорт
+      description: |
+        Обрабатывает публичный `POST /api/v1/imports/{batch_id}/rollback`
+        (`spec.md` §3.2.3) по undo-информации пакета (`ImportBatchUndo`):
+        срезы, **созданные** пакетом, удаляются; **обновлённые** —
+        восстанавливаются к прежним значениям; записи журнала истории пакета
+        удаляются (всё через `POST /internal/v1/import/{batch_id}/rollback`
+        Clients Service). Пакет переводится в статус `ROLLED_BACK`.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Пакет откачен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+        '404':
+          description: Пакет не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            Недопустимое состояние пакета (уже `ROLLED_BACK` или ещё
+            `PROCESSING`) — открытый вопрос 2.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    UserIdHeader:
+      name: X-User-Id
+      in: header
+      required: true
+      description: Пользователь, загрузивший файл; проставляется Gateway.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    ImportErrorRow:
+      type: object
+      required: [row_number, reason]
+      properties:
+        row_number:
+          type: integer
+        kcr_code:
+          type: [string, "null"]
+        reason:
+          type: string
+          example: В строке отсутствует Код КЦР
+    ImportBatch:
+      type: object
+      description: |
+        Журнал импортов (`spec.md` §2.6), 1 файл = 1 пакет. `error_log` —
+        развёрнутые строки из таблицы `import_errors` для дашборда.
+      required: [id, uploaded_by, filename, status, total_rows, success_count, error_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        uploaded_by:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        status:
+          type: string
+          enum: [PROCESSING, COMPLETED, ROLLED_BACK, FAILED]
+        total_rows:
+          type: integer
+        success_count:
+          type: integer
+        error_count:
+          type: integer
+        error_log:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportErrorRow'
+        created_at:
+          type: string
+          format: date-time

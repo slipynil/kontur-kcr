@@ -1,0 +1,519 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API — Clients Service (Python)
+  version: 0.1.0-draft
+  summary: Реестр клиентов и история срезов для остальных микросервисов.
+  description: |
+    **Микросервис:** Clients Service (Python).
+    **Зона ответственности** (`spec.md` §1.1, ADR-0001): реестр клиентов (Код КЦР,
+    ИНН, КПП, признаки через справочник тегов), управление статусами клиентов,
+    актуальные срезы по кварталам и **журнал истории изменения статуса передачи
+    документов**, автоматический расчёт динамики.
+
+    > **Статус: контракт-предложение.** В `spec.md` внутренние пути не зафиксированы;
+    > взаимодействие следует из C4 L2 («Import Worker загружает клиентов и срезы в
+    > Clients Service», «Operator Work Service запрашивает данные клиентов у Clients
+    > Service»). Пометка `[Предложение]` — обсудить перед реализацией.
+
+    ## Кто вызывает
+
+    | Потребитель | Эндпоинты | Основание |
+    |-------------|-----------|-----------|
+    | Import Worker | `POST /import/apply`, `POST /import/{batch_id}/rollback` | загрузка и откат срезов (C4 L2, `spec.md` §3.2) |
+    | Operator Work Service | `GET /clients`, `GET /clients/{kcr_code}` | данные клиентов для процесса обзвона (C4 L2) |
+    | Assistant Service | `GET /clients/{kcr_code}`, `GET /clients/{kcr_code}/snapshots/history` | клиент, срезы и последние записи журнала для сводки (`spec.md` §3.4) |
+    | Gateway / Identity | прокси публичных `GET /api/v1/clients`, `GET /api/v1/clients/{kcr_code}`, `GET /api/v1/clients/{kcr_code}/snapshots/history` | `spec.md` §3.3 |
+
+    ## Ключевые правила данных
+
+    - `kcr_code` — первичный бизнес-ключ; один ИНН может иметь несколько Кодов КЦР.
+    - `total_documents` за квартал фиксируется при **первой** загрузке квартала и не
+      перезаписывается; дальше меняется только `unsubmitted_documents`
+      (`spec.md` §1.2, §3.2).
+    - Каждое изменение `unsubmitted_documents` фиксируется записью append-only
+      журнала `quarter_snapshot_history` (`spec.md` §2.4) — на нём считаются
+      динамика (две последние записи последнего квартала) и «последние N срезов».
+    - Закрепление за оператором и этап работы данными этого сервиса **не владеют** —
+      их агрегирует Gateway из Operator Work Service (`spec.md` §2.7, §2.8).
+    - Терминология: только «непереданные документы» (`spec.md` §1.2).
+
+    ## Открытые вопросы
+
+    1. Поведение импорта для уже существующего `kcr_code`: какие поля клиента
+       обновляются, что происходит с `raw_work_status` и тегами.
+    2. Материализация динамики (считать по журналу на лету или пересчитывать
+       после импорта в служебное поле).
+    3. Удаление клиента при импорте: допускается ли и что происходит с клиентом
+       в работе у оператора (ADR-0001, следствие 2).
+servers:
+  - url: http://clients-service:8000/internal/v1
+    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+tags:
+  - name: Registry
+    description: Чтение реестра клиентов.
+  - name: Import
+    description: Применение и откат данных импорта. Вызывает только Import Worker.
+paths:
+  /clients:
+    get:
+      tags: [Registry]
+      operationId: listClients
+      summary: Поиск по реестру
+      description: |
+        Те же фильтры, что у публичного `GET /api/v1/clients` (`spec.md` §3.3).
+        Используется Gateway (прокси), Operator Work Service и Assistant Service
+        (отбор клиентов под обзвон).
+      parameters:
+        - name: search
+          in: query
+          description: Поиск по Коду КЦР или ИНН.
+          schema:
+            type: string
+        - name: dynamics
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dynamics'
+        - name: duration
+          in: query
+          schema:
+            $ref: '#/components/schemas/Duration'
+        - name: tags
+          in: query
+          description: Признаки клиента через запятую.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Tag'
+          style: form
+          explode: false
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Страница реестра.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientListResponse'
+  /clients/{kcr_code}:
+    get:
+      tags: [Registry]
+      operationId: getClient
+      summary: Карточка клиента с историей срезов
+      description: |
+        Клиент и его срезы по кварталам (свежие первыми). Operator Work Service
+        использует карточку для очередей; Assistant Service — для сводки «Контекст
+        перед звонком» (последние 3 среза, `spec.md` §3.4).
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - name: snapshots_limit
+          in: query
+          description: Сколько последних срезов вернуть.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 8
+      responses:
+        '200':
+          description: Карточка клиента.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCard'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /clients/{kcr_code}/snapshots/history:
+    get:
+      tags: [Registry]
+      operationId: getSnapshotHistory
+      summary: Журнал изменения статуса передачи документов
+      description: |
+        Append-only журнал `quarter_snapshot_history` (`spec.md` §2.4): одна
+        запись на каждое изменение числа непереданных документов. Используется
+        Assistant Service («последние 3 записи» сводки, `spec.md` §3.4) и
+        Gateway (публичный журнал карточки клиента).
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - name: limit
+          in: query
+          description: Сколько последних записей вернуть.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Записи журнала, свежие первыми.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SnapshotHistoryRecord'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /import/apply:
+    post:
+      tags: [Import]
+      operationId: applyImport
+      summary: Применить пакет импорта [Предложение]
+      description: |
+        Атомарно применяет распарсенные данные Excel-файла: создаёт/обновляет
+        клиентов и срезы по кварталам. Вызывает Import Worker (C4 L2).
+
+        Правила (`spec.md` §3.2):
+        - если записи `(kcr_code, quarter)` нет — фиксируются `total_documents` и
+          `unsubmitted_documents` **+ создаётся первая запись журнала истории**;
+        - если запись есть — `total_documents` **не** перезаписывается (в т.ч. при
+          пустом значении в новом файле), обновляется только
+          `unsubmitted_documents` **+ добавляется запись журнала истории**.
+
+        Валидация строк (отсев `ИТОГО`, пустой Код КЦР, дубликаты внутри листа,
+        коды вне реестра, составные периоды, дробные значения) выполняется на
+        стороне Import Worker до вызова.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportApplyRequest'
+      responses:
+        '200':
+          description: Пакет применён; статистика изменений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportApplyResponse'
+        '400':
+          description: Некорректные данные пакета.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /import/{batch_id}/rollback:
+    post:
+      tags: [Import]
+      operationId: rollbackImport
+      summary: Откатить пакет [Предложение]
+      description: |
+        Каскадный откат пакета по undo-информации (`spec.md` §3.2.3): записи,
+        **созданные** пакетом, удаляются; **обновлённые** — восстанавливаются
+        (прежние `unsubmitted_documents`, `snapshot_date`, `import_batch_id`);
+        записи журнала истории, добавленные пакетом, удаляются.
+        Вызывает Import Worker при обработке публичного
+        `POST /api/v1/imports/{batch_id}/rollback`.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Пакет откачен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportRollbackResponse'
+        '404':
+          description: Пакет не найден или срезов у него нет.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    KcrCode:
+      name: kcr_code
+      in: path
+      required: true
+      description: Код КЦР — первичный бизнес-ключ клиента.
+      schema:
+        type: string
+      example: "6671-0042"
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    Tag:
+      type: string
+      enum: [VIP, NOVICE, INTEGRATOR, TECH_PARTNER, MPP, DO_NOT_WORK]
+    ClientStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE]
+    Dynamics:
+      type: string
+      enum: [REDUCING, NO_CHANGE, GROWING, ALL_SUBMITTED]
+    Duration:
+      type: string
+      enum: [FIRST_TIME, REPEATED, LONG_DELAY_2Q]
+    QuarterSnapshot:
+      type: object
+      description: |
+        Актуальный срез квартала (`spec.md` §2.3); PK в БД — (`kcr_code`, `quarter`).
+      required: [kcr_code, quarter, total_documents, unsubmitted_documents, import_batch_id, snapshot_date]
+      properties:
+        kcr_code:
+          type: string
+        quarter:
+          type: string
+          pattern: '^\d{4}_Q[1-4]$'
+          example: "2026_Q1"
+        total_documents:
+          type: integer
+          minimum: 0
+          description: Фиксируется при первой загрузке квартала.
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+        import_batch_id:
+          type: string
+          format: uuid
+        snapshot_date:
+          type: string
+          format: date
+    Client:
+      type: object
+      description: |
+        Клиент реестра (`spec.md` §2.2). Закрепление и этап не входят — ими
+        владеет Operator Work Service (`spec.md` §2.7, §2.8); агрегирует Gateway.
+      required: [kcr_code, inn, organization_name, status, tags]
+      properties:
+        kcr_code:
+          type: string
+        inn:
+          type: string
+        kpp:
+          type: string
+        organization_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+        is_blocked:
+          type: boolean
+        manager_name:
+          type: string
+        contacts:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+    ClientCard:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/Client'
+      properties:
+        snapshots:
+          type: array
+          description: Актуальные срезы по кварталам, свежие первыми.
+          items:
+            $ref: '#/components/schemas/QuarterSnapshot'
+        dynamics:
+          description: |
+            Динамика: две последние записи журнала истории последнего квартала;
+            `null`, если запись в квартале одна (первая загрузка).
+          oneOf:
+            - $ref: '#/components/schemas/Dynamics'
+            - type: "null"
+    SnapshotHistoryRecord:
+      type: object
+      description: Запись журнала изменения статуса передачи документов (`spec.md` §2.4).
+      required: [id, kcr_code, quarter, unsubmitted_documents, import_batch_id, snapshot_date, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        quarter:
+          type: string
+          pattern: '^\d{4}_Q[1-4]$'
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+          description: Значение после изменения.
+        import_batch_id:
+          type: string
+          format: uuid
+        snapshot_date:
+          type: string
+          format: date
+        created_at:
+          type: string
+          format: date-time
+    ClientListItem:
+      type: object
+      description: |
+        Строка реестра. Закрепление и этап (`spec.md` §2.7, §2.8) добавляет
+        Gateway из Operator Work Service — этим сервисом не отдаются.
+      required: [kcr_code, inn, organization_name, status, tags]
+      properties:
+        kcr_code:
+          type: string
+        inn:
+          type: string
+        organization_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        dynamics:
+          oneOf:
+            - $ref: '#/components/schemas/Dynamics'
+            - type: "null"
+        latest_snapshot:
+          oneOf:
+            - type: object
+              required: [quarter, total_documents, unsubmitted_documents, snapshot_date]
+              properties:
+                quarter:
+                  type: string
+                total_documents:
+                  type: integer
+                unsubmitted_documents:
+                  type: integer
+                snapshot_date:
+                  type: string
+                  format: date
+            - type: "null"
+    ClientListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientListItem'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    ImportApplyRequest:
+      type: object
+      description: Распарсенные и провалидированные данные одного Excel-файла.
+      required: [batch_id, uploaded_by, items]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+          description: Идентификатор пакета (`ImportBatch.id`, `spec.md` §2.5).
+        uploaded_by:
+          type: string
+          format: uuid
+          description: Пользователь, загрузивший файл.
+        items:
+          type: array
+          minItems: 1
+          description: Одна строка листа = один клиент + один срез.
+          items:
+            type: object
+            required: [client, snapshot]
+            properties:
+              client:
+                type: object
+                required: [kcr_code]
+                properties:
+                  kcr_code:
+                    type: string
+                  inn:
+                    type: string
+                  kpp:
+                    type: string
+                  organization_name:
+                    type: string
+                  status:
+                    $ref: '#/components/schemas/ClientStatus'
+                  tags:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+              snapshot:
+                type: object
+                required: [quarter, unsubmitted_documents]
+                properties:
+                  quarter:
+                    type: string
+                    pattern: '^\d{4}_Q[1-4]$'
+                    example: "2026_Q1"
+                  total_documents:
+                    type: [integer, "null"]
+                    minimum: 0
+                    description: |
+                      Число документов строки файла. Применяется только при первом
+                      срезе квартала; `null`/отсутствие — сохранить прежнее значение.
+                  unsubmitted_documents:
+                    type: integer
+                    minimum: 0
+                  snapshot_date:
+                    type: string
+                    format: date
+                    description: Дата среза (по умолчанию — дата загрузки).
+    ImportApplyResponse:
+      type: object
+      required: [created_clients, updated_clients, created_snapshots, updated_snapshots, created_history_records]
+      properties:
+        created_clients:
+          type: integer
+        updated_clients:
+          type: integer
+        created_snapshots:
+          type: integer
+        updated_snapshots:
+          type: integer
+        created_history_records:
+          type: integer
+          description: Записей журнала истории добавлено (по одной на каждую строку пакета).
+    ImportRollbackResponse:
+      type: object
+      required: [batch_id, removed_snapshots, restored_snapshots, removed_history_records]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        removed_snapshots:
+          type: integer
+          description: Срезов, созданных пакетом, удалено.
+        restored_snapshots:
+          type: integer
+          description: Срезов, обновлённых пакетом, восстановлено к прежним значениям.
+        removed_history_records:
+          type: integer
+          description: Записей журнала истории пакета удалено.

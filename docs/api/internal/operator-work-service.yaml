@@ -1,0 +1,350 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API — Operator Work Service (Python)
+  version: 0.1.0-draft
+  summary: "Процесс обзвона: закрепление клиентов, лента событий, очередь «Сегодня нужно»."
+  description: |
+    **Микросервис:** Operator Work Service (Python).
+    **Зона ответственности** (`spec.md` §1.1, ADR-0001): формирование приоритетных
+    списков и очередей «Сегодня нужно», лента событий, логика отбора базы под
+    квоты, взятие/освобождение клиентов, фиксация звонков.
+
+    > **Статус: контракт-предложение.** Публичные эндпоинты сервиса зафиксированы в
+    > `spec.md` §3.3 и продублированы здесь под префиксом `/internal/v1` — Gateway
+    > проксирует публичные пути на эти операции. Пометка `[Предложение]` — обсудить
+    > перед реализацией.
+
+    ## Кто вызывает
+
+    | Потребитель | Эндпоинты | Основание |
+    |-------------|-----------|-----------|
+    | Gateway / Identity (прокси) | все операции | `spec.md` §3.3 |
+    | Assistant Service (через внешний MCP Server) | действия и чтение истории клиента | ADR-0001: MCP Server — внешний инструмент, работает только через этот сервис |
+
+    ## Куда вызывает сам
+
+    - **Clients Service**: `GET /internal/v1/clients`, `GET /internal/v1/clients/{kcr_code}`
+      — данные клиентов для очередей (C4 L2).
+    - **Gateway / Identity**: `GET /internal/v1/users/{user_id}` — имя оператора
+      для ответа `409 CLIENT_ALREADY_TAKEN` (`spec.md` §3.3).
+
+    ## MCP-инструменты ассистента [Предложение]
+
+    MCP Server — внешний инструмент, вне границы системы (как LLM, ADR-0001).
+    Assistant Service вызывает его инструменты; MCP Server выполняет
+    операторские сценарии только через этот сервис:
+
+    | Инструмент MCP | Операция этого API |
+    |----------------|--------------------|
+    | `take_client` | `POST /clients/{kcr_code}/take` |
+    | `fix_call` | `POST /clients/{kcr_code}/events` |
+    | `get_client_events` | `GET /clients/{kcr_code}/events` |
+    | `get_today_queue` | `GET /operator/today` |
+
+    ## Ключевые правила
+
+    - `POST /clients/{kcr_code}/take` атомарен: SELECT FOR UPDATE / ACID-транзакция
+      (`spec.md` §1.2); занятый клиент даёт `409` с именем владельца.
+    - Заголовки `X-User-Id` / `X-Request-Id` проставляет Gateway; MCP-сервер
+      ассистента передаёт их от имени пользователя, от которого выполняется действие.
+
+    ## Открытые вопросы
+
+    1. Освобождение клиента оператором и снятие клиента с оператора администратором
+       (ADR-0001, сценарии) — эндпоинты не зафиксированы в `spec.md`.
+    2. Пулы на обзвон и передача пулов от администратора (`spec.md` §4.3, PR #9).
+    3. Переходы `current_stage` (`STAGE_CHANGE`, `spec.md` §2.8): допустимые
+       последовательности этапов и автоматические переходы.
+
+    ## Решено (соответствует docs/db)
+
+    - Закрепление и этап хранятся в этой БД: `client_assignments` (одно активное
+      закрепление на клиента) и `client_stages` — история (`spec.md` §2.7, §2.8).
+    - Лента событий `GET /api/v1/clients/{kcr_code}/events` зафиксирована в
+      публичном API (`spec.md` §3.3).
+servers:
+  - url: http://operator-work-service:8000/internal/v1
+    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+tags:
+  - name: Assignment
+    description: Закрепление клиентов за операторами.
+  - name: Events
+    description: Лента событий клиента.
+  - name: Queue
+    description: Очередь «Сегодня нужно».
+paths:
+  /clients/{kcr_code}/take:
+    post:
+      tags: [Assignment]
+      operationId: takeClient
+      summary: Взять клиента в работу
+      description: |
+        Атомарная фиксация клиента за оператором (`spec.md` §3.3). Если
+        `assigned_operator_id` уже занят другим оператором — `409` с именем
+        текущего владельца.
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - $ref: '#/components/parameters/UserIdHeader'
+      responses:
+        '200':
+          description: Клиент закреплён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TakeResponse'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Клиент уже закреплён за другим оператором.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CLIENT_ALREADY_TAKEN
+                message: Клиент уже взят в работу другим оператором
+                details:
+                  assigned_operator_id: 11111111-1111-1111-1111-111111111111
+                  operator_name: petrov
+  /clients/{kcr_code}/events:
+    get:
+      tags: [Events]
+      operationId: listClientEvents
+      summary: Лента событий клиента [Предложение]
+      description: |
+        История событий клиента: используется карточкой клиента (`spec.md` §4.3),
+        Assistant Service (контекст для сводки и чата) и MCP-инструментом
+        `get_client_events`.
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Страница ленты событий, свежие первыми.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventListResponse'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [Events]
+      operationId: createClientEvent
+      summary: Добавить событие клиента
+      description: |
+        Фиксация звонка, комментария прошлой даты (ручная `historical_event_date`)
+        и других событий (`spec.md` §3.3, §2.4).
+      parameters:
+        - $ref: '#/components/parameters/KcrCode'
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientEventCreate'
+      responses:
+        '201':
+          description: Событие создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientEvent'
+        '400':
+          description: Некорректное событие.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /operator/today:
+    get:
+      tags: [Queue]
+      operationId: getTodayQueue
+      summary: Очередь «Сегодня нужно»
+      description: |
+        Вычисление очереди (`spec.md` §3.3): клиенты с истёкшим `promised_date` и
+        клиенты с изменившейся динамикой после нового среза. Данные клиентов
+        догружаются из Clients Service.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      responses:
+        '200':
+          description: Очередь на сегодня.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodayResponse'
+components:
+  parameters:
+    KcrCode:
+      name: kcr_code
+      in: path
+      required: true
+      description: Код КЦР — первичный бизнес-ключ клиента.
+      schema:
+        type: string
+      example: "6671-0042"
+    UserIdHeader:
+      name: X-User-Id
+      in: header
+      required: true
+      description: |
+        Пользователь, от имени которого выполняется действие: проставляется
+        Gateway или MCP-сервером ассистента.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    EventType:
+      type: string
+      enum: [CALL_RESULT, HISTORICAL_COMMENT, EMAIL_SENT, STAGE_CHANGE, CLAIM_UPDATE, OPERATOR_ASSIGN]
+    CallResult:
+      type: string
+      enum: [AGREEMENT, REFUSAL, NO_ANSWER, WRONG_NUMBER]
+    ClientEventCreate:
+      type: object
+      required: [event_type, comment_text]
+      properties:
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+          description: Обязателен при `event_type = CALL_RESULT`.
+        promised_date:
+          type: [string, "null"]
+          format: date
+        comment_text:
+          type: string
+        historical_event_date:
+          type: [string, "null"]
+          format: date-time
+          description: Заполняется оператором для «прошлого комментария».
+    ClientEvent:
+      type: object
+      description: Событие ленты (`spec.md` §2.4).
+      required: [id, kcr_code, author_id, event_type, comment_text, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        author_id:
+          type: string
+          format: uuid
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+        promised_date:
+          type: [string, "null"]
+          format: date
+        comment_text:
+          type: string
+        historical_event_date:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    EventListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientEvent'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    TakeResponse:
+      type: object
+      required: [kcr_code, assigned_operator_id, taken_at]
+      properties:
+        kcr_code:
+          type: string
+        assigned_operator_id:
+          type: string
+          format: uuid
+        taken_at:
+          type: string
+          format: date-time
+    Dynamics:
+      type: string
+      enum: [REDUCING, NO_CHANGE, GROWING, ALL_SUBMITTED]
+    TodayReason:
+      type: string
+      enum: [PROMISED_DATE_EXPIRED, DYNAMICS_CHANGED]
+    TodayItem:
+      type: object
+      required: [kcr_code, organization_name, inn, reason]
+      properties:
+        kcr_code:
+          type: string
+        organization_name:
+          type: string
+        inn:
+          type: string
+        reason:
+          $ref: '#/components/schemas/TodayReason'
+        promised_date:
+          type: [string, "null"]
+          format: date
+          description: Истёкший обещанный срок (для `PROMISED_DATE_EXPIRED`).
+        dynamics:
+          oneOf:
+            - $ref: '#/components/schemas/Dynamics'
+            - type: "null"
+          description: Новая динамика после среза (для `DYNAMICS_CHANGED`).
+    TodayResponse:
+      type: object
+      required: [items, generated_at]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayItem'
+        generated_at:
+          type: string
+          format: date-time
