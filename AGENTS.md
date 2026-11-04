@@ -1,0 +1,12 @@
+ - Сначала читай spec.md и docs/adr/
+ - Микросервисы на Python: Assistant service, Operator Work Service, Import Worker, Clients Service
+ - Микросервисы на Go: Gateway/Identity
+ - Архитектура взаимодействия сервиса на C4 Model L2 в docs/c4-l2-container-diagram.html
+ - API-спеки (OpenAPI 3.1): публичный контур — docs/api/public-api.yaml, внутренние контракты микросервисов — docs/api/internal/ (по одному файлу на сервис)
+ - Модель данных: таблицы и связи БД — docs/db/README.md, DDL — docs/db/ddl/ (identity.sql, clients.sql, import.sql, operator_work.sql)
+ - Схема БД синхронизирована с spec.md: изменения сущностей — сначала в spec.md и docs/db/, потом в коде
+ - До нового кода найди готовую функцию
+ - Данные не отправляем во внешние сервисы
+ - Решение вне ADR - сначала вопрос мне
+ - Нельзя изменять созданные файлы adr
+ - Одна задача = один небольшой PR

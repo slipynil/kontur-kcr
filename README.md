@@ -53,10 +53,10 @@
 | Сервис | Отвечает за | Стек | Хранилище |
 |--------|-------------|------|-----------|
 | **Gateway / Identity** | Аутентификация и авторизация, пользователи и роли, маршрутизация запросов к сервисам. Намеренно тонкий: без бизнес-логики | Go | Identity DB (PostgreSQL) |
-| **Import Service** (Import API + Import Worker) | Загрузка реестра клиентов и срезов из Excel, асинхронно через очередь. Единственное место, которое меняется при замене Excel на API | Python | — |
+| **Import Service** (Import API + Import Worker) | Загрузка реестра клиентов и срезов из Excel, асинхронно через очередь. Единственное место, которое меняется при замене Excel на API | Python | Import DB (PostgreSQL) |
 | **Clients Service** | Реестр клиентов и история срезов: поиск по КЦР/ИНН, общая таблица, карточка клиента, динамика после загрузки | Python | Clients DB (PostgreSQL) |
 | **Operator Work Service** | Процесс обзвона: списки на обзвон, «Сегодня нужно», взятие и освобождение клиента, снятие клиента с оператора, фиксация звонков | Python | Operator Work DB (PostgreSQL) |
-| **Assistant Service** (+ MCP Server) | Чат с AI-ассистентом, не привязан к конкретной модели. MCP Server отдаёт операторские сценарии ассистенту как инструменты | Python | — |
+| **Assistant Service** | Чат с AI-ассистентом, не привязан к конкретной модели | Python | — |
 
 ### Инфраструктура
 
@@ -65,6 +65,7 @@
 - **RabbitMQ:** очередь задач импорта.
 - **PostgreSQL:** отдельная БД у каждого сервиса, который хранит данные.
 - **LLM:** внешняя модель, генерирует ответы ассистента.
+- **MCP Server:** внешний инструмент (как LLM), вне границы системы. Assistant Service вызывает его инструменты; MCP Server выполняет операторские действия, обращаясь только к Operator Work Service.
 
 ### Основные потоки
 
@@ -72,7 +73,7 @@
 2. Администратор загружает Excel в Import API. Import API кладёт задачу в RabbitMQ и сразу отвечает. Import Worker забирает задачу, разбирает файл и загружает клиентов и срезы в Clients Service.
 3. Clients Service хранит реестр в своей БД и отвечает на поиск по КЦР/ИНН, отдаёт карточку и динамику.
 4. Operator Work Service ведёт процесс обзвона в своей БД. Данные клиента он запрашивает у Clients Service.
-5. Пользователь пишет в чат: Assistant Service отправляет промпт во внешнюю LLM, а действия выполняет через MCP Server, который вызывает только Operator Work Service.
+5. Пользователь пишет в чат: Assistant Service отправляет промпт во внешнюю LLM, а действия выполняет через MCP Server — внешний инструмент вне границы системы (как LLM); MCP Server вызывает только Operator Work Service.
 
 ## Глоссарий
 
@@ -89,17 +90,33 @@
 
 ## Документация
 
+- [spec.md](spec.md) — техническая спецификация системы
 - [ADR-0001. Разделить систему на микросервисы по предметным областям](docs/adr/0001-split-system-into-microservices-by-domain.md)
 - [C4 L2: диаграмма контейнеров](docs/c4-l2-container-diagram.html). Откройте файл в браузере.
+- [API](docs/api/README.md) — спецификации API (OpenAPI 3.1): публичный контур через Gateway и внутренние контракты микросервисов
+- [Модель данных](docs/db/README.md) — таблицы и связи четырёх БД сервисов, DDL (PostgreSQL), маппинг импорта из Excel
 
 ## Структура репозитория
 
 ```
 .
 ├── README.md
-├── AGENTS.md          # инструкции для AI-агентов (пока пусто)
-├── spec.md            # спецификация (пока пусто)
+├── AGENTS.md          # инструкции для AI-агентов
+├── spec.md            # спецификация
+├── data/              # тестовые выгрузки заказчика (.xlsx)
 └── docs/
     ├── adr/           # архитектурные решения (ADR)
+    ├── api/           # спецификации API (OpenAPI 3.1)
+    │   ├── README.md
+    │   ├── public-api.yaml            # внешнее API (через Gateway)
+    │   └── internal/                  # API микросервисов между собой
+    │       ├── assistant-service.yaml
+    │       ├── clients-service.yaml
+    │       ├── gateway-identity.yaml
+    │       ├── import-worker.yaml
+    │       └── operator-work-service.yaml
+    ├── db/            # модель данных
+    │   ├── README.md  # таблицы, связи, решения, маппинг Excel → БД
+    │   └── ddl/       # identity.sql, clients.sql, import.sql, operator_work.sql
     └── c4-l2-container-diagram.html
 ```
