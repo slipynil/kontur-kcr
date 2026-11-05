@@ -1,64 +1,36 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Assistant Service (Python)
-  version: 0.1.0-draft
-  summary: "Локальный ИИ-ассистент: сводка перед звонком, отбор словами, чат по клиенту."
+  version: 0.4.0-draft
+  summary: Облачный ИИ-провайдер; конкретные функции согласуются позже.
   description: |
-    **Микросервис:** Assistant Service (Python). MCP Server — внешний инструмент,
-    вне границы системы (как LLM, ADR-0001).
-    **Зона ответственности** (`spec.md` §1.1): генерация сводки «Контекст перед
-    звонком» (5–7 строк), обработка естественного языка для «Отбора словами»,
-    ответы на вопросы по истории клиента строго на основе контекста БД.
+    Актуальные правила — spec.md 1.4 и ADR-0002 (уточнения пользователя от 05.11.2026).
+    Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
+    Периоды только квартальные. Непереданные документы учитываются в следующих кварталах под исходным периодом без двойного счёта.
+    Два квартала непрерывной задержки и более — LONG_DELAY_2Q.
+    WAIT_DEADLINE с ещё не наступившей датой оператора сохраняет ответственного, включая новый квартал.
+    По наступлении даты при остатке клиент доступен в POOL. Пустые поля наследуются с needs_review и происхождением.
+    Rollback только последнего пакета; ручное удаление очищает также начатую работу операторов.
+    ИИ использует облачный API стороннего провайдера; конкретные функции отложены до отдельного обсуждения.
 
-    > **Статус: контракт-предложение.** Публичные эндпоинты зафиксированы в
-    > `spec.md` §3.4 и продублированы здесь под префиксом `/internal/v1` — Gateway
-    > проксирует публичные пути на эти операции.
-
-    ## Ограничение безопасности
-
-    **Zero External Data Leakage** (`spec.md` §1.2): персональные данные, ИНН,
-    тексты комментариев и содержимое Excel не передаются во внешние API/LLM;
-    ассистент работает исключительно на локальном провайдере/модели.
-
-    ## Кто вызывает
-
-    | Потребитель | Эндпоинты |
-    |-------------|-----------|
-    | Gateway / Identity (прокси публичного `/api/v1/assistant/*`) | все операции |
-
-    ## Куда вызывает сам
-
-    - **Clients Service**: `GET /internal/v1/clients/{kcr_code}` — клиент и
-      актуальные срезы; `GET /internal/v1/clients/{kcr_code}/snapshots/history` —
-      последние 3 записи журнала истории для сводки (`spec.md` §3.4).
-    - **Operator Work Service**: `GET /internal/v1/clients/{kcr_code}/events` и
-      действия через внешний MCP Server (ADR-0001: MCP Server — внешний
-      инструмент, вызывает только Operator Work Service; перечень инструментов —
-      в `operator-work-service.yaml`).
-
-    ## Открытые вопросы
-
-    1. Идентификация диалога (нужен ли `conversation_id`) и глубина истории чата.
-    2. Лимиты и таймауты локальной модели; поведение при её недоступности.
-    3. Кэширование сводки «Контекст перед звонком» и её сброс при новом срезе.
-    4. Поведение «Отбора словами» при большом числе совпадений (лимит выдачи).
+    Внутренние пути остаются проектными контрактами; инфраструктурные детали — до реализации.
 servers:
-  - url: http://assistant-service:8000/internal/v1
-    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+- url: http://assistant-service:8000/internal/v1
+  description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
 tags:
-  - name: Assistant
-    description: Операции ИИ-ассистента.
+- name: Assistant
+  description: Операции ИИ-ассистента.
 paths:
   /assistant/summary/{kcr_code}:
     get:
-      tags: [Assistant]
+      tags:
+      - Assistant
       operationId: getSummary
-      summary: Сводка «Контекст перед звонком»
-      description: |
-        Генерация текстового блока (5–7 строк) на основе последних 3 записей
-        журнала истории срезов и ленты событий (`spec.md` §3.4).
+      summary: Сводка «Контекст перед звонком» [Функции не согласованы]
+      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
+        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
       parameters:
-        - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/KcrCode'
       responses:
         '200':
           description: Сводка по клиенту.
@@ -72,14 +44,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      x-status: proposal-pending-ai-scope
   /assistant/filter-query:
     post:
-      tags: [Assistant]
+      tags:
+      - Assistant
       operationId: filterQuery
-      summary: "Отбор словами"
-      description: |
-        Разбор естественно-языкового запроса (например: «Не VIP, непереданных
-        >25%, без изменений») и отбор клиентов под обзвон (`spec.md` §3.4).
+      summary: Отбор словами [Функции не согласованы]
+      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
+        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
       requestBody:
         required: true
         content:
@@ -101,14 +74,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      x-status: proposal-pending-ai-scope
   /assistant/chat:
     post:
-      tags: [Assistant]
+      tags:
+      - Assistant
       operationId: chat
-      summary: Вопрос по карточке клиента
-      description: |
-        Ответ на вопрос по истории клиента строго на основе контекста БД, с
-        обязательными ссылками на даты событий (`spec.md` §3.4).
+      summary: Вопрос по карточке клиента [Функции не согласованы]
+      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
+        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
       requestBody:
         required: true
         content:
@@ -116,7 +90,7 @@ paths:
             schema:
               $ref: '#/components/schemas/ChatRequest'
             example:
-              kcr_code: "6671-0042"
+              kcr_code: 6671-0042
               message: Обещал ли клиент передать оригиналы и когда?
       responses:
         '200':
@@ -131,6 +105,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      x-status: proposal-pending-ai-scope
 components:
   parameters:
     KcrCode:
@@ -140,11 +115,13 @@ components:
       description: Код КЦР — первичный бизнес-ключ клиента.
       schema:
         type: string
-      example: "6671-0042"
+      example: 6671-0042
   schemas:
     Error:
       type: object
-      required: [code, message]
+      required:
+      - code
+      - message
       properties:
         code:
           type: string
@@ -152,33 +129,45 @@ components:
           type: string
     SummaryResponse:
       type: object
-      required: [kcr_code, summary, generated_at]
+      required:
+      - kcr_code
+      - summary
+      - generated_at
       properties:
         kcr_code:
           type: string
         summary:
           type: string
           description: Сводка «Контекст перед звонком», 5–7 строк.
-          example: "VIP-клиент, закреплён за petrov.\nНепереданных документов: 12 из 40 (2026_Q1).\nДинамика: GROWING два среза подряд.\nПоследний звонок 2026-01-28: AGREEMENT, обещал 2026-02-10.\nОбещанный срок истёк."
+          example: |-
+            VIP-клиент, закреплён за petrov.
+            Непереданных документов: 12 из 40 (2026_Q1).
+            Динамика: GROWING два среза подряд.
+            Последний звонок 2026-01-28: AGREEMENT, обещал 2026-02-10.
+            Обещанный срок истёк.
         generated_at:
           type: string
           format: date-time
     FilterQueryRequest:
       type: object
-      required: [query]
+      required:
+      - query
       properties:
         query:
           type: string
           example: Не VIP, непереданных >25%, без изменений
     FilterQueryResponse:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           items:
             type: object
-            required: [kcr_code, reason]
+            required:
+            - kcr_code
+            - reason
             properties:
               kcr_code:
                 type: string
@@ -187,7 +176,9 @@ components:
                 example: Не VIP, непереданных 32%, динамика NO_CHANGE
     ChatRequest:
       type: object
-      required: [kcr_code, message]
+      required:
+      - kcr_code
+      - message
       properties:
         kcr_code:
           type: string
@@ -197,7 +188,9 @@ components:
     EventReference:
       type: object
       description: Ссылка на событие, на котором основан ответ.
-      required: [event_id, event_date]
+      required:
+      - event_id
+      - event_date
       properties:
         event_id:
           type: string
@@ -205,10 +198,12 @@ components:
         event_date:
           type: string
           format: date-time
-          description: "Значение `historical_event_date`, если заполнена, иначе `created_at`."
+          description: Значение `historical_event_date`, если заполнена, иначе `created_at`.
     ChatResponse:
       type: object
-      required: [answer, event_references]
+      required:
+      - answer
+      - event_references
       properties:
         answer:
           type: string
