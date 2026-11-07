@@ -1,47 +1,15 @@
 """Runs only with CLIENTS_TEST_ADMIN_URL; creates and drops its own temporary DB."""
 
-import os
-from pathlib import Path
-from uuid import uuid4
-
 import pytest
 from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from clients_service.config import Settings
 from clients_service.main import create_app
 
 pytestmark = pytest.mark.postgres
-
-
-@pytest.fixture
-def database(monkeypatch):
-    admin_url = os.getenv("CLIENTS_TEST_ADMIN_URL")
-    if not admin_url:
-        pytest.skip("Set CLIENTS_TEST_ADMIN_URL for PostgreSQL migration tests")
-    admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
-    database_name = f"clients_test_{uuid4().hex}"
-    engine = None
-    created = False
-    try:
-        with admin.connect() as conn:
-            conn.exec_driver_sql(f'CREATE DATABASE "{database_name}"')
-        created = True
-        url = admin.url.set(database=database_name).render_as_string(hide_password=False)
-        monkeypatch.setenv("CLIENTS_DATABASE_URL", url)
-        engine = create_engine(url)
-        config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        yield engine, config, url
-    finally:
-        if engine is not None:
-            engine.dispose()
-        if created:
-            with admin.connect() as conn:
-                conn.exec_driver_sql(f'DROP DATABASE "{database_name}" WITH (FORCE)')
-        admin.dispose()
 
 
 def test_migration_round_trip_and_readiness(database):
@@ -59,6 +27,8 @@ def test_migration_round_trip_and_readiness(database):
             "quarter_snapshots",
             "quarter_snapshot_history",
             "snapshot_field_provenance",
+            "clients_import_operations",
+            "clients_import_undo",
         }
         with engine.connect() as conn:
             assert conn.scalar(text("SELECT count(*) FROM tags")) == 6

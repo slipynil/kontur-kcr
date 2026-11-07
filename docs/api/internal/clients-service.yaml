@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Clients Service (Python)
-  version: 0.5.0-draft
+  version: 0.6.0-draft
   summary: Реестр клиентов и история срезов для остальных микросервисов.
   description: 'Актуальные правила — spec.md 1.5 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
@@ -224,11 +224,12 @@ paths:
       tags:
       - Import
       operationId: applyImport
-      summary: Применить пакет импорта [Предложение]
-      description: Применить выбранный квартал пакета. Для REGISTRY достаточно профиля, для SNAPSHOT обязателен
-        snapshot. Пустые поля наследуются с needs_review и происхождением. Каждый новый срез сохраняется, повтор
-        идентичного — нет. Старые даты не заменяют более свежий текущий остаток. Clients не пишет напрямую в Operator
-        Work DB.
+      summary: Локально применить пакет импорта
+      description: 'ADR-0004: результат, данные и undo сохраняются одной транзакцией Clients DB. Повтор того же
+        batch_id возвращает прежний результат; другой payload даёт 409. Ошибки строк возвращаются в errors с индексом
+        с единицы, корректные строки принимаются. Import остаётся координатором; этот ответ не означает завершение
+        всей системы. Маршрут доступен только при CLIENTS_ENABLE_IMPORT_APPLY=true для изолированной разработки
+        до согласования авторизации.'
       requestBody:
         required: true
         content:
@@ -244,6 +245,18 @@ paths:
                 $ref: '#/components/schemas/ImportApplyResponse'
         '400':
           description: Некорректные данные пакета.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 'IMPORT_PAYLOAD_CONFLICT: тот же batch_id с другим содержимым.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'IMPORT_RETRY_REQUIRED: локальная транзакция отменена; повторить тот же пакет.'
           content:
             application/json:
               schema:
@@ -606,8 +619,10 @@ components:
           type: integer
     ImportApplyRequest:
       type: object
-      description: Выбранный пользователем квартал обязателен. Snapshot обязателен для SNAPSHOT; для REGISTRY допускается
-        только профиль. Историческая дата не переписывает более свежий остаток.
+      description: Нормализованный пакет ADR-0004. Конверт проверяется целиком, строки — независимо. batch_id является
+        ключом повтора. HTTP-маршрут по умолчанию отсутствует; локальное включение не является авторизацией. REGISTRY
+        принимает профиль без snapshot, SNAPSHOT требует известный КЦР и snapshot. Дата строки по умолчанию равна
+        snapshot_date конверта.
       required:
       - batch_id
       - uploaded_by
@@ -641,15 +656,25 @@ components:
                   kcr_code:
                     type: string
                   inn:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   kpp:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   organization_name:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   status:
-                    $ref: '#/components/schemas/ClientStatus'
+                    oneOf:
+                    - $ref: '#/components/schemas/ClientStatus'
+                    - type: 'null'
                   tags:
-                    type: array
+                    type:
+                    - array
+                    - 'null'
                     items:
                       $ref: '#/components/schemas/Tag'
                   manager_name:
@@ -668,6 +693,7 @@ components:
                     type:
                     - string
                     - 'null'
+                additionalProperties: false
               snapshot:
                 type: object
                 required:
@@ -677,8 +703,7 @@ components:
                     type: string
                     pattern: ^\d{4}_Q[1-4]$
                     example: 2026_Q1
-                    description: Исходный период документов; по умолчанию выбранный квартал. Старый период сохраняется
-                      при переносе.
+                    description: Обязательный исходный квартал документов; отличается от selected_quarter наблюдения.
                   total_documents:
                     type:
                     - integer
@@ -689,6 +714,7 @@ components:
                       срезе квартала; `null`/отсутствие — сохранить прежнее значение.
 
                       '
+                    maximum: 2147483647
                   unsubmitted_documents:
                     type:
                     - integer
@@ -696,10 +722,14 @@ components:
                     minimum: 0
                     description: Пустота наследуется из последних данных с меткой; без предыдущего обязательного
                       значения — ошибка строки.
+                    maximum: 2147483647
                   snapshot_date:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                     format: date
-                    description: Дата среза (по умолчанию — дата загрузки).
+                    description: Дата строки; без значения используется snapshot_date конверта.
+                additionalProperties: false
             description: Для REGISTRY достаточно client. Для SNAPSHOT snapshot обязателен. Пустые поля наследуются
               с происхождением.
             allOf:
@@ -711,6 +741,7 @@ components:
                   snapshot:
                     required:
                     - quarter
+            additionalProperties: false
         selected_quarter:
           type: string
           pattern: ^\d{4}_Q[1-4]$
@@ -736,6 +767,7 @@ components:
               items:
                 required:
                 - snapshot
+      additionalProperties: false
     ImportApplyResponse:
       type: object
       required:
@@ -744,18 +776,49 @@ components:
       - created_snapshots
       - updated_snapshots
       - created_history_records
+      - batch_id
+      - accepted_rows
+      - rejected_rows
+      - errors
       properties:
         created_clients:
           type: integer
+          description: Число уникальных созданных клиентов.
         updated_clients:
           type: integer
+          description: Число уникальных обновлённых ранее существовавших клиентов.
         created_snapshots:
           type: integer
         updated_snapshots:
           type: integer
         created_history_records:
           type: integer
-          description: Записей журнала истории добавлено (по одной на каждую строку пакета).
+          description: Число новых наблюдений принятых строк SNAPSHOT. Повтор batch_id не добавляет наблюдений.
+        batch_id:
+          type: string
+          format: uuid
+        accepted_rows:
+          type: integer
+          minimum: 0
+        rejected_rows:
+          type: integer
+          minimum: 0
+        errors:
+          type: array
+          items:
+            type: object
+            required:
+            - row_number
+            - code
+            - field
+            properties:
+              row_number:
+                type: integer
+                minimum: 1
+              code:
+                type: string
+              field:
+                type: string
     ImportRollbackResponse:
       type: object
       required:

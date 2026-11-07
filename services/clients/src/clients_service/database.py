@@ -3,7 +3,7 @@ from sqlalchemy.engine import Engine
 
 from clients_service.config import Settings
 
-SCHEMA_REVISION = "0001_clients"
+SCHEMA_REVISION = "0002_import_apply"
 
 
 def build_engine(settings: Settings) -> Engine:

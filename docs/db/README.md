@@ -8,6 +8,8 @@
 
 ## Clients DB
 
+Дополнение ADR-0004: `clients.field_sources` JSONB хранит источник актуального явно полученного поля (batch_id, quarter, snapshot_date). `quarter_snapshot_history.observation_order` — уникальный BIGINT IDENTITY для порядка исправлений одной даты; `inherited_fields` JSONB хранит происхождение унаследованного остатка наблюдения. `clients_import_operations` хранит batch_id PK, payload_hash, result JSONB, created_at; `clients_import_undo` — предыдущее состояние клиента и ID созданных наблюдений, PK (batch_id, kcr_code). FK undo существует только к локальной операции; удаление клиента не должно неявно уничтожить необходимые сведения восстановления. Протокол будущего удаления отдельно определит очистку undo. Локальные данные/результат/undo коммитятся вместе; глобальный статус пакета остаётся в Import DB.
+
 `clients`: kcr_code PK, inn (не уникален), kpp, organization_name, status, is_blocked, manager_name, contacts, raw_work_status, source, timestamps; `needs_review` BOOLEAN и `inherited_fields` JSONB хранят необходимость проверки и происхождение унаследованных полей. Теги — справочник `tags` и M:N `client_tags`.
 
 `quarter_snapshots`: PK (kcr_code, quarter). `quarter` — исходный период документов; `last_observation_quarter` — выбранный пользователем квартал наблюдения. total_documents фиксируется при первом импорте исходного периода; unsubmitted_documents хранит текущий остаток. snapshot_date задаёт дату наблюдения, import_batch_id — последнего изменившего пакета.

@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CLIENTS_", extra="ignore")
 
     database_url: SecretStr
+    # Development switch, not an authentication mechanism.
+    enable_import_apply: bool = False
     database_connect_timeout: int = Field(default=3, ge=1, le=30)
     database_statement_timeout_ms: int = Field(default=3000, ge=100, le=30000)
 
