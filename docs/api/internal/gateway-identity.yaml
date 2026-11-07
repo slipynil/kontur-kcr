@@ -1,72 +1,42 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Gateway / Identity Service (Go)
-  version: 0.1.0-draft
+  version: 0.4.0-draft
   summary: Данные о пользователях для остальных микросервисов и контракт заголовков при проксировании.
   description: |
-    **Микросервис:** Gateway / Identity Service (Go).
-    **Зона ответственности** (`spec.md` §1.1, ADR-0001): единственная точка входа,
-    аутентификация/авторизация (JWT), RBAC-проверка ролей `Admin` / `Operator`,
-    проксирование запросов во внутренние сервисы, CORS и таймауты. Намеренно тонкий
-    сервис без бизнес-логики.
+    Актуальные правила — spec.md 1.4 и ADR-0002 (уточнения пользователя от 05.11.2026).
+    Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
+    Периоды только квартальные. Непереданные документы учитываются в следующих кварталах под исходным периодом без двойного счёта.
+    Два квартала непрерывной задержки и более — LONG_DELAY_2Q.
+    WAIT_DEADLINE с ещё не наступившей датой оператора сохраняет ответственного, включая новый квартал.
+    По наступлении даты при остатке клиент доступен в POOL. Пустые поля наследуются с needs_review и происхождением.
+    Rollback только последнего пакета; ручное удаление очищает также начатую работу операторов.
+    ИИ использует облачный API стороннего провайдера; конкретные функции отложены до отдельного обсуждения.
 
-    Публичные эндпоинты сервиса (`POST /api/v1/auth/login`, `GET/POST /api/v1/users`)
-    описаны в `../public-api.yaml`. Этот файл фиксирует только межсервисную часть.
-
-    > **Статус: контракт-предложение.** В `spec.md` внутренние пути не зафиксированы;
-    > взаимодействие следует из ADR-0001 и C4 L2. Пометка `[Предложение]` — обсудить
-    > перед реализацией.
-
-    ## Зачем внутреннее API
-
-    Единственное зафиксированное в `spec.md` §3.3 требование к межсервисному обмену с
-    Gateway: ответ `409` на `POST /clients/{kcr_code}/take` должен содержать **имя
-    текущего владельца**. Модель `User` живёт в Identity DB, поэтому Operator Work
-    Service должен получать данные пользователя по `id`.
-
-    ## Контракт заголовков при проксировании [Предложение]
-
-    После успешной проверки JWT Gateway передаёт запрос дальше и добавляет заголовки:
-
-    | Заголовок | Формат | Назначение |
-    |-----------|--------|------------|
-    | `X-User-Id` | UUID | Идентификатор пользователя из JWT |
-    | `X-User-Role` | `ADMIN` \| `OPERATOR` | Роль пользователя |
-    | `X-Request-Id` | строка | Идентификатор запроса для сквозной трассировки (ADR-0001, следствие 6) |
-
-    Заголовки `X-User-*` доверяются сервисами только во внутренней сети; из внешней
-    сети внутренние сервисы недоступны.
-
-    ## Открытые вопросы
-
-    1. Повторная валидация JWT сервисами (introspection-эндпоинт) против доверия
-       заголовкам Gateway — предлагается доверие заголовкам.
-    2. В модели `User` (`spec.md` §2.1) нет поля ФИО: «имя владельца» в `409` — это
-       `login`, либо модель расширяется (например, `display_name`).
-    3. Нужен ли внутренний эндпоинт проверки токена для сценариев вне Gateway
-       (например, WebSocket чата ассистента).
+    Внутренние пути остаются проектными контрактами; инфраструктурные детали — до реализации.
 servers:
-  - url: http://gateway-identity:8080/internal/v1
-    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+- url: http://gateway-identity:8080/internal/v1
+  description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
 tags:
-  - name: Users
-    description: Данные пользователей для внутренних сервисов.
+- name: Users
+  description: Данные пользователей для внутренних сервисов.
 paths:
   /users/{user_id}:
     get:
-      tags: [Users]
+      tags:
+      - Users
       operationId: getUser
       summary: Карточка пользователя [Предложение]
       description: |
-        Данные пользователя по `id`. Используется Operator Work Service для имени
-        владельца в `409 CLIENT_ALREADY_TAKEN` (`spec.md` §3.3).
+        Данные пользователя по `id`. Используется для отображения ответственного
+        и авторов событий в карточке клиента.
       parameters:
-        - name: user_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
       responses:
         '200':
           description: Пользователь найден.
@@ -82,26 +52,27 @@ paths:
                 $ref: '#/components/schemas/Error'
   /users:
     get:
-      tags: [Users]
+      tags:
+      - Users
       operationId: listUsersByIds
       summary: Пакетный поиск пользователей [Предложение]
       description: |
         Поиск нескольких пользователей по `id` — для отображения авторов в ленте
         событий (Operator Work Service, Assistant Service).
       parameters:
-        - name: ids
-          in: query
-          required: true
-          description: Идентификаторы пользователей через запятую.
-          schema:
-            type: array
-            minItems: 1
-            maxItems: 100
-            items:
-              type: string
-              format: uuid
-          style: form
-          explode: false
+      - name: ids
+        in: query
+        required: true
+        description: Идентификаторы пользователей через запятую.
+        schema:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+        style: form
+        explode: false
       responses:
         '200':
           description: Найденные пользователи (отсутствующие `id` пропускаются).
@@ -109,7 +80,8 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items]
+                required:
+                - items
                 properties:
                   items:
                     type: array
@@ -125,7 +97,9 @@ components:
   schemas:
     Error:
       type: object
-      required: [code, message]
+      required:
+      - code
+      - message
       properties:
         code:
           type: string
@@ -133,14 +107,21 @@ components:
           type: string
     Role:
       type: string
-      enum: [ADMIN, OPERATOR]
+      enum:
+      - ADMIN
+      - OPERATOR
     InternalUser:
       type: object
       description: |
         Данные пользователя для внутренних сервисов. `display_name` — открытое
         имя; пока в модели `User` такого поля нет (`spec.md` §2.1), используется
         `login` (открытый вопрос 2).
-      required: [id, login, display_name, role, is_active]
+      required:
+      - id
+      - login
+      - display_name
+      - role
+      - is_active
       properties:
         id:
           type: string

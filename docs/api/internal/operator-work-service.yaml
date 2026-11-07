@@ -1,90 +1,45 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Operator Work Service (Python)
-  version: 0.1.0-draft
-  summary: "Процесс обзвона: закрепление клиентов, лента событий, очередь «Сегодня нужно»."
+  version: 0.4.0-draft
+  summary: 'Процесс обзвона: взятие и перезакрепление клиентов, лента событий.'
   description: |
-    **Микросервис:** Operator Work Service (Python).
-    **Зона ответственности** (`spec.md` §1.1, ADR-0001): формирование приоритетных
-    списков и очередей «Сегодня нужно», лента событий, логика отбора базы под
-    квоты, взятие/освобождение клиентов, фиксация звонков.
+    Актуальные правила — spec.md 1.4 и ADR-0002 (уточнения пользователя от 05.11.2026).
+    Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
+    Периоды только квартальные. Непереданные документы учитываются в следующих кварталах под исходным периодом без двойного счёта.
+    Два квартала непрерывной задержки и более — LONG_DELAY_2Q.
+    WAIT_DEADLINE с ещё не наступившей датой оператора сохраняет ответственного, включая новый квартал.
+    По наступлении даты при остатке клиент доступен в POOL. Пустые поля наследуются с needs_review и происхождением.
+    Rollback только последнего пакета; ручное удаление очищает также начатую работу операторов.
+    ИИ использует облачный API стороннего провайдера; конкретные функции отложены до отдельного обсуждения.
 
-    > **Статус: контракт-предложение.** Публичные эндпоинты сервиса зафиксированы в
-    > `spec.md` §3.3 и продублированы здесь под префиксом `/internal/v1` — Gateway
-    > проксирует публичные пути на эти операции. Пометка `[Предложение]` — обсудить
-    > перед реализацией.
-
-    ## Кто вызывает
-
-    | Потребитель | Эндпоинты | Основание |
-    |-------------|-----------|-----------|
-    | Gateway / Identity (прокси) | все операции | `spec.md` §3.3 |
-    | Assistant Service (через внешний MCP Server) | действия и чтение истории клиента | ADR-0001: MCP Server — внешний инструмент, работает только через этот сервис |
-
-    ## Куда вызывает сам
-
-    - **Clients Service**: `GET /internal/v1/clients`, `GET /internal/v1/clients/{kcr_code}`
-      — данные клиентов для очередей (C4 L2).
-    - **Gateway / Identity**: `GET /internal/v1/users/{user_id}` — имя оператора
-      для ответа `409 CLIENT_ALREADY_TAKEN` (`spec.md` §3.3).
-
-    ## MCP-инструменты ассистента [Предложение]
-
-    MCP Server — внешний инструмент, вне границы системы (как LLM, ADR-0001).
-    Assistant Service вызывает его инструменты; MCP Server выполняет
-    операторские сценарии только через этот сервис:
-
-    | Инструмент MCP | Операция этого API |
-    |----------------|--------------------|
-    | `take_client` | `POST /clients/{kcr_code}/take` |
-    | `fix_call` | `POST /clients/{kcr_code}/events` |
-    | `get_client_events` | `GET /clients/{kcr_code}/events` |
-    | `get_today_queue` | `GET /operator/today` |
-
-    ## Ключевые правила
-
-    - `POST /clients/{kcr_code}/take` атомарен: SELECT FOR UPDATE / ACID-транзакция
-      (`spec.md` §1.2); занятый клиент даёт `409` с именем владельца.
-    - Заголовки `X-User-Id` / `X-Request-Id` проставляет Gateway; MCP-сервер
-      ассистента передаёт их от имени пользователя, от которого выполняется действие.
-
-    ## Открытые вопросы
-
-    1. Освобождение клиента оператором и снятие клиента с оператора администратором
-       (ADR-0001, сценарии) — эндпоинты не зафиксированы в `spec.md`.
-    2. Пулы на обзвон и передача пулов от администратора (`spec.md` §4.3, PR #9).
-    3. Переходы `current_stage` (`STAGE_CHANGE`, `spec.md` §2.8): допустимые
-       последовательности этапов и автоматические переходы.
-
-    ## Решено (соответствует docs/db)
-
-    - Закрепление и этап хранятся в этой БД: `client_assignments` (одно активное
-      закрепление на клиента) и `client_stages` — история (`spec.md` §2.7, §2.8).
-    - Лента событий `GET /api/v1/clients/{kcr_code}/events` зафиксирована в
-      публичном API (`spec.md` §3.3).
+    Внутренние пути остаются проектными контрактами; инфраструктурные детали — до реализации.
 servers:
-  - url: http://operator-work-service:8000/internal/v1
-    description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+- url: http://operator-work-service:8000/internal/v1
+  description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
 tags:
-  - name: Assignment
-    description: Закрепление клиентов за операторами.
-  - name: Events
-    description: Лента событий клиента.
-  - name: Queue
-    description: Очередь «Сегодня нужно».
+- name: Assignment
+  description: Закрепление клиентов за операторами.
+- name: Events
+  description: Лента событий клиента.
 paths:
   /clients/{kcr_code}/take:
     post:
-      tags: [Assignment]
+      tags:
+      - Assignment
       operationId: takeClient
-      summary: Взять клиента в работу
+      summary: Взять или перезакрепить клиента на себя
       description: |
-        Атомарная фиксация клиента за оператором (`spec.md` §3.3). Если
-        `assigned_operator_id` уже занят другим оператором — `409` с именем
-        текущего владельца.
+        Взять/перезакрепить клиента себе в выбранном work_quarter. Другой ответственный сам по себе не препятствует операции.
+        Если существует действующее ожидание (business_date < wait_until), сохраняются WAIT_DEADLINE и тот же оператор, даже при смене квартала.
+        Другой оператор получает 409 CLIENT_WAIT_DEADLINE_ACTIVE. Запрос того же ответственного идемпотентен.
+        По наступлении даты при остатке документов ожидание нормализуется в POOL без активного назначения; клиент доступен для взятия.
+        Срок не продлевается автоматически. Проверка даты, нормализация и назначение атомарны; business_date — Europe/Moscow.
+        Исторический квартал нельзя сделать текущим запросом take; 409 INVALID_STATE. Удалённые данные недоступны.
       parameters:
-        - $ref: '#/components/parameters/KcrCode'
-        - $ref: '#/components/parameters/UserIdHeader'
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/UserIdHeader'
       responses:
         '200':
           description: Клиент закреплён.
@@ -99,41 +54,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Клиент уже закреплён за другим оператором.
+          description: Ещё действует WAIT_DEADLINE, либо указан исторический/недопустимый цикл.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: CLIENT_ALREADY_TAKEN
-                message: Клиент уже взят в работу другим оператором
+                code: CLIENT_WAIT_DEADLINE_ACTIVE
+                message: Срок ожидания, установленный оператором, ещё не наступил
                 details:
-                  assigned_operator_id: 11111111-1111-1111-1111-111111111111
+                  work_quarter: 2026_Q2
+                  wait_source_work_quarter: 2026_Q1
+                  stage: WAIT_DEADLINE
+                  wait_until: '2026-07-15'
                   operator_name: petrov
   /clients/{kcr_code}/events:
     get:
-      tags: [Events]
+      tags:
+      - Events
       operationId: listClientEvents
       summary: Лента событий клиента [Предложение]
-      description: |
+      description: |-
         История событий клиента: используется карточкой клиента (`spec.md` §4.3),
         Assistant Service (контекст для сводки и чата) и MCP-инструментом
         `get_client_events`.
+
+        История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем rollback.
       parameters:
-        - $ref: '#/components/parameters/KcrCode'
-        - name: page
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-        - name: page_size
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
+      - name: work_quarter
+        in: query
+        required: false
+        description: Квартал обзвона. Для списка/карточки без фильтра используется последний цикл; лента без
+          фильтра объединяет все циклы.
+        schema:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+      - $ref: '#/components/parameters/KcrCode'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
       responses:
         '200':
           description: Страница ленты событий, свежие первыми.
@@ -148,15 +117,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
     post:
-      tags: [Events]
+      tags:
+      - Events
       operationId: createClientEvent
       summary: Добавить событие клиента
-      description: |
+      description: |-
+        Для нового звонка/смены этапа/закрепления обязателен work_quarter текущего цикла.
+        NULL разрешён для старого комментария без установленного цикла.
         Фиксация звонка, комментария прошлой даты (ручная `historical_event_date`)
         и других событий (`spec.md` §3.3, §2.4).
+
+        История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем rollback.
       parameters:
-        - $ref: '#/components/parameters/KcrCode'
-        - $ref: '#/components/parameters/UserIdHeader'
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/UserIdHeader'
       requestBody:
         required: true
         content:
@@ -182,26 +156,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /operator/today:
-    get:
-      tags: [Queue]
-      operationId: getTodayQueue
-      summary: Очередь «Сегодня нужно»
-      description: |
-        Вычисление очереди (`spec.md` §3.3): клиенты с истёкшим `promised_date` и
-        клиенты с изменившейся динамикой после нового среза. Данные клиентов
-        догружаются из Clients Service.
-      parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+  /data-cleanup:
+    post:
+      operationId: cleanupOperatorData
+      summary: Очистить связанную работу после удаления данных
+      description: |-
+        Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы, циклы, события, назначения и сроки.
+        Удаление квартальных данных очищает связанные записи и перенесённую работу этого объекта; другие клиенты не затрагиваются.
+        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов и кэшей.
+         Вызывает доверенный сервис от имени ADMIN; операция идемпотентна по operation_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - operation_id
+              - kcr_code
+              - scope
+              properties:
+                operation_id:
+                  type: string
+                  format: uuid
+                kcr_code:
+                  type: string
+                scope:
+                  type: string
+                  enum:
+                  - CLIENT
+                  - QUARTER
+                  - BATCH
+                quarter:
+                  type: string
+                  pattern: ^\d{4}_Q[1-4]$
+                  example: 2026_Q2
+                batch_id:
+                  type: string
+                  format: uuid
       responses:
         '200':
-          description: Очередь на сегодня.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TodayResponse'
+          description: Связанная работа, сроки и переносы удалены.
+        '409':
+          description: Конфликт состояния, операция подлежит повтору.
 components:
   parameters:
+    WorkQuarter:
+      name: work_quarter
+      in: query
+      required: true
+      description: Квартал данных, выбранный при загрузке. Действующее ожидание предыдущего цикла сохраняет
+        ответственного до wait_until.
+      schema:
+        type: string
+        pattern: ^\d{4}_Q[1-4]$
+      example: 2026_Q4
     KcrCode:
       name: kcr_code
       in: path
@@ -209,7 +218,7 @@ components:
       description: Код КЦР — первичный бизнес-ключ клиента.
       schema:
         type: string
-      example: "6671-0042"
+      example: 6671-0042
     UserIdHeader:
       name: X-User-Id
       in: header
@@ -223,7 +232,9 @@ components:
   schemas:
     Error:
       type: object
-      required: [code, message]
+      required:
+      - code
+      - message
       properties:
         code:
           type: string
@@ -234,33 +245,122 @@ components:
           additionalProperties: true
     EventType:
       type: string
-      enum: [CALL_RESULT, HISTORICAL_COMMENT, EMAIL_SENT, STAGE_CHANGE, CLAIM_UPDATE, OPERATOR_ASSIGN]
+      enum:
+      - CALL_RESULT
+      - HISTORICAL_COMMENT
+      - EMAIL_SENT
+      - STAGE_CHANGE
+      - CLAIM_UPDATE
+      - OPERATOR_ASSIGN
     CallResult:
       type: string
-      enum: [AGREEMENT, REFUSAL, NO_ANSWER, WRONG_NUMBER]
+      enum:
+      - AGREEMENT
+      - REFUSAL
+      - NO_ANSWER
+      - WRONG_NUMBER
     ClientEventCreate:
       type: object
-      required: [event_type, comment_text]
+      required:
+      - event_type
+      - comment_text
+      allOf:
+      - if:
+          properties:
+            event_type:
+              enum:
+              - CALL_RESULT
+              - EMAIL_SENT
+              - STAGE_CHANGE
+              - CLAIM_UPDATE
+              - OPERATOR_ASSIGN
+          required:
+          - event_type
+        then:
+          required:
+          - work_quarter
+          properties:
+            work_quarter:
+              type: string
+      - if:
+          properties:
+            stage:
+              const: WAIT_DEADLINE
+          required:
+          - stage
+        then:
+          required:
+          - wait_until
+          properties:
+            wait_until:
+              type: string
+              format: date
+      - if:
+          properties:
+            event_type:
+              const: STAGE_CHANGE
+          required:
+          - event_type
+        then:
+          required:
+          - stage
       properties:
+        work_quarter:
+          type:
+          - string
+          - 'null'
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал цикла обзвона; может отличаться от кварталов документов.
         event_type:
           $ref: '#/components/schemas/EventType'
         call_result:
           $ref: '#/components/schemas/CallResult'
           description: Обязателен при `event_type = CALL_RESULT`.
         promised_date:
-          type: [string, "null"]
+          type:
+          - string
+          - 'null'
           format: date
         comment_text:
           type: string
         historical_event_date:
-          type: [string, "null"]
+          type:
+          - string
+          - 'null'
           format: date-time
           description: Заполняется оператором для «прошлого комментария».
+        wait_until:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: Дата, устанавливаемая оператором при переходе в WAIT_DEADLINE
+        stage:
+          type: string
+          enum:
+          - POOL
+          - IN_WORK
+          - WAIT_DEADLINE
+          - CLAIM
+          - CLOSED
+          description: Новый этап для STAGE_CHANGE; WAIT_DEADLINE требует wait_until.
     ClientEvent:
       type: object
       description: Событие ленты (`spec.md` §2.4).
-      required: [id, kcr_code, author_id, event_type, comment_text, created_at]
+      required:
+      - id
+      - kcr_code
+      - author_id
+      - event_type
+      - comment_text
+      - created_at
       properties:
+        work_quarter:
+          type:
+          - string
+          - 'null'
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал цикла обзвона; может отличаться от кварталов документов.
         id:
           type: string
           format: uuid
@@ -274,19 +374,36 @@ components:
         call_result:
           $ref: '#/components/schemas/CallResult'
         promised_date:
-          type: [string, "null"]
+          type:
+          - string
+          - 'null'
           format: date
         comment_text:
           type: string
         historical_event_date:
-          type: [string, "null"]
+          type:
+          - string
+          - 'null'
           format: date-time
         created_at:
           type: string
           format: date-time
+        stage:
+          type:
+          - string
+          - 'null'
+        wait_until:
+          type:
+          - string
+          - 'null'
+          format: date
     EventListResponse:
       type: object
-      required: [items, page, page_size, total]
+      required:
+      - items
+      - page
+      - page_size
+      - total
       properties:
         items:
           type: array
@@ -300,51 +417,21 @@ components:
           type: integer
     TakeResponse:
       type: object
-      required: [kcr_code, assigned_operator_id, taken_at]
+      required:
+      - work_quarter
+      - kcr_code
+      - assigned_operator_id
+      - assigned_at
       properties:
+        work_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал цикла обзвона; может отличаться от кварталов документов.
         kcr_code:
           type: string
         assigned_operator_id:
           type: string
           format: uuid
-        taken_at:
-          type: string
-          format: date-time
-    Dynamics:
-      type: string
-      enum: [REDUCING, NO_CHANGE, GROWING, ALL_SUBMITTED]
-    TodayReason:
-      type: string
-      enum: [PROMISED_DATE_EXPIRED, DYNAMICS_CHANGED]
-    TodayItem:
-      type: object
-      required: [kcr_code, organization_name, inn, reason]
-      properties:
-        kcr_code:
-          type: string
-        organization_name:
-          type: string
-        inn:
-          type: string
-        reason:
-          $ref: '#/components/schemas/TodayReason'
-        promised_date:
-          type: [string, "null"]
-          format: date
-          description: Истёкший обещанный срок (для `PROMISED_DATE_EXPIRED`).
-        dynamics:
-          oneOf:
-            - $ref: '#/components/schemas/Dynamics'
-            - type: "null"
-          description: Новая динамика после среза (для `DYNAMICS_CHANGED`).
-    TodayResponse:
-      type: object
-      required: [items, generated_at]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/TodayItem'
-        generated_at:
+        assigned_at:
           type: string
           format: date-time

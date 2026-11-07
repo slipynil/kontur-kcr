@@ -1,70 +1,18 @@
-# API «Контур КЦР»
+# API Контур КЦР
 
-Спецификации API системы в формате **OpenAPI 3.1 (YAML)**.
+Контракты OpenAPI 3.1 согласованы со spec.md 1.4 и ADR-0002. Публичный контур — public-api.yaml; внутренние — internal/*.yaml. Вход через Gateway/Identity с Bearer JWT и ролью ADMIN/OPERATOR.
 
-Два контура:
+## Изменения
 
-1. **Публичное API** — выходит наружу, к Web App (SPA). Единственная точка входа —
-   nginx → Gateway / Identity Service (Go), который проверяет Bearer JWT и роль и
-   проксирует запросы во внутренние микросервисы (ADR-0001, C4 L2).
-2. **Внутренние API** — контракты между микросервисами; доступны только в закрытой
-   сети, из внешнего контура недоступны.
+- Загрузка: выбранный пользователем selected_quarter, тип REGISTRY/SNAPSHOT и snapshot_date обязательны. Квартал не выводится из даты файла. Годовых периодов нет.
+- WAIT_DEADLINE действует до wait_until и сохраняет ответственного через смену квартала. До срока отказ другому оператору — CLIENT_WAIT_DEADLINE_ACTIVE; по сроку при остатке клиент доступен.
+- В ответах клиента есть needs_review, inherited_fields, wait_until и квартальный контекст. Остатки учитываются по исходным периодам без двойного счёта.
+- Rollback только последнего пакета (IMPORT_NOT_LATEST для другого); ручное удаление ADMIN очищает также начатую работу операторов. Обычное сохранение истории имеет эти исключения.
+- UC-08/10/11 исключены, API очереди дня нет. Переход по сроку — часть модели ожидания.
+- ИИ — облачный API; summary/filter-query/chat помечены proposal-pending-ai-scope, конкретный набор ещё не утверждён.
 
-## Файлы
+## Владение
 
-| Файл | Контур | Сервис | Статус |
-|------|--------|--------|--------|
-| [`public-api.yaml`](public-api.yaml) | Публичный | Все, через Gateway | Эндпоинты — строго по `spec.md` §3 |
-| [`internal/gateway-identity.yaml`](internal/gateway-identity.yaml) | Внутренний | Gateway / Identity (Go) | Предложение |
-| [`internal/import-worker.yaml`](internal/import-worker.yaml) | Внутренний | Import API + Import Worker (Python) | Частично по `spec.md` (rollback), остальное — предложение |
-| [`internal/clients-service.yaml`](internal/clients-service.yaml) | Внутренний | Clients Service (Python) | Предложение |
-| [`internal/operator-work-service.yaml`](internal/operator-work-service.yaml) | Внутренний | Operator Work Service (Python) | Частично по `spec.md` (take/events/today), остальное — предложение |
-| [`internal/assistant-service.yaml`](internal/assistant-service.yaml) | Внутренний | Assistant Service (Python) | Эндпоинты — по `spec.md` §3.4, пути — предложение |
+Gateway — вход и роли; Clients — профили, остатки, происхождение; Import — пакеты/ошибки/undo и координация; Operator Work — циклы, сроки, назначения, события и очистка работы; Assistant — интеграция с выбранным позднее облачным провайдером.
 
-Публичные эндпоинты и сервис-исполнитель:
-
-| Публичный эндпоинт | Сервис |
-|--------------------|--------|
-| `POST /api/v1/auth/login`, `GET/POST /api/v1/users` | Gateway / Identity |
-| `POST /api/v1/imports/{batch_id}/rollback` | Import Worker |
-| `GET /api/v1/clients`, `GET /api/v1/clients/{kcr_code}`, `GET /api/v1/clients/{kcr_code}/snapshots/history` | Clients Service |
-| `GET/POST /api/v1/clients/{kcr_code}/events`, `POST /api/v1/clients/{kcr_code}/take`, `GET /api/v1/operator/today` | Operator Work Service |
-| `GET /api/v1/assistant/summary/{kcr_code}`, `POST /api/v1/assistant/filter-query`, `POST /api/v1/assistant/chat` | Assistant Service |
-
-## Общие конвенции
-
-- **Аутентификация (публичный контур):** `Authorization: Bearer <JWT>`; роли
-  `ADMIN` / `OPERATOR`; доступность операции отмечена расширением `x-roles`.
-- **Идентификация (внутренний контур):** Gateway проставляет заголовки `X-User-Id`,
-  `X-User-Role`, `X-Request-Id`; внутренние сервисы доверяют им только в закрытой
-  сети (контракт — в `internal/gateway-identity.yaml`).
-- **Ошибки:** единая схема `Error` с машиночитаемым `code` (каталог — в
-  `public-api.yaml`).
-- **Пагинация:** `page` / `page_size` (до 100), ответ `items` + `total`.
-- **Идентификаторы:** бизнес-ключ клиента — `kcr_code` (Код КЦР); пакет импорта и
-  события — UUID.
-- **Терминология:** слова «долг», «задолженность», «должник» запрещены
-  (`spec.md` §1.2); только «непереданные документы».
-
-## Принципы
-
-- **Zero External Data Leakage** (`spec.md` §1.2): данные клиентов не передаются во
-  внешние сервисы; ассистент работает только на локальной модели.
-- **Одна задача — один PR** (`AGENTS.md`): контракты с пометкой `[Предложение]`
-  финализируются в соответствующих PR (номера PR — в `spec.md` §5).
-- Каждый внутренний файл содержит разделы «Кто вызывает», «Куда вызывает сам» и
-  «Открытые вопросы» — пробелы, не зафиксированные в `spec.md`, собраны там, а не
-  молча дописаны в контракты.
-
-## Как посмотреть
-
-Любой просмотрщик OpenAPI 3.1, например:
-
-- [Swagger UI](https://editor.swagger.io/) — открыть файл,
-- [Redoc](https://redocly.github.io/redoc/) — `redocly preview-docs <файл>`.
-
-## Связанные документы
-
-- Спецификация системы: [`../../spec.md`](../../spec.md)
-- Архитектурное решение: [`../adr/0001-split-system-into-microservices-by-domain.md`](../adr/0001-split-system-into-microservices-by-domain.md)
-- Диаграмма контейнеров: [`../c4-l2-container-diagram.html`](../c4-l2-container-diagram.html)
+Внутренние API доступны только в доверенной сети; заголовки пользователя проставляет Gateway. Операции удаления и импорта идемпотентны. Внешний успех удаления допускается после очистки всех затронутых сервисов. Протокол доставки, повторов и компенсации необходимо завершить до реализации; наличие схем не означает готовность приложения.

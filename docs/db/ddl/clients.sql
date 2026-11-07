@@ -15,6 +15,8 @@ CREATE TABLE clients (
     is_blocked       BOOLEAN     NOT NULL DEFAULT FALSE,
     manager_name     TEXT,
     contacts         JSONB,                             -- контакты для связи (spec.md §2.2)
+    needs_review BOOLEAN NOT NULL DEFAULT FALSE,
+    inherited_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
     raw_work_status  TEXT,                              -- исходный статус выгрузки («VIP+Итегратор», «Не нужно работать»)
     source           TEXT        NOT NULL DEFAULT 'REGISTRY'
                       CHECK (source IN ('REGISTRY', 'SNAPSHOT')),
@@ -61,6 +63,7 @@ INSERT INTO tags (id, code, name) VALUES
 CREATE TABLE quarter_snapshots (
     kcr_code              TEXT   NOT NULL REFERENCES clients (kcr_code) ON DELETE CASCADE,
     quarter               TEXT   NOT NULL CHECK (quarter ~ '^\d{4}_Q[1-4]$'),  -- 2026_Q1
+    last_observation_quarter TEXT NOT NULL CHECK (last_observation_quarter ~ '^\d{4}_Q[1-4]$'),
     total_documents       INTEGER NOT NULL CHECK (total_documents >= 0),
     unsubmitted_documents INTEGER NOT NULL CHECK (unsubmitted_documents >= 0),
     import_batch_id       UUID   NOT NULL,   -- логическая ссылка на Import DB import_batches.id
@@ -86,6 +89,7 @@ CREATE TABLE quarter_snapshot_history (
     id                     UUID        PRIMARY KEY,
     kcr_code               TEXT        NOT NULL REFERENCES clients (kcr_code) ON DELETE CASCADE,
     quarter                TEXT        NOT NULL CHECK (quarter ~ '^\d{4}_Q[1-4]$'),
+    observation_quarter TEXT NOT NULL CHECK (observation_quarter ~ '^\d{4}_Q[1-4]$'),
     unsubmitted_documents  INTEGER     NOT NULL CHECK (unsubmitted_documents >= 0),
     import_batch_id        UUID        NOT NULL,   -- логическая ссылка на Import DB import_batches.id
     snapshot_date          DATE        NOT NULL,
@@ -96,5 +100,16 @@ CREATE INDEX idx_snapshot_history_client
     ON quarter_snapshot_history (kcr_code, created_at DESC);
 CREATE INDEX idx_snapshot_history_batch ON quarter_snapshot_history (import_batch_id);  -- для отката
 
-COMMENT ON TABLE quarter_snapshot_history IS 'Append-only журнал: одна запись на каждое изменение числа непереданных документов при импорте. Не редактируется; удаляется только каскадно при откате пакета.';
-COMMENT ON TABLE quarter_snapshot_history IS 'Основа автоматического расчёта динамики (spec.md §3.3) и «последних 3 срезов» сводки ассистента (spec.md §3.4).';
+
+COMMENT ON TABLE quarter_snapshot_history IS 'Новые наблюдения, включая неизменный остаток. Исключения append-only: последний rollback и ручное каскадное удаление.';
+CREATE TABLE snapshot_field_provenance (
+    kcr_code TEXT NOT NULL,
+    quarter TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    source_batch_id UUID NOT NULL,
+    source_quarter TEXT NOT NULL CHECK (source_quarter ~ '^\d{4}_Q[1-4]$'),
+    source_snapshot_date DATE NOT NULL,
+    PRIMARY KEY (kcr_code, quarter, field_name),
+    FOREIGN KEY (kcr_code, quarter) REFERENCES quarter_snapshots (kcr_code, quarter) ON DELETE CASCADE
+);
+COMMENT ON TABLE snapshot_field_provenance IS 'Происхождение унаследованных полей среза; клиент получает needs_review. Перенос остатка не создаёт второй комплект документов.';

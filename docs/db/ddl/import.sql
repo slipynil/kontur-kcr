@@ -8,6 +8,9 @@
 CREATE TABLE import_batches (
     id            UUID        PRIMARY KEY,
     uploaded_by   UUID        NOT NULL,   -- логическая ссылка на Identity DB users.id
+    selected_quarter TEXT NOT NULL CHECK (selected_quarter ~ '^\d{4}_Q[1-4]$'),
+    import_type TEXT NOT NULL CHECK (import_type IN ('REGISTRY', 'SNAPSHOT')),
+    snapshot_date DATE NOT NULL,
     filename      TEXT        NOT NULL,
     status        TEXT        NOT NULL DEFAULT 'PROCESSING'
                   CHECK (status IN ('PROCESSING', 'COMPLETED', 'ROLLED_BACK', 'FAILED')),
@@ -51,9 +54,13 @@ CREATE TABLE import_batch_undo (
     action                    TEXT      NOT NULL CHECK (action IN ('CREATE', 'UPDATE')),
     prev_unsubmitted_documents INTEGER,             -- для UPDATE: значение до пакета
     prev_snapshot_date        DATE,                 -- для UPDATE
+    previous_state JSONB, -- профиль, теги и происхождение до применения пакета
     prev_import_batch_id      UUID                  -- для UPDATE
 );
 
 CREATE UNIQUE INDEX uq_import_batch_undo ON import_batch_undo (batch_id, kcr_code, quarter);
 
 COMMENT ON TABLE import_batch_undo IS 'Откат: CREATE → удалить срез и записи журнала пакета в Clients DB; UPDATE → восстановить prev_* и удалить записи журнала пакета (без журнала истории прошлое значение хранится здесь).';
+
+-- Rollback только последнего применённого пакета; старый пакет -> IMPORT_NOT_LATEST.
+-- Ручное удаление очищает связанные данные Clients и начатую работу Operator Work через API.
