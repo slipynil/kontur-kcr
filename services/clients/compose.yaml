@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: clients
+      POSTGRES_USER: clients
+      POSTGRES_PASSWORD: clients_local
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - clients_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clients -d clients"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: .
+    environment:
+      CLIENTS_DATABASE_URL: postgresql+psycopg://clients:clients_local@db:5432/clients
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+  clients:
+    build: .
+    environment:
+      CLIENTS_DATABASE_URL: postgresql+psycopg://clients:clients_local@db:5432/clients
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+volumes:
+  clients_pg:
