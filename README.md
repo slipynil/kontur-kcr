@@ -24,7 +24,7 @@ UC-08 (очередь дня), UC-10 (освобождение) и UC-11 (адм
 - [Актуальные юзкейсы](docs/use-cases.md)
 - [API](docs/api/README.md), [модель данных](docs/db/README.md)
 - [Архитектура C4 L2](docs/c4-l2-container-diagram.html), [ADR](docs/adr/)
-- [Исходное ТЗ, обновлённое по разговору](docs/requirements/ТЗ.docx)
+- [Исходное ТЗ, обновлённое по разговору](docs/requirements/ТЗ.md)
 - Исходные выгрузки и комментарии заказчика хранятся локально; актуальные решения отражены в spec.md и docs/use-cases.md.
 
 ## Архитектура
