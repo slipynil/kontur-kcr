@@ -29,6 +29,8 @@ def test_migration_round_trip_and_readiness(database):
             "snapshot_field_provenance",
             "clients_import_operations",
             "clients_import_undo",
+            "clients_data_operations",
+            "clients_deleted_history",
         }
         with engine.connect() as conn:
             assert conn.scalar(text("SELECT count(*) FROM tags")) == 6

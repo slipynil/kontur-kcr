@@ -135,3 +135,33 @@ CREATE TABLE clients_import_undo (
     created_history_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     PRIMARY KEY (batch_id, kcr_code)
 );
+
+-- ADR-0006: локальный порядок новых пакетов и результат административных команд.
+CREATE SEQUENCE clients_change_order_seq;
+ALTER TABLE clients_import_operations
+    ADD COLUMN apply_order BIGINT UNIQUE,
+    ADD COLUMN rolled_back BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN rollback_result JSONB;
+ALTER TABLE clients_import_operations ALTER COLUMN apply_order
+    SET DEFAULT nextval('clients_change_order_seq');
+CREATE TABLE clients_data_operations (
+    operation_id UUID PRIMARY KEY,
+    payload_hash TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('ROLLBACK', 'DELETE_CLIENT', 'DELETE_QUARTER')),
+    kcr_code TEXT,
+    quarter TEXT,
+    batch_id UUID,
+    requested_by UUID NOT NULL,
+    change_order BIGINT NOT NULL UNIQUE DEFAULT nextval('clients_change_order_seq'),
+    result JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE clients_deleted_history (
+    operation_id UUID NOT NULL REFERENCES clients_data_operations(operation_id) ON DELETE CASCADE,
+    history_id UUID NOT NULL,
+    kcr_code TEXT NOT NULL,
+    quarter TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    PRIMARY KEY (operation_id, history_id)
+);
+CREATE INDEX idx_deleted_history_client ON clients_deleted_history(kcr_code);

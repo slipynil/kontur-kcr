@@ -35,6 +35,10 @@ class PayloadConflict(Exception):
     pass
 
 
+class ImportAlreadyRolledBack(Exception):
+    pass
+
+
 def json_value(value: Any) -> Any:
     """Serialize undo without relying on an engine-specific JSON encoder."""
 
@@ -275,6 +279,8 @@ def apply_import(engine: Engine, envelope: ImportEnvelope) -> dict[str, Any]:
         if stored:
             if stored["payload_hash"] != fingerprint:
                 raise PayloadConflict
+            if stored["rolled_back"]:
+                raise ImportAlreadyRolledBack
             return stored["result"]
         result = dict.fromkeys(COUNTERS, 0)
         result.update(batch_id=str(envelope.batch_id), accepted_rows=0, rejected_rows=0, errors=[])

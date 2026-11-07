@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Clients Service (Python)
-  version: 0.7.0-draft
+  version: 0.8.0-draft
   summary: Реестр клиентов и история срезов для остальных микросервисов.
-  description: 'Актуальные правила — spec.md 1.6 и ADR-0002 (уточнения пользователя от 05.11.2026).
+  description: 'Актуальные правила — spec.md 1.7 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
     Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
 
@@ -30,7 +30,10 @@ info:
 
     ADR-0005: динамика сравнивает актуальные остатки разных кварталов, по умолчанию текущий календарный квартал
     Europe/Moscow и предыдущий. Внутреннее HTTP-чтение выключено до согласования авторизации; локальное включение
-    CLIENTS_ENABLE_REGISTRY_READ=true.'
+    CLIENTS_ENABLE_REGISTRY_READ=true.
+
+    ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
+    глобального завершения.'
 servers:
 - url: http://clients-service:8000/internal/v1
   description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
@@ -171,17 +174,13 @@ paths:
                 $ref: '#/components/schemas/Error'
     delete:
       operationId: deleteClient
-      summary: Удалить клиента целиком
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      summary: Локально удалить выбранные данные
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -190,9 +189,35 @@ paths:
           type: string
       responses:
         '200':
-          description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataDeletionResponse'
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /clients/{kcr_code}/snapshots/history:
     get:
       tags:
@@ -300,7 +325,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: 'IMPORT_PAYLOAD_CONFLICT: тот же batch_id с другим содержимым.'
+          description: IMPORT_PAYLOAD_CONFLICT либо IMPORT_ALREADY_ROLLED_BACK; новый импорт требует нового batch_id.
           content:
             application/json:
               schema:
@@ -316,10 +341,12 @@ paths:
       tags:
       - Import
       operationId: rollbackImport
-      summary: Откатить пакет [Предложение]
-      description: Отменить только последний применённый неотменённый пакет в системе. Созданные данные и связанная
-        работа операторов удаляются; прежние значения обновлённых записей восстанавливаются. Другой пакет -> 409
-        IMPORT_NOT_LATEST. Начатая работа не блокирует откат. Завершение только после согласованной очистки сервисов.
+      summary: Локально откатить пакет
+      description: 'ADR-0006: Восстановить состояние затронутых клиентов до импорта, включая данные, вручную удалённые
+        после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
+        Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное включение
+        CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот же ID с другим
+        payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       parameters:
       - name: batch_id
         in: path
@@ -329,7 +356,7 @@ paths:
           format: uuid
       responses:
         '200':
-          description: Пакет откачен.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
           content:
             application/json:
               schema:
@@ -341,28 +368,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Пакет не последний или имеет недопустимый статус.
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: IMPORT_NOT_LATEST
-                message: Можно отменить только последний применённый пакет
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /clients/{kcr_code}/snapshots/{quarter}:
     delete:
       operationId: deleteClientQuarter
-      summary: Удалить выбранные квартальные данные
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      summary: Локально удалить выбранные данные
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -378,9 +416,35 @@ paths:
           example: 2026_Q2
       responses:
         '200':
-          description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataDeletionResponse'
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
 components:
   parameters:
     KcrCode:
@@ -935,6 +999,12 @@ components:
       - removed_snapshots
       - restored_snapshots
       - removed_history_records
+      - operation_id
+      - local_only
+      - already_rolled_back
+      - removed_clients
+      - restored_clients
+      - restored_history_records
       properties:
         batch_id:
           type: string
@@ -948,3 +1018,66 @@ components:
         removed_history_records:
           type: integer
           description: Записей журнала истории пакета удалено.
+        operation_id:
+          type: string
+          format: uuid
+        local_only:
+          type: boolean
+          const: true
+        already_rolled_back:
+          type: boolean
+        removed_clients:
+          type: integer
+          minimum: 0
+        restored_clients:
+          type: integer
+          minimum: 0
+        restored_history_records:
+          type: integer
+          minimum: 0
+    RecoveryCommand:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - requested_by
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        requested_by:
+          type: string
+          format: uuid
+          description: Автор из доверенного контекста координатора; поле не подтверждает полномочия.
+    DataDeletionResponse:
+      type: object
+      required:
+      - operation_id
+      - kcr_code
+      - quarter
+      - local_only
+      - removed_clients
+      - removed_snapshots
+      - removed_history_records
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        quarter:
+          type:
+          - string
+          - 'null'
+        local_only:
+          type: boolean
+          const: true
+        removed_clients:
+          type: integer
+          minimum: 0
+        removed_snapshots:
+          type: integer
+          minimum: 0
+        removed_history_records:
+          type: integer
+          minimum: 0

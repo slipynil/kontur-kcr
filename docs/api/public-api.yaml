@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Контур КЦР — Публичное API (внешний контур)
-  version: 1.6.0
+  version: 1.7.0
   summary: Единое внешнее API системы «Контур КЦР» через Gateway / Identity Service.
-  description: 'Актуальные правила — spec.md 1.6 и ADR-0002 (уточнения пользователя от 05.11.2026).
+  description: 'Актуальные правила — spec.md 1.7 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
     Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
 
@@ -30,7 +30,10 @@ info:
 
     ADR-0005: динамика сравнивает актуальные остатки разных кварталов, по умолчанию текущий календарный квартал
     Europe/Moscow и предыдущий. Внутреннее HTTP-чтение выключено до согласования авторизации; локальное включение
-    CLIENTS_ENABLE_REGISTRY_READ=true.'
+    CLIENTS_ENABLE_REGISTRY_READ=true.
+
+    ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
+    глобального завершения.'
 servers:
 - url: https://{host}
   description: Единая внешняя точка входа (nginx → Gateway / Identity).
@@ -152,10 +155,12 @@ paths:
       tags:
       - Imports
       operationId: rollbackImport
-      summary: Откатить импорт
-      description: Отменить только последний применённый неотменённый пакет в системе. Созданные данные и связанная
-        работа операторов удаляются; прежние значения обновлённых записей восстанавливаются. Другой пакет -> 409
-        IMPORT_NOT_LATEST. Начатая работа не блокирует откат. Завершение только после согласованной очистки сервисов.
+      summary: Откатить последний пакет
+      description: 'ADR-0006: Восстановить состояние затронутых клиентов до импорта, включая данные, вручную удалённые
+        после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
+        Gateway/Import добавляет requested_by из проверенного пользовательского контекста. Публичный успех допустим
+        только после всех участников. Повтор operation_id безопасен; тот же ID с другим payload даёт 409. Восстановительные
+        копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       x-roles:
       - ADMIN
       parameters:
@@ -179,14 +184,29 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Пакет не последний или имеет недопустимый статус.
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: IMPORT_NOT_LATEST
-                message: Можно отменить только последний применённый пакет
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /api/v1/clients:
     get:
       tags:
@@ -436,16 +456,11 @@ paths:
     delete:
       operationId: deleteClient
       summary: Удалить клиента целиком
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Gateway/Import добавляет requested_by из проверенного пользовательского контекста. Публичный
+        успех допустим только после всех участников. Повтор operation_id безопасен; тот же ID с другим payload даёт
+        409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -455,10 +470,32 @@ paths:
       responses:
         '200':
           description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       x-roles:
       - ADMIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /api/v1/clients/{kcr_code}/events:
     get:
       tags:
@@ -724,16 +761,11 @@ paths:
     delete:
       operationId: deleteClientQuarter
       summary: Удалить выбранные квартальные данные
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Gateway/Import добавляет requested_by из проверенного пользовательского контекста. Публичный
+        успех допустим только после всех участников. Повтор operation_id безопасен; тот же ID с другим payload даёт
+        409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -750,10 +782,32 @@ paths:
       responses:
         '200':
           description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       x-roles:
       - ADMIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
 components:
   securitySchemes:
     bearerAuth:
@@ -1720,3 +1774,12 @@ components:
           items:
             $ref: '#/components/schemas/EventReference'
           description: Обязательные ссылки на даты событий; может быть пустым.
+    RecoveryCommand:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      properties:
+        operation_id:
+          type: string
+          format: uuid

@@ -8,10 +8,16 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from clients_service.config import Settings
 from clients_service.database import SCHEMA_REVISION, build_engine
-from clients_service.import_application import PayloadConflict, apply_import
+from clients_service.import_application import (
+    ImportAlreadyRolledBack,
+    PayloadConflict,
+    apply_import,
+)
 from clients_service.import_models import ImportEnvelope
 from clients_service.read_api import router as read_router
 from clients_service.read_repository import ClientNotFound
+from clients_service.recovery_api import router as recovery_router
+from clients_service.recovery_application import ImportNotFound, RecoveryConflict
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -48,6 +54,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if configuration.enable_registry_read:
         app.include_router(read_router)
+
+    @app.exception_handler(RecoveryConflict)
+    async def recovery_conflict(request: Request, error: RecoveryConflict):
+        return JSONResponse(
+            {"code": error.code, "message": "Recovery state conflict"}, status_code=409
+        )
+
+    @app.exception_handler(ImportNotFound)
+    async def import_not_found(request: Request, error: ImportNotFound):
+        return JSONResponse(
+            {"code": "IMPORT_NOT_FOUND", "message": "Batch not found"}, status_code=404
+        )
+
+    @app.exception_handler(ImportAlreadyRolledBack)
+    async def import_rolled_back(request: Request, error: ImportAlreadyRolledBack):
+        return JSONResponse(
+            {"code": "IMPORT_ALREADY_ROLLED_BACK", "message": "Use a new batch ID"}, status_code=409
+        )
+
+    if configuration.enable_data_recovery:
+        app.include_router(recovery_router)
 
     if configuration.enable_import_apply:
 
