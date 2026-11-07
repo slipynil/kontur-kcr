@@ -10,6 +10,8 @@ from clients_service.config import Settings
 from clients_service.database import SCHEMA_REVISION, build_engine
 from clients_service.import_application import PayloadConflict, apply_import
 from clients_service.import_models import ImportEnvelope
+from clients_service.read_api import router as read_router
+from clients_service.read_repository import ClientNotFound
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -31,6 +33,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {"code": "INVALID_REQUEST", "message": "Invalid request"}, status_code=400
         )
+
+    @app.exception_handler(ClientNotFound)
+    async def client_not_found(request: Request, error: ClientNotFound):
+        return JSONResponse(
+            {"code": "CLIENT_NOT_FOUND", "message": "Client not found"}, status_code=404
+        )
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_unavailable(request: Request, error: SQLAlchemyError):
+        return JSONResponse(
+            {"code": "SERVICE_UNAVAILABLE", "message": "Try again later"}, status_code=503
+        )
+
+    if configuration.enable_registry_read:
+        app.include_router(read_router)
 
     if configuration.enable_import_apply:
 
