@@ -31,6 +31,13 @@ class Snapshot(BaseModel):
     snapshot_date: date
 
 
+class QuarterSummary(BaseModel):
+    quarter: Quarter
+    total_documents: int
+    unsubmitted_documents: int
+    unsubmitted_percent: float | None
+
+
 class ClientListItem(BaseModel):
     kcr_code: str
     inn: str | None
@@ -47,6 +54,7 @@ class ClientListItem(BaseModel):
     duration: Duration | None
     outstanding_documents: int
     latest_snapshot: Snapshot | None
+    quarter_summary: QuarterSummary | None
 
 
 class ClientPage(BaseModel):
@@ -76,6 +84,7 @@ class ClientCard(BaseModel):
     dynamics_previous_documents: int | None
     duration: Duration | None
     outstanding_documents: int
+    quarter_summary: QuarterSummary | None
 
 
 class HistoryRecord(BaseModel):

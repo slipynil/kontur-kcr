@@ -103,6 +103,15 @@ METRICS_SQL = """
             CAST(:previous_quarter AS text) AS dynamics_previous_quarter,
             current_q.unsubmitted_documents AS dynamics_current_documents,
             previous_q.unsubmitted_documents AS dynamics_previous_documents,
+            CASE WHEN current_q.kcr_code IS NULL THEN NULL ELSE jsonb_build_object(
+                'quarter', current_q.quarter, 'total_documents', current_q.total_documents,
+                'unsubmitted_documents', current_q.unsubmitted_documents,
+                'unsubmitted_percent', current_q.unsubmitted_documents::numeric * 100
+                    / NULLIF(current_q.total_documents, 0)
+            ) END AS quarter_summary,
+            current_q.unsubmitted_documents AS selected_remaining,
+            current_q.unsubmitted_documents::numeric * 100
+                / NULLIF(current_q.total_documents, 0) AS selected_percent,
             CASE
                 WHEN current_q.unsubmitted_documents IS NULL
                     OR previous_q.unsubmitted_documents IS NULL THEN NULL
@@ -162,13 +171,28 @@ def list_clients(
     duration=None,
     page=1,
     page_size=20,
+    min_unsubmitted_documents=None,
+    max_unsubmitted_documents=None,
+    min_unsubmitted_percent=None,
+    max_unsubmitted_percent=None,
 ):
     parameters = _parameters(quarter=quarter, search=search, tags=tags)
     parameters.update(
-        dynamics=dynamics, duration=duration, limit=page_size, offset=(page - 1) * page_size
+        dynamics=dynamics,
+        duration=duration,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+        min_documents=min_unsubmitted_documents,
+        max_documents=max_unsubmitted_documents,
+        min_percent=min_unsubmitted_percent,
+        max_percent=max_unsubmitted_percent,
     )
     predicate = """(CAST(:dynamics AS text) IS NULL OR dynamics = :dynamics)
-        AND (CAST(:duration AS text) IS NULL OR duration = :duration)"""
+        AND (CAST(:duration AS text) IS NULL OR duration = :duration)
+        AND (CAST(:min_documents AS bigint) IS NULL OR selected_remaining >= :min_documents)
+        AND (CAST(:max_documents AS bigint) IS NULL OR selected_remaining <= :max_documents)
+        AND (CAST(:min_percent AS numeric) IS NULL OR selected_percent >= :min_percent)
+        AND (CAST(:max_percent AS numeric) IS NULL OR selected_percent <= :max_percent)"""
     with read_transaction(engine) as connection:
         total = connection.scalar(
             text(READ_CTES + " SELECT count(*) FROM metrics WHERE " + predicate), parameters

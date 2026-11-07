@@ -1,8 +1,9 @@
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from clients_service.import_models import Quarter, Tag
 from clients_service.read_models import ClientCard, ClientPage, Duration, Dynamics, HistoryPage
@@ -39,6 +40,20 @@ class ListQuery(PeriodQuery):
     tags: str | None = None
     page: int = Field(default=1, ge=1, le=1_000_000)
     page_size: int = Field(default=20, ge=1, le=100)
+    min_unsubmitted_documents: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    max_unsubmitted_documents: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    min_unsubmitted_percent: Decimal | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    max_unsubmitted_percent: Decimal | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_ranges(self):
+        for minimum, maximum in (
+            (self.min_unsubmitted_documents, self.max_unsubmitted_documents),
+            (self.min_unsubmitted_percent, self.max_unsubmitted_percent),
+        ):
+            if minimum is not None and maximum is not None and minimum > maximum:
+                raise ValueError("Minimum exceeds maximum")
+        return self
 
     @field_validator("tags")
     @classmethod

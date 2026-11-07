@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Контур КЦР — Публичное API (внешний контур)
-  version: 1.7.0
+  version: 1.8.0
   summary: Единое внешнее API системы «Контур КЦР» через Gateway / Identity Service.
-  description: 'Актуальные правила — spec.md 1.7 и ADR-0002 (уточнения пользователя от 05.11.2026).
+  description: 'Актуальные правила — spec.md 1.8 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
     Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
 
@@ -33,7 +33,9 @@ info:
     CLIENTS_ENABLE_REGISTRY_READ=true.
 
     ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
-    глобального завершения.'
+    глобального завершения.
+
+    ADR-0007: числовые диапазоны применяются только к выбранному quarter. Сервисная авторизация остаётся предложением.'
 servers:
 - url: https://{host}
   description: Единая внешняя точка входа (nginx → Gateway / Identity).
@@ -269,6 +271,42 @@ paths:
         schema:
           type: string
           pattern: ^\d{4}_Q[1-4]$
+      - name: min_unsubmitted_documents
+        in: query
+        description: Минимум непереданных документов выбранного квартала, включительно. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+      - name: max_unsubmitted_documents
+        in: query
+        description: Максимум непереданных документов выбранного квартала, включительно. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+      - name: min_unsubmitted_percent
+        in: query
+        description: Минимум процента непереданных документов выбранного квартала, без округления. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: number
+          minimum: 0
+          maximum: 100
+      - name: max_unsubmitted_percent
+        in: query
+        description: Максимум процента непереданных документов выбранного квартала, без округления. Без quarter
+          используется нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись
+          исключается соответствующим числовым фильтром.
+        schema:
+          type: number
+          minimum: 0
+          maximum: 100
       responses:
         '200':
           description: Страница реестра.
@@ -1093,6 +1131,7 @@ components:
       - dynamics_previous_quarter
       - dynamics_current_documents
       - dynamics_previous_documents
+      - quarter_summary
       properties:
         work_quarter:
           type:
@@ -1188,6 +1227,11 @@ components:
           - integer
           - 'null'
           minimum: 0
+        quarter_summary:
+          description: Выбранный quarter; отсутствие периода — null. Общий остаток всех периодов отдельно.
+          oneOf:
+          - $ref: '#/components/schemas/QuarterSummary'
+          - type: 'null'
     ClientListResponse:
       type: object
       required:
@@ -1273,6 +1317,7 @@ components:
       - dynamics_previous_quarter
       - dynamics_current_documents
       - dynamics_previous_documents
+      - quarter_summary
       properties:
         work_quarter:
           type:
@@ -1369,6 +1414,11 @@ components:
           - integer
           - 'null'
           minimum: 0
+        quarter_summary:
+          description: Выбранный quarter; отсутствие периода — null. Общий остаток всех периодов отдельно.
+          oneOf:
+          - $ref: '#/components/schemas/QuarterSummary'
+          - type: 'null'
     EventListResponse:
       type: object
       required:
@@ -1783,3 +1833,27 @@ components:
         operation_id:
           type: string
           format: uuid
+    QuarterSummary:
+      type: object
+      required:
+      - quarter
+      - total_documents
+      - unsubmitted_documents
+      - unsubmitted_percent
+      properties:
+        quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        total_documents:
+          type: integer
+          minimum: 0
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+        unsubmitted_percent:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          description: unsubmitted_documents/total_documents*100; при нулевом total — null. Значение не ограничивается
+            искусственно 100.
