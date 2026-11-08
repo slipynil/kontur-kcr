@@ -1,0 +1,77 @@
+x-import-environment: &import-environment
+  IMPORT_DATABASE_URL: postgresql+asyncpg://import_user:${IMPORT_POSTGRES_PASSWORD:-import-dev}@import-db:5432/import_db
+  IMPORT_AMQP_URL: amqp://${IMPORT_RABBITMQ_USER:-import_user}:${IMPORT_RABBITMQ_PASSWORD:-import-dev}@rabbitmq:5672/
+  IMPORT_UPLOAD_DIR: /var/lib/import-uploads
+  IMPORT_MAX_UPLOAD_BYTES: ${IMPORT_MAX_UPLOAD_BYTES:-33554432}
+
+x-import: &import
+  build:
+    context: .
+    target: runtime
+  environment: *import-environment
+
+services:
+  import-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: import_db
+      POSTGRES_USER: import_user
+      POSTGRES_PASSWORD: ${IMPORT_POSTGRES_PASSWORD:-import-dev}
+    volumes:
+      - import-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "import_user", "-d", "import_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  rabbitmq:
+    image: rabbitmq:4
+    environment:
+      RABBITMQ_DEFAULT_USER: ${IMPORT_RABBITMQ_USER:-import_user}
+      RABBITMQ_DEFAULT_PASS: ${IMPORT_RABBITMQ_PASSWORD:-import-dev}
+    volumes:
+      - import-rabbitmq:/var/lib/rabbitmq
+    hostname: import-rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  import-migrate:
+    <<: *import
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      import-db:
+        condition: service_healthy
+
+  import-api:
+    <<: *import
+    expose: ["8000"]
+    volumes:
+      - import-uploads:/var/lib/import-uploads
+    depends_on:
+      import-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  import-worker:
+    <<: *import
+    command: ["python", "-m", "import_worker.consumer"]
+    environment:
+      <<: *import-environment
+      IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-}
+    volumes:
+      - import-uploads:/var/lib/import-uploads
+    depends_on:
+      import-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  import-db:
+  import-rabbitmq:
+  import-uploads:
