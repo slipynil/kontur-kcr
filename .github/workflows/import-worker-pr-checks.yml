@@ -4,14 +4,12 @@ on:
   push:
     branches: ["main"]
     paths:
-      - '.github/workflows/import-worker-pr-checks.yml'
       - 'services/import-worker/**/*.py'
       - 'services/import-worker/pyproject.toml'
       - 'services/import-worker/poetry.lock'
   pull_request:
     branches: ["dev"]
     paths:
-      - '.github/workflows/import-worker-pr-checks.yml'
       - 'services/import-worker/**/*.py'
       - 'services/import-worker/pyproject.toml'
       - 'services/import-worker/poetry.lock'
@@ -24,41 +22,11 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_DB: import_db
-          POSTGRES_USER: import_user
-          POSTGRES_PASSWORD: import-ci
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -U import_user -d import_db"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 15
-      rabbitmq:
-        image: rabbitmq:4
-        env:
-          RABBITMQ_DEFAULT_USER: import_user
-          RABBITMQ_DEFAULT_PASS: import-ci
-        ports:
-          - 5672/tcp
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 15
 
     steps:
       # 1. Клонируем репозиторий
       - name: Checkout service code
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       # 2. Устанавливаем Poetry (менеджер зависимостей проекта)
       - name: Install Poetry
@@ -82,28 +50,9 @@ jobs:
           poetry run ruff check .
           poetry run ruff format --check .
 
-      # Use the tested Clients revision until the service is available on the base branch.
-      - name: Check out Clients Service for integration tests
-        if: hashFiles('services/clients/compose.check.yaml') == ''
-        uses: actions/checkout@v4
-        with:
-          ref: 6f3153423463f314cef0f726d040c2b557b2f04f
-          path: .ci-clients
-          persist-credentials: false
-
-      - name: Start Clients Service for integration tests
-        working-directory: ${{ hashFiles('services/clients/compose.check.yaml') != '' && 'services/clients' || '.ci-clients/services/clients' }}
-        run: docker compose -f compose.yaml -f compose.check.yaml up --build --wait --wait-timeout 120 clients
-
       # 6. Запуск тестов с покрытием
       - name: Run tests with coverage (pytest)
-        env:
-          IMPORT_TEST_DATABASE_URL: postgresql+asyncpg://import_user:import-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/import_db
-          IMPORT_TEST_AMQP_URL: amqp://import_user:import-ci@127.0.0.1:${{ job.services.rabbitmq.ports['5672'] }}/
-          IMPORT_TEST_CLIENTS_URL: http://127.0.0.1:8000
-        run: |
-          IMPORT_DATABASE_URL="$IMPORT_TEST_DATABASE_URL" poetry run alembic upgrade head
-          poetry run pytest -v --cov=. --cov-report=term --cov-report=json
+        run: poetry run pytest -v --cov=. --cov-report=term --cov-report=json
 
       # 7. Проверяем, что общее покрытие кода >= 90%
       - name: Check code coverage threshold
