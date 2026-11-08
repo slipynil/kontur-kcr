@@ -7,7 +7,7 @@
 | Import API | `uvicorn import_worker.api:create_app --factory --host 0.0.0.0` |
 | Import Worker | `python -m import_worker.consumer` |
 
-API доступен на `http://import-api:8000` внутри сети Compose. Gateway проверяет права администратора и передаёт `X-User-Id` при загрузке. Для запуска вне Compose установите `IMPORT_DATABASE_URL`, `IMPORT_AMQP_URL` и `IMPORT_UPLOAD_DIR`, примените `alembic upgrade head` и запустите обе команды отдельно. Для стенда нужны свои учётные данные PostgreSQL и RabbitMQ.
+API доступен на `http://import-api:8000` внутри сети Compose. Gateway проверяет права администратора и передаёт `X-User-Id` при загрузке. Для запуска вне Compose установите Python 3.14 и Poetry 2.5.1, выберите интерпретатор командой `poetry env use 3.14` и выполните `poetry sync`. Установите `IMPORT_DATABASE_URL`, `IMPORT_AMQP_URL` и `IMPORT_UPLOAD_DIR`, примените `poetry run alembic upgrade head` и запустите обе команды через `poetry run`. Для стенда нужны свои учётные данные PostgreSQL и RabbitMQ.
 
 Для изолированной разработки задайте `IMPORT_LOCAL_CLIENTS_URL` как базовый URL Clients Service с включённым маршрутом `/internal/v1/import/apply`. В отдельном Compose-проекте Clients должен быть доступен из сети Worker. Без этой настройки готовое задание остаётся доступным для повтора. При локальном успехе Clients отчёт содержит `clients_applied_at`, а статус остаётся `PROCESSING` до согласованного обновления Operator Work. Если все строки уже были приняты в предыдущих пакетах, повтор завершается как `COMPLETED` без изменений. Отклонённый целиком пакет получает `FAILED`. В отчёте номер строки 0 обозначает сообщение о книге или листе.
 
@@ -22,10 +22,11 @@ API доступен на `http://import-api:8000` внутри сети Compose
 ## Проверки
 
 ```sh
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run python -m pytest --cov=import_worker
+poetry check --lock
+poetry sync
+poetry run ruff check .
+poetry run ruff format --check .
+poetry run python -m pytest --cov=import_worker
 docker compose -p kontur-import-test -f compose.yaml -f compose.test.yaml run --build --rm import-tests
 ```
 
