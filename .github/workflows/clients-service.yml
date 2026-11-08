@@ -75,23 +75,12 @@ jobs:
       - run: docker compose up --detach --wait --wait-timeout 120 clients
       - name: Check HTTP readiness and disabled business routes
         run: |
-          python - <<'PY'
-          import json
-          from urllib.error import HTTPError
-          from urllib.request import urlopen
-
-          for path in ('/health/live', '/health/ready'):
-              with urlopen('http://127.0.0.1:8000' + path, timeout=5) as response:
-                  assert response.status == 200
-                  assert json.load(response) == {'status': 'ok'}
-          try:
-              urlopen('http://127.0.0.1:8000/internal/v1/clients', timeout=5)
-          except HTTPError as error:
-              assert error.code == 404
-          else:
-              raise AssertionError('Business route unexpectedly enabled')
-          PY
+          python scripts/check_http.py --mode closed
           test "$(docker compose exec -T clients id -u)" = '10001'
+      - name: Enable business routes only in the isolated CI project
+        run: docker compose -f compose.yaml -f compose.check.yaml up --detach --wait --wait-timeout 120 clients
+      - name: Check business operations through the container HTTP port
+        run: python scripts/check_http.py --mode business
       - name: Logs
         if: always()
         run: docker compose logs --no-color migrate clients
