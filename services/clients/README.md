@@ -17,15 +17,14 @@ Compose поднимает PostgreSQL, применяет миграции от�
 
 ## Запуск Python локально
 
-Python 3.13 и PostgreSQL 17. Из каталога `services/clients`:
+Python 3.14, Poetry 2.5.1 и PostgreSQL 17. Команды запуска из каталога `services/clients`.
 
 ```powershell
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements-dev.lock
-.venv/Scripts/python.exe -m pip install --no-deps -e .
+poetry env use 3.14
+poetry install --no-interaction
 $env:CLIENTS_DATABASE_URL = 'postgresql+psycopg://clients:clients_local@localhost:5433/clients'
-.venv/Scripts/alembic.exe upgrade head
-.venv/Scripts/uvicorn.exe clients_service.main:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+poetry run alembic upgrade head
+poetry run uvicorn clients_service.main:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
 Для запуска только БД можно использовать `docker compose up -d db`. `.env.example` содержит пример URL; приложение читает переменные окружения, файл `.env` автоматически не загружает. URL обязателен; секретное значение скрыто в представлении настроек. Валидационные ошибки настроек не следует публиковать в публичном API.
@@ -35,17 +34,18 @@ $env:CLIENTS_DATABASE_URL = 'postgresql+psycopg://clients:clients_local@localhos
 ## Проверки
 
 ```powershell
-.venv/Scripts/ruff.exe check .
-.venv/Scripts/python.exe -m pytest -m 'not postgres'
+poetry check --lock
+poetry run ruff check .
+poetry run ruff format --check .
 # PostgreSQL-проверки создают временную БД и удаляют только её.
 # У пользователя тестового подключения должно быть право CREATE DATABASE.
 $env:CLIENTS_TEST_ADMIN_URL = 'postgresql+psycopg://clients:clients_local@localhost:5433/postgres'
-.venv/Scripts/python.exe -m pytest -m postgres
+poetry run pytest --cov=. --cov-report=term --cov-report=json
 ```
 
 Без тестового URL интеграционные тесты явно пропускаются. Они проверяют upgrade/repeat/downgrade/upgrade, readiness, теги, ограничения и каскад внутри Clients DB; соседние сервисы не затрагиваются.
 
-`requirements.lock` фиксирует runtime-зависимости, `requirements-dev.lock` — окружение разработки. Начальная миграция содержит замороженную копию утверждённого DDL; последующие изменения схемы оформляются новыми миграциями после обновления спецификации. Начальную миграцию после применения на общем стенде не менять.
+`poetry.lock` фиксирует зависимости приложения и разработки. `poetry build` собирает Python-пакет. Docker использует тот же lock-файл и устанавливает только зависимости приложения. Начальная миграция содержит копию утверждённого DDL. Последующие изменения схемы оформляются новыми миграциями после обновления спецификации.
 
 ## Применение пакета в изолированной разработке
 
@@ -133,7 +133,7 @@ outstanding_documents остаётся суммой остатков всех и
 
 [Документ для Gateway/Import](../../docs/clients-integration-handoff.md) описывает реальные маршруты, ошибки, границы ответственности и ограничения. [Предложение по токенам](../../docs/proposals/clients-service-auth.md) не реализовано по просьбе пользователя; проверка доступа в коде не менялась. Переключатели CLIENTS_ENABLE_* не являются авторизацией.
 
-Workflow `.github/workflows/clients-service.yml` подготовлен для push/PR: линтер, полный набор тестов с PostgreSQL 17, сборка Docker и запуск Compose с проверкой readiness и закрытых по умолчанию бизнес-маршрутов. Публикации образа и развёртывания нет. Workflow для 433aa64 успешно выполнил сборку и запуск контейнера. Локально Docker отсутствует; новые расширенные HTTP-проверки контейнера ожидают следующего запуска CI.
+Общий workflow `.github/workflows/clients-service-pr-checks.yml` устанавливает зависимости из `poetry.lock` на Python 3.14, поднимает PostgreSQL 17 и проверяет Ruff и pytest с порогом покрытия 90%.
 
 `tests/test_http_flow.py` проверяет HTTP-цепочку Import-пакеты → чтение → удаление квартала → откат → повтор команды на настоящем PostgreSQL. Это сквозная проверка Clients, а не готовых Gateway/Import/Operator Work.
 
@@ -147,4 +147,4 @@ python scripts/check_http.py --base-url http://127.0.0.1:8000 --mode business
 
 Скрипт использует urllib и стандартную библиотеку. Он принимает только loopback-адрес, проверяет readiness, а затем закрытые маршруты или реальные бизнес-операции. Business создаёт синтетические пакеты/клиентов и при успешном завершении удаляет их последовательными откатами. Запускайте его в отдельной тестовой БД; при аварийном завершении очищается весь временный стенд. Это не проверка настоящего Gateway.
 
-В CI сначала проверяется обычный закрытый Compose, затем `compose.check.yaml` открывает маршруты только в временном CI-проекте. Обычный compose.yaml не меняется. [Результаты и границы проверки](../../docs/clients-verification.md): базовый контейнер уже успешно проверен на GitHub для 433aa64; расширенный сценарий нового workflow требует следующего запуска.
+Для локальной проверки контейнера `compose.check.yaml` включает бизнес-маршруты в отдельном тестовом Compose-проекте. [Результаты предыдущих проверок](../../docs/clients-verification.md).
