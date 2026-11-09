@@ -93,13 +93,9 @@ paths:
       - Imports
       operationId: getImport
       summary: Отчёт о пакете [Предложение]
-      description: 'Сводка импорта для дашборда (`spec.md` §4.1): счётчики успешно/ошибок и
-
-        строки `import_errors` с причинами отсева (для виджета скачивания
-
-        `.xlsx` с ошибками).
-
-        '
+      description: |
+        Сводка импорта для дашборда (`spec.md` §4.1): счётчики успешно/ошибок и
+        строки `import_errors` с причинами отсева. Файл с теми же ошибками доступен по `/imports/{batch_id}/errors.xlsx`.
       parameters:
       - name: batch_id
         in: path
@@ -114,6 +110,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
+        '404':
+          description: Пакет не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /imports/{batch_id}/errors.xlsx:
+    get:
+      tags:
+      - Imports
+      operationId: downloadImportErrors
+      summary: Скачать ошибки пакета в Excel
+      description: Книга содержит лист, номер строки Excel, код КЦР и причину. Для пакета без ошибок возвращается книга с заголовками.
+      parameters:
+      - name: batch_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Отчёт об ошибках.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
         '404':
           description: Пакет не найден.
           content:
@@ -158,6 +186,15 @@ paths:
               example:
                 code: IMPORT_NOT_LATEST
                 message: Можно отменить только последний применённый пакет
+        '503':
+          description: Координация отката между затронутыми сервисами недоступна.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: IMPORT_ROLLBACK_UNAVAILABLE
+                message: Координация отката между сервисами недоступна
 components:
   parameters:
     UserIdHeader:
@@ -187,6 +224,7 @@ components:
       properties:
         row_number:
           type: integer
+          description: Номер строки Excel с единицы. Ноль обозначает сообщение о листе или книге целиком.
         kcr_code:
           type:
           - string
@@ -241,6 +279,13 @@ components:
         created_at:
           type: string
           format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        clients_applied_at:
+          type: [string, 'null']
+          format: date-time
+          description: Clients Service подтвердил локальное применение. Обновление операторской работы ещё не подтверждено.
         selected_quarter:
           type: string
           pattern: ^\d{4}_Q[1-4]$

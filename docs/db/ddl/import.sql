@@ -18,8 +18,18 @@ CREATE TABLE import_batches (
     success_count INTEGER     NOT NULL DEFAULT 0,
     error_count   INTEGER     NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at  TIMESTAMPTZ
+    completed_at  TIMESTAMPTZ,
+    file_sha256   TEXT,
+    published_at  TIMESTAMPTZ,
+    apply_payload JSONB,
+    apply_started_at TIMESTAMPTZ,
+    clients_applied_at TIMESTAMPTZ
 );
+
+CREATE INDEX idx_import_batches_unpublished ON import_batches (created_at)
+    WHERE published_at IS NULL AND file_sha256 IS NOT NULL AND status = 'PROCESSING';
+CREATE UNIQUE INDEX uq_import_batches_active_apply ON import_batches ((TRUE))
+    WHERE apply_started_at IS NOT NULL AND apply_payload IS NOT NULL;
 
 COMMENT ON TABLE import_batches IS 'Журнал импортов (spec.md §2.5). Статус: PROCESSING → COMPLETED | FAILED; ROLLED_BACK после отката.';
 COMMENT ON COLUMN import_batches.uploaded_by IS 'Логическая ссылка на users (Identity DB).';
@@ -41,10 +51,16 @@ CREATE INDEX idx_import_errors_batch ON import_errors (batch_id);
 
 COMMENT ON TABLE import_errors IS 'Отсеянные строки файла. Основа виджета скачивания .xlsx с ошибками (spec.md §4.1).';
 
+CREATE TABLE import_observations (
+    fingerprint TEXT NOT NULL,
+    batch_id UUID NOT NULL REFERENCES import_batches (id) ON DELETE CASCADE,
+    PRIMARY KEY (fingerprint, batch_id)
+);
+
 -- ---------------------------------------------------------------------------
 -- Undo-информация пакета: делает возможным rollback при upsert-срезах
 -- (spec.md §3.2.3; следствие решения 3 в docs/db/README.md)
--- Заполняется ДО применения пакета в Clients Service.
+-- Предыдущее состояние фиксирует владелец данных атомарно с их изменением.
 -- ---------------------------------------------------------------------------
 CREATE TABLE import_batch_undo (
     id                        BIGSERIAL PRIMARY KEY,

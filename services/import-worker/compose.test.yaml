@@ -1,0 +1,14 @@
+services:
+  import-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      IMPORT_TEST_DATABASE_URL: postgresql+asyncpg://import_user:${IMPORT_POSTGRES_PASSWORD:-import-dev}@import-db:5432/import_db
+      IMPORT_TEST_AMQP_URL: amqp://${IMPORT_RABBITMQ_USER:-import_user}:${IMPORT_RABBITMQ_PASSWORD:-import-dev}@rabbitmq:5672/
+    depends_on:
+      import-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
