@@ -1,0 +1,71 @@
+name: CI with Import Worker Service
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'services/import-worker/**/*.py'
+      - 'services/import-worker/pyproject.toml'
+      - 'services/import-worker/poetry.lock'
+  pull_request:
+    branches: ["dev"]
+    paths:
+      - 'services/import-worker/**/*.py'
+      - 'services/import-worker/pyproject.toml'
+      - 'services/import-worker/poetry.lock'
+
+defaults:
+  run:
+    working-directory: './services/import-worker'
+
+jobs:
+
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Клонируем репозиторий
+      - name: Checkout service code
+        uses: actions/checkout@v4
+
+      # 2. Устанавливаем Poetry (менеджер зависимостей проекта)
+      - name: Install Poetry
+        run: pipx install poetry
+
+      # 3. Устанавливаем Python и включаем кэширование зависимостей Poetry
+      #    Стек: Python 3.14, Poetry, FastAPI, SQLAlchemy, Alembic, PostgreSQL, pytest
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'poetry'
+
+      # 4. Установка зависимостей
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      # 5. Запуск линтера
+      - name: Run Ruff
+        run: |
+          poetry run ruff check .
+          poetry run ruff format --check .
+
+      # 6. Запуск тестов с покрытием
+      - name: Run tests with coverage (pytest)
+        run: poetry run pytest -v --cov=. --cov-report=term --cov-report=json
+
+      # 7. Проверяем, что общее покрытие кода >= 90%
+      - name: Check code coverage threshold
+        run: |
+          TOTAL_COVERAGE=$(python -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])")
+
+          echo "Current code coverage: ${TOTAL_COVERAGE}%"
+
+          awk -v cov="$TOTAL_COVERAGE" -v min="90.0" 'BEGIN {
+              if (cov < min) {
+                  print "❌ Error: Code coverage is " cov "%, which is below the required " min "%."
+                  exit 1
+              } else {
+                  print "✅ Success: Code coverage " cov "% meets the requirement (" min "%)."
+              }
+          }'

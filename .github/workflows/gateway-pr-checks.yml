@@ -1,0 +1,63 @@
+name: CI with Gateway Service
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'services/gateway/**/*.go'
+  pull_request:
+    branches: ["dev"]
+    paths:
+      - 'services/gateway/**/*.go'
+
+defaults:
+  run:
+    working-directory: './services/gateway'
+
+jobs:
+
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Клонируем репозиторий
+      - name: Checkout service code
+        uses: actions/checkout@v4
+
+      # 2. Устанавливаем Go и включаем кэширования зависимостей
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      # 3. Проверка зависимостей и сборка
+      - name: Install dependencies
+        run: go mod download
+
+      # 3.5 Запуск линтера
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.15
+          working-directory: './services/gateway'
+
+      # 4. Запуск тестов
+      - name: Run tests with coverage
+        run: go test -v -coverprofile=coverage.out ./...
+
+      # 5. Проверяем, что общее покрытие кода >= 90%
+      - name: Check code coverage threshold
+        run: |
+          TOTAL_COVERAGE=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}' | sed 's/%//')
+
+          echo "Current code coverage: ${TOTAL_COVERAGE}%"
+
+          awk -v cov="$TOTAL_COVERAGE" -v min="90.0" 'BEGIN {
+              if (cov < min) {
+                  print "❌ Error: Code coverage is " cov "%, which is below the required " min "%."
+                  exit 1
+              } else {
+                  print "✅ Success: Code coverage " cov "% meets the requirement (" min "%)."
+              }
+          }'
