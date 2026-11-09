@@ -1,6 +1,6 @@
 # API Контур КЦР
 
-Контракты OpenAPI 3.1 согласованы со spec.md 1.5 и ADR-0002. Публичный контур — public-api.yaml; внутренние — internal/*.yaml. Вход через Gateway/Identity с Bearer JWT и ролью ADMIN/OPERATOR.
+Контракты OpenAPI 3.1: [публичный API](public-api.yaml) и [внутренние API сервисов](internal/). Вход через Gateway/Identity с Bearer JWT и ролью ADMIN/OPERATOR.
 
 ## Изменения
 
@@ -17,8 +17,4 @@ Gateway — вход и роли; Clients — профили, остатки, п
 
 Внутренние API доступны только в доверенной сети; заголовки пользователя проставляет Gateway. Операции удаления и импорта идемпотентны. Внешний успех удаления допускается после очистки всех затронутых сервисов. Протокол доставки, повторов и компенсации необходимо завершить до реализации; наличие схем не означает готовность приложения.
 
-## Уточнения Clients Service от 07.11.2026
-
-ADR-0003 фиксирует динамику выбранного исходного квартала, категории FIRST_TIME/REPEATED, исправления одной даты, автоматическое снятие предупреждений и сохранение других кварталов/общей истории при квартальном удалении. Clients владеет только своей БД; стек FastAPI, SQLAlchemy, Alembic, PostgreSQL, pytest. Техническая интеграция с Gateway ещё согласуется.
-
-Подробный план: [план Clients Service](../clients-service-plan.md).
+Внутренний контракт Clients приведён в [OpenAPI](internal/clients-service.yaml). Правила расчёта и восстановления определяют [ADR-0005](../adr/0005-clients-read-api-and-quarter-dynamics.md), [ADR-0006](../adr/0006-clients-rollback-and-deletion.md) и [ADR-0007](../adr/0007-clients-numeric-filters-and-verification.md).

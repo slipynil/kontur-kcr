@@ -1,0 +1,7 @@
+# Isolated HTTP checks only; do not use this override on a shared stand.
+services:
+  clients:
+    environment:
+      CLIENTS_ENABLE_REGISTRY_READ: 'true'
+      CLIENTS_ENABLE_IMPORT_APPLY: 'true'
+      CLIENTS_ENABLE_DATA_RECOVERY: 'true'

@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Внутреннее API — Clients Service (Python)
-  version: 0.5.0-draft
+  version: 0.9.0-draft
   summary: Реестр клиентов и история срезов для остальных микросервисов.
-  description: 'Актуальные правила — spec.md 1.5 и ADR-0002 (уточнения пользователя от 05.11.2026).
+  description: 'Актуальные правила — spec.md 1.8 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
     Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
 
@@ -27,7 +27,15 @@ info:
 
     Уточнения 07.11.2026: ADR-0003; удаление квартала сохраняет остальные кварталы и общую историю работы.
 
-    '
+
+    ADR-0005: динамика сравнивает актуальные остатки разных кварталов, по умолчанию текущий календарный квартал
+    Europe/Moscow и предыдущий. Внутреннее HTTP-чтение выключено до согласования авторизации; локальное включение
+    CLIENTS_ENABLE_REGISTRY_READ=true.
+
+    ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
+    глобального завершения.
+
+    ADR-0007: числовые диапазоны применяются только к выбранному quarter. Сервисная авторизация остаётся предложением.'
 servers:
 - url: http://clients-service:8000/internal/v1
   description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
@@ -43,30 +51,31 @@ paths:
       - Registry
       operationId: listClients
       summary: Поиск по реестру
-      description: 'Те же фильтры, что у публичного `GET /api/v1/clients` (`spec.md` §3.3).
-
-        Используется Gateway (прокси), Operator Work Service и Assistant Service
-
-        (отбор клиентов под обзвон).
-
-        '
+      description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
+        используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
+        и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
+        межсервисной авторизации.'
       parameters:
       - name: search
         in: query
-        description: Поиск по Коду КЦР или ИНН.
+        description: Буквальное вхождение в КЦР или ИНН, без учёта регистра. Символы % и _ не являются шаблонами.
         schema:
           type: string
+          maxLength: 256
       - name: dynamics
         in: query
         schema:
           $ref: '#/components/schemas/Dynamics'
+        description: Сравнение актуальных остатков разных исходных кварталов; без quarter применяется календарная
+          пара по умолчанию.
       - name: duration
         in: query
         schema:
           $ref: '#/components/schemas/Duration'
       - name: tags
         in: query
-        description: Признаки клиента через запятую.
+        description: Признаки через запятую; клиент должен иметь все выбранные признаки.
         schema:
           type: array
           items:
@@ -79,6 +88,7 @@ paths:
           type: integer
           minimum: 1
           default: 1
+          maximum: 1000000
       - name: page_size
         in: query
         schema:
@@ -88,11 +98,46 @@ paths:
           default: 20
       - name: quarter
         in: query
-        description: Исходный квартал документов для динамики/истории. Без выбора динамика не вычисляется; общий
-          остаток не ограничивается этим параметром.
+        description: Квартал сравнения с предшествующим; по умолчанию текущий календарный квартал Europe/Moscow.
         schema:
           type: string
           pattern: ^\d{4}_Q[1-4]$
+      - name: min_unsubmitted_documents
+        in: query
+        description: Минимум непереданных документов выбранного квартала, включительно. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+      - name: max_unsubmitted_documents
+        in: query
+        description: Максимум непереданных документов выбранного квартала, включительно. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+      - name: min_unsubmitted_percent
+        in: query
+        description: Минимум процента непереданных документов выбранного квартала, без округления. Без quarter используется
+          нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись исключается
+          соответствующим числовым фильтром.
+        schema:
+          type: number
+          minimum: 0
+          maximum: 100
+      - name: max_unsubmitted_percent
+        in: query
+        description: Максимум процента непереданных документов выбранного квартала, без округления. Без quarter
+          используется нынешний календарный квартал Europe/Moscow. Нет периода или процент не определён — запись
+          исключается соответствующим числовым фильтром.
+        schema:
+          type: number
+          minimum: 0
+          maximum: 100
       responses:
         '200':
           description: Страница реестра.
@@ -100,24 +145,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClientListResponse'
+        '400':
+          description: Некорректные или неподдерживаемые параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /clients/{kcr_code}:
     get:
       tags:
       - Registry
       operationId: getClient
       summary: Карточка клиента с историей срезов
-      description: 'Клиент и его срезы по кварталам (свежие первыми). Operator Work Service
-
-        использует карточку для пула обзвона; Assistant Service — для сводки «Контекст
-
-        перед звонком» (последние 3 среза, `spec.md` §3.4).
-
-        '
+      description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
+        используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
+        и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
+        межсервисной авторизации.'
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: snapshots_limit
         in: query
-        description: Сколько последних срезов вернуть.
+        description: Количество показанных актуальных квартальных срезов; не ограничивает сумму остатков, динамику
+          и длительность.
         schema:
           type: integer
           minimum: 1
@@ -125,8 +181,7 @@ paths:
           default: 8
       - name: quarter
         in: query
-        description: Исходный квартал документов для динамики/истории. Без выбора динамика не вычисляется; общий
-          остаток не ограничивается этим параметром.
+        description: Квартал сравнения с предшествующим; по умолчанию текущий календарный квартал Europe/Moscow.
         schema:
           type: string
           pattern: ^\d{4}_Q[1-4]$
@@ -143,19 +198,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '400':
+          description: Некорректные или неподдерживаемые параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     delete:
       operationId: deleteClient
-      summary: Удалить клиента целиком
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      summary: Локально удалить выбранные данные
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -164,24 +227,44 @@ paths:
           type: string
       responses:
         '200':
-          description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataDeletionResponse'
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /clients/{kcr_code}/snapshots/history:
     get:
       tags:
       - Registry
       operationId: getSnapshotHistory
       summary: Журнал изменения статуса передачи документов
-      description: 'Append-only журнал `quarter_snapshot_history` (`spec.md` §2.4): одна
-
-        запись на каждое новое наблюдение числа непереданных документов. Используется
-
-        Assistant Service («последние 3 записи» сводки, `spec.md` §3.4) и
-
-        Gateway (публичный журнал карточки клиента).
-
-        '
+      description: 'История наблюдений: limit/offset/total, свежие даты и исправления первыми. quarter ограничивает
+        историю исходным периодом; без фильтра — все периоды. Между отдельными страницами новый импорт может изменить
+        позиции. Маршруты выключены по умолчанию до согласования межсервисной авторизации.'
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: limit
@@ -194,11 +277,17 @@ paths:
           default: 20
       - name: quarter
         in: query
-        description: Исходный квартал документов для динамики/истории. Без выбора динамика не вычисляется; общий
-          остаток не ограничивается этим параметром.
+        description: Исходный квартал истории; без фильтра — все.
         schema:
           type: string
           pattern: ^\d{4}_Q[1-4]$
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100000000
+          default: 0
       responses:
         '200':
           description: Записи журнала, свежие первыми.
@@ -208,13 +297,37 @@ paths:
                 type: object
                 required:
                 - items
+                - total
+                - limit
+                - offset
                 properties:
                   items:
                     type: array
                     items:
                       $ref: '#/components/schemas/SnapshotHistoryRecord'
+                  total:
+                    type: integer
+                    minimum: 0
+                  limit:
+                    type: integer
+                    minimum: 0
+                  offset:
+                    type: integer
+                    minimum: 0
         '404':
           description: Клиент не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          description: Некорректные или неподдерживаемые параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
           content:
             application/json:
               schema:
@@ -224,11 +337,12 @@ paths:
       tags:
       - Import
       operationId: applyImport
-      summary: Применить пакет импорта [Предложение]
-      description: Применить выбранный квартал пакета. Для REGISTRY достаточно профиля, для SNAPSHOT обязателен
-        snapshot. Пустые поля наследуются с needs_review и происхождением. Каждый новый срез сохраняется, повтор
-        идентичного — нет. Старые даты не заменяют более свежий текущий остаток. Clients не пишет напрямую в Operator
-        Work DB.
+      summary: Локально применить пакет импорта
+      description: 'ADR-0004: результат, данные и undo сохраняются одной транзакцией Clients DB. Повтор того же
+        batch_id возвращает прежний результат; другой payload даёт 409. Ошибки строк возвращаются в errors с индексом
+        с единицы, корректные строки принимаются. Import остаётся координатором; этот ответ не означает завершение
+        всей системы. Маршрут доступен только при CLIENTS_ENABLE_IMPORT_APPLY=true для изолированной разработки
+        до согласования авторизации.'
       requestBody:
         required: true
         content:
@@ -248,15 +362,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '409':
+          description: IMPORT_PAYLOAD_CONFLICT либо IMPORT_ALREADY_ROLLED_BACK; новый импорт требует нового batch_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'IMPORT_RETRY_REQUIRED: локальная транзакция отменена; повторить тот же пакет.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /import/{batch_id}/rollback:
     post:
       tags:
       - Import
       operationId: rollbackImport
-      summary: Откатить пакет [Предложение]
-      description: Отменить только последний применённый неотменённый пакет в системе. Созданные данные и связанная
-        работа операторов удаляются; прежние значения обновлённых записей восстанавливаются. Другой пакет -> 409
-        IMPORT_NOT_LATEST. Начатая работа не блокирует откат. Завершение только после согласованной очистки сервисов.
+      summary: Локально откатить пакет
+      description: 'ADR-0006: Восстановить состояние затронутых клиентов до импорта, включая данные, вручную удалённые
+        после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
+        Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное включение
+        CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот же ID с другим
+        payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       parameters:
       - name: batch_id
         in: path
@@ -266,7 +394,7 @@ paths:
           format: uuid
       responses:
         '200':
-          description: Пакет откачен.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
           content:
             application/json:
               schema:
@@ -278,28 +406,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Пакет не последний или имеет недопустимый статус.
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: IMPORT_NOT_LATEST
-                message: Можно отменить только последний применённый пакет
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
   /clients/{kcr_code}/snapshots/{quarter}:
     delete:
       operationId: deleteClientQuarter
-      summary: Удалить выбранные квартальные данные
-      description: 'Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,
-        циклы, события, назначения и сроки.
-
-        Удаление исходного квартала сохраняет остальные кварталы и общую историю взаимодействия. Циклы других кварталов
-        и общие звонки/договорённости не удаляются каскадно.
-
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов
-        и кэшей.
-
-        '
+      summary: Локально удалить выбранные данные
+      description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
+        остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        undo не согласовано.'
       parameters:
       - name: kcr_code
         in: path
@@ -315,9 +454,35 @@ paths:
           example: 2026_Q2
       responses:
         '200':
-          description: Данные и связанная работа удалены; успех только после межсервисной очистки.
-        '404':
-          description: Объект не найден.
+          description: Локальная команда завершена или возвращён сохранённый результат; глобальная координация отдельно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataDeletionResponse'
+        '400':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Локальная транзакция отменена; повторить тот же operation_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCommand'
 components:
   parameters:
     KcrCode:
@@ -425,17 +590,25 @@ components:
         kcr_code:
           type: string
         inn:
-          type: string
+          type:
+          - string
+          - 'null'
         kpp:
-          type: string
+          type:
+          - string
+          - 'null'
         organization_name:
-          type: string
+          type:
+          - string
+          - 'null'
         status:
           $ref: '#/components/schemas/ClientStatus'
         is_blocked:
           type: boolean
         manager_name:
-          type: string
+          type:
+          - string
+          - 'null'
         contacts:
           type: object
           additionalProperties: true
@@ -461,8 +634,8 @@ components:
           items:
             $ref: '#/components/schemas/QuarterSnapshot'
         dynamics:
-          description: Две последние записи выбранного исходного quarter; без выбранного квартала или сравнимой
-            пары — null. Суммарный остаток выводится отдельно.
+          description: Сравнение актуальных остатков quarter и предыдущего исходного квартала. Нет одного периода
+            — null; текущий ноль при известной паре — ALL_SUBMITTED.
           oneOf:
           - $ref: '#/components/schemas/Dynamics'
           - type: 'null'
@@ -482,6 +655,33 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Duration'
           - type: 'null'
+        dynamics_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        dynamics_previous_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        dynamics_current_documents:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        dynamics_previous_documents:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        quarter_summary:
+          description: Выбранный quarter; отсутствие периода — null. Общий остаток всех периодов отдельно.
+          oneOf:
+          - $ref: '#/components/schemas/QuarterSummary'
+          - type: 'null'
+      required:
+      - dynamics_quarter
+      - dynamics_previous_quarter
+      - dynamics_current_documents
+      - dynamics_previous_documents
+      - quarter_summary
     SnapshotHistoryRecord:
       type: object
       description: Запись журнала изменения статуса передачи документов (`spec.md` §2.4).
@@ -519,6 +719,12 @@ components:
           type: string
           pattern: ^\d{4}_Q[1-4]$
           example: 2026_Q2
+        observation_order:
+          type: integer
+          description: Порядок исправлений одной даты.
+        inherited_fields:
+          type: object
+          additionalProperties: true
     ClientListItem:
       type: object
       description: 'Строка реестра. Закрепление и этап (`spec.md` §2.7, §2.8) добавляет
@@ -532,13 +738,22 @@ components:
       - organization_name
       - status
       - tags
+      - dynamics_quarter
+      - dynamics_previous_quarter
+      - dynamics_current_documents
+      - dynamics_previous_documents
+      - quarter_summary
       properties:
         kcr_code:
           type: string
         inn:
-          type: string
+          type:
+          - string
+          - 'null'
         organization_name:
-          type: string
+          type:
+          - string
+          - 'null'
         status:
           $ref: '#/components/schemas/ClientStatus'
         tags:
@@ -549,8 +764,8 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Dynamics'
           - type: 'null'
-          description: Две последние записи выбранного исходного quarter; без выбранного квартала или сравнимой
-            пары — null. Суммарный остаток выводится отдельно.
+          description: Сравнение актуальных остатков quarter и предыдущего исходного квартала. Нет одного периода
+            — null; текущий ноль при известной паре — ALL_SUBMITTED.
         latest_snapshot:
           oneOf:
           - type: object
@@ -586,6 +801,27 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Duration'
           - type: 'null'
+        dynamics_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        dynamics_previous_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        dynamics_current_documents:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        dynamics_previous_documents:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        quarter_summary:
+          description: Выбранный quarter; отсутствие периода — null. Общий остаток всех периодов отдельно.
+          oneOf:
+          - $ref: '#/components/schemas/QuarterSummary'
+          - type: 'null'
     ClientListResponse:
       type: object
       required:
@@ -606,8 +842,10 @@ components:
           type: integer
     ImportApplyRequest:
       type: object
-      description: Выбранный пользователем квартал обязателен. Snapshot обязателен для SNAPSHOT; для REGISTRY допускается
-        только профиль. Историческая дата не переписывает более свежий остаток.
+      description: Нормализованный пакет ADR-0004. Конверт проверяется целиком, строки — независимо. batch_id является
+        ключом повтора. HTTP-маршрут по умолчанию отсутствует; локальное включение не является авторизацией. REGISTRY
+        принимает профиль без snapshot, SNAPSHOT требует известный КЦР и snapshot. Дата строки по умолчанию равна
+        snapshot_date конверта.
       required:
       - batch_id
       - uploaded_by
@@ -641,15 +879,25 @@ components:
                   kcr_code:
                     type: string
                   inn:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   kpp:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   organization_name:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                   status:
-                    $ref: '#/components/schemas/ClientStatus'
+                    oneOf:
+                    - $ref: '#/components/schemas/ClientStatus'
+                    - type: 'null'
                   tags:
-                    type: array
+                    type:
+                    - array
+                    - 'null'
                     items:
                       $ref: '#/components/schemas/Tag'
                   manager_name:
@@ -668,6 +916,7 @@ components:
                     type:
                     - string
                     - 'null'
+                additionalProperties: false
               snapshot:
                 type: object
                 required:
@@ -677,8 +926,7 @@ components:
                     type: string
                     pattern: ^\d{4}_Q[1-4]$
                     example: 2026_Q1
-                    description: Исходный период документов; по умолчанию выбранный квартал. Старый период сохраняется
-                      при переносе.
+                    description: Обязательный исходный квартал документов; отличается от selected_quarter наблюдения.
                   total_documents:
                     type:
                     - integer
@@ -689,6 +937,7 @@ components:
                       срезе квартала; `null`/отсутствие — сохранить прежнее значение.
 
                       '
+                    maximum: 2147483647
                   unsubmitted_documents:
                     type:
                     - integer
@@ -696,10 +945,14 @@ components:
                     minimum: 0
                     description: Пустота наследуется из последних данных с меткой; без предыдущего обязательного
                       значения — ошибка строки.
+                    maximum: 2147483647
                   snapshot_date:
-                    type: string
+                    type:
+                    - string
+                    - 'null'
                     format: date
-                    description: Дата среза (по умолчанию — дата загрузки).
+                    description: Дата строки; без значения используется snapshot_date конверта.
+                additionalProperties: false
             description: Для REGISTRY достаточно client. Для SNAPSHOT snapshot обязателен. Пустые поля наследуются
               с происхождением.
             allOf:
@@ -711,6 +964,7 @@ components:
                   snapshot:
                     required:
                     - quarter
+            additionalProperties: false
         selected_quarter:
           type: string
           pattern: ^\d{4}_Q[1-4]$
@@ -736,6 +990,7 @@ components:
               items:
                 required:
                 - snapshot
+      additionalProperties: false
     ImportApplyResponse:
       type: object
       required:
@@ -751,32 +1006,38 @@ components:
       properties:
         created_clients:
           type: integer
+          description: Число уникальных созданных клиентов.
         updated_clients:
           type: integer
+          description: Число уникальных обновлённых ранее существовавших клиентов.
         created_snapshots:
           type: integer
         updated_snapshots:
           type: integer
         created_history_records:
           type: integer
-          description: Количество добавленных записей журнала истории.
+          description: Число новых наблюдений принятых строк SNAPSHOT. Повтор batch_id не добавляет наблюдений.
         batch_id:
           type: string
           format: uuid
         accepted_rows:
           type: integer
+          minimum: 0
         rejected_rows:
           type: integer
+          minimum: 0
         errors:
           type: array
           items:
             type: object
-            required: [row_number, code, field]
+            required:
+            - row_number
+            - code
+            - field
             properties:
               row_number:
                 type: integer
                 minimum: 1
-                description: Индекс строки в массиве items, с единицы.
               code:
                 type: string
               field:
@@ -788,6 +1049,12 @@ components:
       - removed_snapshots
       - restored_snapshots
       - removed_history_records
+      - operation_id
+      - local_only
+      - already_rolled_back
+      - removed_clients
+      - restored_clients
+      - restored_history_records
       properties:
         batch_id:
           type: string
@@ -801,3 +1068,90 @@ components:
         removed_history_records:
           type: integer
           description: Записей журнала истории пакета удалено.
+        operation_id:
+          type: string
+          format: uuid
+        local_only:
+          type: boolean
+          const: true
+        already_rolled_back:
+          type: boolean
+        removed_clients:
+          type: integer
+          minimum: 0
+        restored_clients:
+          type: integer
+          minimum: 0
+        restored_history_records:
+          type: integer
+          minimum: 0
+    RecoveryCommand:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - requested_by
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        requested_by:
+          type: string
+          format: uuid
+          description: Автор из доверенного контекста координатора; поле не подтверждает полномочия.
+    DataDeletionResponse:
+      type: object
+      required:
+      - operation_id
+      - kcr_code
+      - quarter
+      - local_only
+      - removed_clients
+      - removed_snapshots
+      - removed_history_records
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        quarter:
+          type:
+          - string
+          - 'null'
+        local_only:
+          type: boolean
+          const: true
+        removed_clients:
+          type: integer
+          minimum: 0
+        removed_snapshots:
+          type: integer
+          minimum: 0
+        removed_history_records:
+          type: integer
+          minimum: 0
+    QuarterSummary:
+      type: object
+      required:
+      - quarter
+      - total_documents
+      - unsubmitted_documents
+      - unsubmitted_percent
+      properties:
+        quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+        total_documents:
+          type: integer
+          minimum: 0
+        unsubmitted_documents:
+          type: integer
+          minimum: 0
+        unsubmitted_percent:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          description: unsubmitted_documents/total_documents*100; при нулевом total — null. Значение не ограничивается
+            искусственно 100.
