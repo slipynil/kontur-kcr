@@ -744,6 +744,10 @@ components:
       - created_snapshots
       - updated_snapshots
       - created_history_records
+      - batch_id
+      - accepted_rows
+      - rejected_rows
+      - errors
       properties:
         created_clients:
           type: integer
@@ -755,7 +759,28 @@ components:
           type: integer
         created_history_records:
           type: integer
-          description: Записей журнала истории добавлено (по одной на каждую строку пакета).
+          description: Количество добавленных записей журнала истории.
+        batch_id:
+          type: string
+          format: uuid
+        accepted_rows:
+          type: integer
+        rejected_rows:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            required: [row_number, code, field]
+            properties:
+              row_number:
+                type: integer
+                minimum: 1
+                description: Индекс строки в массиве items, с единицы.
+              code:
+                type: string
+              field:
+                type: string
     ImportRollbackResponse:
       type: object
       required:
