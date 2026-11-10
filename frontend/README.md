@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend «Контур КЦР»
 
-## Getting Started
+Next.js frontend обращается только к Gateway по контракту `../docs/api/public-api.yaml`.
 
-First, run the development server:
+## Запуск
 
-```bash
+Из каталога `frontend`:
+
+```sh
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+По умолчанию запросы идут на `http://176.109.100.140/api/v1`. Для другого Gateway задайте в `.env.local` перед запуском/сборкой:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```dotenv
+NEXT_PUBLIC_API_URL=https://gateway.example.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Значение — origin без `/api/v1`. Пустое `NEXT_PUBLIC_API_URL=` включает `/api/v1` того же origin (nginx должен направлять этот путь на Gateway). Gateway должен разрешать origin frontend и заголовки Authorization/Content-Type в CORS. Для HTTPS frontend нужен HTTPS Gateway. Адрес не содержит секретов; Next.js включает его в клиентскую сборку. Демонстрационных пользователей и локального backend нет: учётные записи создаёт Identity.
 
-## Learn More
+## Интеграция
 
-To learn more about Next.js, take a look at the following resources:
+- Вход: Bearer JWT, сохранение пользователя и срока сессии; выход и HTTP 401 очищают сессию. Роль управляет видимостью UI; права обязан проверять Gateway.
+- Реестр: серверный поиск КЦР/ИНН, динамика, длительность, признак, квартал, числовые диапазоны, пагинация. Отсутствующие значения не превращаются в ноль.
+- Карточка: профиль, сравнение кварталов, текущие срезы, история наблюдений и событий с пагинацией, происхождение унаследованных полей.
+- Взятие/перезакрепление: текущий `work_quarter` из карточки, обработка 409, защита ожидания по дате Europe/Moscow. Назначение другого оператора само по себе не блокирует действие.
+- События: звонок, прошлый комментарий и смена этапа с обязательным `wait_until` для WAIT_DEADLINE.
+- Пользователи: чтение и создание по схеме User; отдельного имени и операции изменения роли в контракте нет.
+- Импорт: multipart file/selected_quarter/import_type/snapshot_date; отчёт по ID пакета, опрос PROCESSING каждые две секунды до завершения, отмена опроса при уходе.
+- Удаление клиента/квартала и rollback: явное подтверждение, `operation_id` сохраняется для повтора неудачного запроса пока экран открыт. После перезагрузки сначала проверьте результат операции. Последний пакет и глобальное завершение проверяет сервер.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`lib/contracts.ts` соответствует схемам публичного YAML; условные требования событий проверяют формы. При изменении контракта обновляйте типы и тесты.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+В YAML отсутствуют операции списка импортов, передачи пула, изменения пользователей, редактирования статусов и скачивания XLSX ошибок; ImportBatch также не содержит схемы строк ошибок. Эти действия не имитируются. «Сегодня нужно» и освобождение клиента исключены ADR-0002; старый `/today` открывает реестр. Функции ИИ отложены ADR-0002 и не подключены.
 
-## Deploy on Vercel
+## Проверка
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```sh
+npm run lint
+npm test -- --runInBand
+npm run build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Тесты проверяют HTTP-контракт на подменённых ответах Gateway. Для сквозной проверки нужны работающий Gateway, доступные сервисы и тестовые учётные записи ADMIN/OPERATOR. Проверка сборки не доказывает доступность backend.

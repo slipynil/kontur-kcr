@@ -1,40 +1,40 @@
 /** @jest-environment node */
-import { cookies } from 'next/headers'
-import { clients, sessions, users } from '../lib/backend'
-import { POST as login, GET as authStatus, DELETE as logout } from '../app/api/auth/route'
-import { GET as listUsers, POST as createUser } from '../app/api/users/route'
-import { GET as getClient, DELETE as releaseClient } from '../app/api/clients/[code]/route'
-import { POST as claimClient } from '../app/api/clients/[code]/claim/route'
-jest.mock('next/headers', () => ({ cookies: jest.fn() }))
-const jar = { get: jest.fn(), set: jest.fn(), delete: jest.fn() }
-const ctx = (code = 'AAA00412') => ({ params: Promise.resolve({ code }) })
-const req = (body: unknown) => new Request('http://localhost', { method: 'POST', body: JSON.stringify(body) })
-beforeEach(() => { jest.clearAllMocks(); (cookies as jest.Mock).mockResolvedValue(jar); jar.get.mockReturnValue(undefined) })
-afterEach(() => { sessions.clear(); clients.forEach(c => c.owner = null); users.delete('test.user') })
-it('covers login, session lookup, inactive sessions, logout and errors', async () => {
- expect((await login(new Request('http://x',{method:'POST',body:'{'}))).status).toBe(401)
- expect((await login(req({username:'operator',password:'bad'}))).status).toBe(401)
- const response=await login(req({username:'operator',password:'1234'})); expect(response.status).toBe(200)
- const token=jar.set.mock.calls[0][1]; jar.get.mockReturnValue({value:token}); expect((await authStatus()).status).toBe(200)
- users.get('operator')!.active=false; expect((await authStatus()).status).toBe(401); users.get('operator')!.active=true
- sessions.set(token,{username:'operator',name:'Анна К.',role:'Оператор'}); expect((await logout()).status).toBe(200)
-})
-it('covers admin user listing and creation validation', async () => {
- expect((await listUsers()).status).toBe(403)
- sessions.set('a',{username:'vera.v',name:'Вера В.',role:'Администратор'}); jar.get.mockReturnValue({value:'a'})
- expect((await listUsers()).status).toBe(200)
- for(const body of [{username:'x',name:'ok',password:'1234',role:'Оператор'},{username:'test.user',name:'x',password:'1234',role:'Оператор'},{username:'test.user',name:'Name',password:'1',role:'Оператор'},{username:'test.user',name:'Name',password:'1234',role:'bad'}]) expect((await createUser(req(body))).status).toBe(400)
- expect((await createUser(req({username:'test.user',name:'Test User',password:'pass123',role:'Оператор'}))).status).toBe(201)
- expect((await createUser(req({username:'test.user',name:'Test User',password:'pass123',role:'Оператор'}))).status).toBe(409)
-})
-it('covers client authorization, lookup, release and claim branches', async () => {
- expect((await getClient(new Request('http://x'),ctx())).status).toBe(401)
- sessions.set('o',{username:'operator',name:'Анна К.',role:'Оператор'}); jar.get.mockReturnValue({value:'o'})
- expect((await getClient(new Request('http://x'),ctx())).status).toBe(200); expect((await getClient(new Request('http://x'),ctx('missing'))).status).toBe(404)
- expect((await releaseClient(new Request('http://x'),ctx())).status).toBe(403)
- expect((await claimClient(new Request('http://x'),ctx())).status).toBe(200)
- clients.get('AAA00412')!.owner='Олег П.'; expect((await claimClient(new Request('http://x'),ctx())).status).toBe(409)
- sessions.set('a',{username:'vera.v',name:'Вера В.',role:'Администратор'}); jar.get.mockReturnValue({value:'a'})
- expect((await claimClient(new Request('http://x'),ctx())).status).toBe(403)
- expect((await releaseClient(new Request('http://x'),ctx('missing'))).status).toBe(404); expect((await releaseClient(new Request('http://x'),ctx())).status).toBe(200)
-})
+import { api, ApiError, queryString, request } from '../lib/api';
+beforeEach(() => { global.fetch = jest.fn(); });
+it('sends JSON to the public Gateway path', async () => {
+  (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ id: 'u1' }), { status: 201 }));
+  expect(await request('/users', { method: 'POST', body: JSON.stringify({ login: 'user' }) })).toEqual({ id: 'u1' });
+  const [url, init] = (fetch as jest.Mock).mock.calls[0];
+  expect(url).toBe('/api/v1/users'); expect(init.headers.get('Content-Type')).toBe('application/json');
+});
+it('lets the browser generate the multipart boundary', async () => {
+  (fetch as jest.Mock).mockResolvedValue(new Response('{}'));
+  const body = new FormData(); body.set('selected_quarter', '2026_Q4');
+  await api('/imports', { method: 'POST', body });
+  expect((fetch as jest.Mock).mock.calls[0][1].headers.has('Content-Type')).toBe(false);
+});
+it('preserves machine codes and server messages for conflicts', async () => {
+  (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }), { status: 409 }));
+  await expect(request('/clients/AAA/take', { method: 'POST' })).rejects.toMatchObject({ status: 409, code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' });
+});
+it('handles empty delete responses and non-JSON gateway errors', async () => {
+  (fetch as jest.Mock).mockResolvedValueOnce(new Response(null, { status: 204 })).mockResolvedValueOnce(new Response('<html>unavailable</html>', { status: 502 }));
+  await expect(request('/clients/A', { method: 'DELETE' })).resolves.toBeUndefined();
+  await expect(request('/clients')).rejects.toBeInstanceOf(ApiError);
+});
+it.each(['/clients/A', '/clients/A/snapshots/2026_Q4'])('accepts a bodyless 200 from DELETE %s', async path => {
+  (fetch as jest.Mock).mockResolvedValue(new Response(null, { status: 200 }));
+  await expect(request<void>(path, { method: 'DELETE' })).resolves.toBeUndefined();
+});
+it('still reports a failed DELETE using the public error response', async () => {
+  (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ code: 'INVALID_STATE', message: 'Удаление недоступно' }), { status: 409 }));
+  await expect(request('/clients/A', { method: 'DELETE' })).rejects.toMatchObject({ status: 409, code: 'INVALID_STATE', message: 'Удаление недоступно' });
+});
+it('rejects malformed success responses', async () => {
+  (fetch as jest.Mock).mockResolvedValue(new Response('not JSON'));
+  await expect(request('/clients')).rejects.toThrow('некорректный ответ');
+});
+it('serializes zero, literal search characters and comma separated tags', () => {
+  const query = new URLSearchParams(queryString({ search: 'A%_ &', tags: 'VIP,MPP', min_unsubmitted_documents: 0, quarter: '' }));
+  expect(query.get('search')).toBe('A%_ &'); expect(query.get('tags')).toBe('VIP,MPP'); expect(query.get('min_unsubmitted_documents')).toBe('0'); expect(query.has('quarter')).toBe(false);
+});
