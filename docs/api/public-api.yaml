@@ -305,51 +305,91 @@ paths:
       - OperatorWork
       operationId: takeClient
       summary: Взять или перезакрепить клиента на себя
-      description: 'Взять/перезакрепить клиента себе в выбранном work_quarter. Другой ответственный сам по себе
-        не препятствует операции.
-
-        Если существует действующее ожидание (business_date < wait_until), сохраняются WAIT_DEADLINE и тот же оператор,
-        даже при смене квартала.
-
-        Другой оператор получает 409 CLIENT_WAIT_DEADLINE_ACTIVE. Запрос того же ответственного идемпотентен.
-
-        По наступлении даты при остатке документов ожидание нормализуется в POOL без активного назначения; клиент
-        доступен для взятия.
-
-        Срок не продлевается автоматически. Проверка даты, нормализация и назначение атомарны; business_date — Europe/Moscow.
-
-        Исторический квартал нельзя сделать текущим запросом take; 409 INVALID_STATE. Удалённые данные недоступны.
-
-        '
+      description: |
+        ADR-0004. Свободный опубликованный клиент закрепляется сразу.
+        Для занятого клиента создаётся уведомление ответственному на один час.
+        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
+        и исторический цикл дают 409.
       x-roles:
       - OPERATOR
       parameters:
       - $ref: '#/components/parameters/WorkQuarter'
       - $ref: '#/components/parameters/KcrCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TakeRequest'
       responses:
         '200':
           description: Клиент закреплён за текущим оператором.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TakeResponse'
+                oneOf:
+                - $ref: '#/components/schemas/TakeResponse'
+                - $ref: '#/components/schemas/ReassignmentRequest'
+        '202':
+          description: Запрос ожидает решения ответственного.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Ещё действует WAIT_DEADLINE, либо указан исторический/недопустимый цикл.
+          description: Конфликт состояния или действующий срок ожидания.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: CLIENT_WAIT_DEADLINE_ACTIVE
-                message: Срок ожидания, установленный оператором, ещё не наступил
-                details:
-                  work_quarter: 2026_Q2
-                  wait_source_work_quarter: 2026_Q1
-                  stage: WAIT_DEADLINE
-                  wait_until: '2026-07-15'
-                  operator_name: petrov
+  /api/v1/reassignment-notifications:
+    get:
+      operationId: listReassignmentNotifications
+      summary: Получить входящие и отправленные запросы
+      x-roles: [OPERATOR]
+      parameters:
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Уведомления текущего оператора.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReassignmentRequest'
+  /api/v1/reassignment-notifications/{request_id}/reject:
+    post:
+      operationId: rejectReassignment
+      summary: Отказать в перезакреплении до истечения часа
+      x-roles: [OPERATOR]
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Запрос отклонён текущим получателем уведомления.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
+        '404':
+          description: Запрос не найден или недоступен оператору.
+        '409':
+          description: Запрос уже завершён.
   /api/v1/clients/{kcr_code}:
     get:
       tags:
@@ -463,20 +503,14 @@ paths:
       tags:
       - OperatorWork
       operationId: createClientEvent
-      summary: Добавить событие клиента
-      description: 'Для нового звонка/смены этапа/закрепления обязателен work_quarter текущего цикла.
-
-        NULL разрешён для старого комментария без установленного цикла.
-
-        Добавление события в ленту: результат звонка, комментарий прошлой даты
-
-        (с ручной датой `historical_event_date`) и другие типы событий
-
-        (`spec.md` §3.3, §2.4).
-
-
-        История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем
-        rollback.'
+      summary: Добавить звонок или прошлый комментарий
+      description: |
+        Сохранить звонок по назначению из формы. После перезакрепления автор может
+        записать факт звонка в текущем цикле, без изменения этапа и срока.
+        Если назначение актуально, будущий срок ожидания применяется вместе со звонком.
+        Прошлый комментарий хранит время события отдельно от времени записи.
+        Назначение, этап и срок ожидания при этом сохраняются.
+        Повтор с тем же request_id и данными возвращает сохранённое событие.
       x-roles:
       - ADMIN
       - OPERATOR
@@ -487,7 +521,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ClientEventCreate'
+              oneOf:
+              - $ref: '#/components/schemas/CallEventCreate'
+              - $ref: '#/components/schemas/HistoricalCommentCreate'
+              discriminator:
+                propertyName: event_type
+                mapping:
+                  CALL_RESULT: '#/components/schemas/CallEventCreate'
+                  HISTORICAL_COMMENT: '#/components/schemas/HistoricalCommentCreate'
             example:
               event_type: CALL_RESULT
               work_quarter: 2026_Q1
@@ -495,16 +536,31 @@ paths:
               promised_date: '2026-02-10'
               comment_text: Договорились передать оригиналы до 10 февраля
       responses:
-        '201':
-          description: Событие создано.
+        '200':
+          description: Событие уже было сохранено.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientEvent'
-        '400':
-          $ref: '#/components/responses/ValidationError'
+                oneOf:
+                - $ref: '#/components/schemas/SavedCallEvent'
+                - $ref: '#/components/schemas/SavedHistoricalComment'
+        '201':
+          description: Событие сохранено. Для звонка в ответе также есть wait_applied.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/SavedCallEvent'
+                - $ref: '#/components/schemas/SavedHistoricalComment'
+        '403':
+          description: Запись доступна только оператору.
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: Клиент недоступен.
+        '409':
+          description: Конфликт ID запроса, назначения или квартального цикла.
+        '422':
+          description: Некорректные данные, дата события или дата ожидания.
+
   /api/v1/assistant/summary/{kcr_code}:
     get:
       tags:
@@ -997,6 +1053,7 @@ components:
       - dynamics
       - latest_snapshot
       properties:
+        assignment_id: { type: [string, 'null'], format: uuid }
         work_quarter:
           type:
           - string
@@ -1149,6 +1206,7 @@ components:
       - assignment
       - snapshots
       properties:
+        assignment_id: { type: [string, 'null'], format: uuid }
         work_quarter:
           type:
           - string
@@ -1321,6 +1379,76 @@ components:
       - REFUSAL
       - NO_ANSWER
       - WRONG_NUMBER
+    CallEventCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, expected_assignment_id, work_quarter, call_result]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: CALL_RESULT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторе запроса.
+        expected_assignment_id:
+          type: string
+          format: uuid
+          description: Назначение, под которым оператор открыл форму.
+        work_quarter: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+        comment_text: { type: string, maxLength: 4000, default: '' }
+        promised_date: { type: [string, 'null'], format: date }
+        wait_until:
+          type: [string, 'null']
+          format: date
+          description: Будущая дата ожидания по Москве. Применяется только при актуальном назначении.
+    HistoricalCommentCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, comment_text, historical_event_date]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: HISTORICAL_COMMENT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторной отправке.
+        comment_text: { type: string, minLength: 1, maxLength: 4000 }
+        historical_event_date:
+          type: string
+          format: date-time
+          description: Фактическая дата и время события в прошлом с часовым поясом.
+        work_quarter:
+          type: [string, 'null']
+          pattern: '^[0-9]{4}_Q[1-4]$'
+          description: Текущий квартал работы или null для общей истории клиента.
+    SavedCallEvent:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        required: [wait_applied]
+        properties:
+          event_type: { const: CALL_RESULT }
+          wait_applied: { type: boolean }
+    SavedHistoricalComment:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        required: [historical_event_date]
+        properties:
+          event_type: { const: HISTORICAL_COMMENT }
+          historical_event_date: { type: string, format: date-time }
     ClientEventCreate:
       type: object
       description: Создание события (`spec.md` §3.3).
@@ -1419,6 +1547,12 @@ components:
       - comment_text
       - created_at
       properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
         work_quarter:
           type:
           - string
@@ -1436,7 +1570,9 @@ components:
         event_type:
           $ref: '#/components/schemas/EventType'
         call_result:
-          $ref: '#/components/schemas/CallResult'
+          oneOf:
+          - $ref: '#/components/schemas/CallResult'
+          - type: 'null'
         promised_date:
           type:
           - string
@@ -1461,12 +1597,39 @@ components:
           - string
           - 'null'
           format: date
+    TakeRequest:
+      type: object
+      required: [expected_assignment_id, request_id]
+      properties:
+        expected_assignment_id:
+          type: [string, 'null']
+          format: uuid
+          description: ID назначения из карточки или null для свободного клиента.
+        request_id:
+          type: string
+          format: uuid
+          description: ID операции, сохраняемый при повторе после сетевого сбоя.
+    ReassignmentRequest:
+      type: object
+      required: [id, kcr_code, work_quarter, expected_assignment_id, owner_id, requester_id, created_at, expires_at, status, resolved_at]
+      properties:
+        id: { type: string, format: uuid }
+        kcr_code: { type: string }
+        work_quarter: { type: string }
+        expected_assignment_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        requester_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [PENDING, REJECTED, TRANSFERRED, CANCELLED] }
     TakeResponse:
       type: object
       description: Результат атомарного закрепления (`spec.md` §2.7 `ClientAssignment`).
       required:
       - work_quarter
       - kcr_code
+      - assignment_id
       - assigned_operator_id
       - assigned_at
       properties:
@@ -1476,6 +1639,7 @@ components:
           description: Квартал цикла обзвона; может отличаться от кварталов документов.
         kcr_code:
           type: string
+        assignment_id: { type: string, format: uuid }
         assigned_operator_id:
           type: string
           format: uuid

@@ -36,6 +36,8 @@ tags:
   description: Закрепление клиентов за операторами.
 - name: Events
   description: Лента событий клиента.
+security:
+- ServiceBearer: []
 paths:
   /clients/{kcr_code}/take:
     post:
@@ -43,33 +45,41 @@ paths:
       - Assignment
       operationId: takeClient
       summary: Взять или перезакрепить клиента на себя
-      description: 'Взять/перезакрепить клиента себе в выбранном work_quarter. Другой ответственный сам по себе
-        не препятствует операции.
-
-        Если существует действующее ожидание (business_date < wait_until), сохраняются WAIT_DEADLINE и тот же оператор,
-        даже при смене квартала.
-
-        Другой оператор получает 409 CLIENT_WAIT_DEADLINE_ACTIVE. Запрос того же ответственного идемпотентен.
-
-        По наступлении даты при остатке документов ожидание нормализуется в POOL без активного назначения; клиент
-        доступен для взятия.
-
-        Срок не продлевается автоматически. Проверка даты, нормализация и назначение атомарны; business_date — Europe/Moscow.
-
-        Исторический квартал нельзя сделать текущим запросом take; 409 INVALID_STATE. Удалённые данные недоступны.
-
-        '
+      description: |
+        ADR-0004. Свободный опубликованный клиент закрепляется сразу.
+        Для занятого клиента создаётся уведомление ответственному на один час.
+        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
+        и исторический цикл дают 409. После срока CLIENT_BALANCE_UNCONFIRMED
+        действует до подтверждённого возврата в пул.
       parameters:
       - $ref: '#/components/parameters/WorkQuarter'
       - $ref: '#/components/parameters/KcrCode'
       - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TakeRequest'
       responses:
         '200':
           description: Клиент закреплён.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TakeResponse'
+                oneOf:
+                - $ref: '#/components/schemas/TakeResponse'
+                - $ref: '#/components/schemas/ReassignmentRequest'
+        '202':
+          description: Запрос ожидает решения ответственного.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
         '404':
           description: Клиент не найден.
           content:
@@ -77,20 +87,271 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Ещё действует WAIT_DEADLINE, либо указан исторический/недопустимый цикл.
+          description: Конфликт состояния или действующий срок ожидания.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: CLIENT_WAIT_DEADLINE_ACTIVE
-                message: Срок ожидания, установленный оператором, ещё не наступил
-                details:
-                  work_quarter: 2026_Q2
-                  wait_source_work_quarter: 2026_Q1
-                  stage: WAIT_DEADLINE
-                  wait_until: '2026-07-15'
-                  operator_name: petrov
+  /cycles/apply-snapshot:
+    put:
+      operationId: applyWorkCycleSnapshot
+      summary: Обновить квартальные циклы из нормализованного пакета
+      description: |
+        Координатор вызова — Import Worker. Маршрут доступен для автономной проверки.
+        Положительный остаток создаёт новый
+        неопубликованный цикл. Текущий и исторический кварталы не меняют работу.
+        Повтор идентичной команды безопасен. Необязательное delivery задаёт часть.
+        Для всех частей сохраняются общий batch_id, work_quarter и part_count.
+        Подтверждение относится к одной команде, а публикация выполняется отдельно.
+      x-roles: [ADMIN]
+      parameters:
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { const: ADMIN }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [batch_id, clients]
+              properties:
+                batch_id: { type: string, format: uuid }
+                delivery:
+                  oneOf:
+                  - $ref: '#/components/schemas/SnapshotDelivery'
+                  - type: 'null'
+                clients:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [kcr_code, outstanding_documents]
+                    properties:
+                      kcr_code: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\s\x00]+$' }
+                      outstanding_documents: { type: integer, minimum: 0 }
+      responses:
+        '204':
+          description: Команда пакета или части применена либо подтверждена ранее.
+        '401':
+          description: Нужна авторизация доверенного сервиса.
+        '403':
+          description: Действие доступно администратору.
+        '409':
+          description: |
+            SNAPSHOT_ID_CONFLICT — параметры или способ доставки пакета изменились.
+            SNAPSHOT_PART_CONFLICT — изменена часть, повторён номер или пересекаются коды.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректный пакет, квартал или повторяющиеся коды.
+  /pool/publication:
+    put:
+      operationId: publishPool
+      summary: Опубликовать выбранных клиентов одной операцией
+      description: |
+        Публикация дополняет пул указанного квартала.
+        Повтор не сбрасывает опубликованные циклы, назначения, сроки и запросы.
+        При ошибке у одного клиента весь запрос откатывается.
+      x-roles: [ADMIN]
+      parameters:
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { const: ADMIN }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [codes]
+              properties:
+                codes:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  description: Повторяющиеся коды обрабатываются один раз.
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: '^[^\s\x00]+$'
+      responses:
+        '204':
+          description: Все выбранные клиенты опубликованы.
+        '403':
+          description: Действие доступно администратору.
+        '409':
+          description: Один из клиентов уже имеет более новый цикл. Публикация откатилась.
+        '422':
+          description: Некорректный список или квартал.
+  /pool:
+    get:
+      operationId: listPublishedClients
+      summary: Получить опубликованный пул текущего квартала
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      responses:
+        '200':
+          description: Коды клиентов и актуальные ответственные.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [kcr_code, assigned_operator_id]
+                      properties:
+                        kcr_code: { type: string }
+                        assigned_operator_id: { type: [string, 'null'], format: uuid }
+  /clients/{kcr_code}/publication:
+    put:
+      operationId: publishClient
+      summary: Опубликовать клиента для операторов
+      x-roles: [ADMIN]
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      responses:
+        '204':
+          description: Клиент опубликован.
+        '409':
+          description: Нельзя опубликовать исторический цикл.
+  /clients/{kcr_code}/cycles:
+    get:
+      operationId: listWorkCycles
+      summary: Получить ID и рабочее состояние текущего и исторических циклов
+      x-roles: [ADMIN]
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { const: ADMIN }
+      responses:
+        '200':
+          description: Циклы клиента, включая неопубликованные.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CycleInfo'
+        '403':
+          description: Действие доступно администратору.
+  /clients/{kcr_code}/assignment:
+    get:
+      operationId: readAssignment
+      summary: Прочитать актуальное закрепление опубликованного клиента
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      responses:
+        '200':
+          description: Состояние назначения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentState'
+        '404':
+          description: Клиент не опубликован.
+        '409':
+          description: Запрошен исторический цикл.
+
+  /reassignment-notifications:
+    get:
+      operationId: listReassignmentNotifications
+      summary: Получить входящие и отправленные запросы
+      x-roles: [OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Уведомления текущего оператора.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReassignmentRequest'
+  /reassignment-notifications/{request_id}/reject:
+    post:
+      operationId: rejectReassignment
+      summary: Отказать в перезакреплении до истечения часа
+      x-roles: [OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Запрос отклонён текущим получателем уведомления.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
+        '404':
+          description: Запрос не найден или недоступен оператору.
+        '409':
+          description: Запрос уже завершён.
   /clients/{kcr_code}/events:
     get:
       tags:
@@ -107,6 +368,11 @@ paths:
         История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем
         rollback.'
       parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
       - name: work_quarter
         in: query
         required: false
@@ -146,90 +412,126 @@ paths:
       tags:
       - Events
       operationId: createClientEvent
-      summary: Добавить событие клиента
-      description: 'Для нового звонка/смены этапа/закрепления обязателен work_quarter текущего цикла.
-
-        NULL разрешён для старого комментария без установленного цикла.
-
-        Фиксация звонка, комментария прошлой даты (ручная `historical_event_date`)
-
-        и других событий (`spec.md` §3.3, §2.4).
-
-
-        История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем
-        rollback.'
+      summary: Добавить звонок или прошлый комментарий
+      description: |
+        Сохранить звонок по назначению из формы. После перезакрепления автор может
+        записать факт звонка в текущем цикле, без изменения этапа и срока.
+        Если назначение актуально, будущий срок ожидания применяется вместе со звонком.
+        Прошлый комментарий хранит время события отдельно от времени записи.
+        Назначение, этап и срок ожидания при этом сохраняются.
+        Повтор с тем же request_id и данными возвращает сохранённое событие.
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ClientEventCreate'
+              oneOf:
+              - $ref: '#/components/schemas/CallEventCreate'
+              - $ref: '#/components/schemas/HistoricalCommentCreate'
+              discriminator:
+                propertyName: event_type
+                mapping:
+                  CALL_RESULT: '#/components/schemas/CallEventCreate'
+                  HISTORICAL_COMMENT: '#/components/schemas/HistoricalCommentCreate'
       responses:
+        '200':
+          description: Событие уже было сохранено.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/SavedCallEvent'
+                - $ref: '#/components/schemas/SavedHistoricalComment'
         '201':
-          description: Событие создано.
+          description: Событие сохранено. Для звонка в ответе также есть wait_applied.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientEvent'
-        '400':
-          description: Некорректное событие.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+                oneOf:
+                - $ref: '#/components/schemas/SavedCallEvent'
+                - $ref: '#/components/schemas/SavedHistoricalComment'
+        '403':
+          description: Запись доступна только оператору.
         '404':
-          description: Клиент не найден.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: Клиент недоступен.
+        '409':
+          description: Конфликт ID запроса, назначения или квартального цикла.
+        '422':
+          description: Некорректные данные, дата события или дата ожидания.
+
   /data-cleanup:
     post:
       operationId: cleanupOperatorData
-      summary: Очистить связанную работу после удаления данных
-      description: "Разрешённая административная очистка выбранных данных. Удаление клиента очищает все его срезы,\
-        \ циклы, события, назначения и сроки.\nУдаление исходного квартала сохраняет остальные кварталы и общую\
-        \ историю взаимодействия. Циклы других кварталов и общие звонки/договорённости не удаляются каскадно.\n\
-        Начатая работа оператора не блокирует удаление. Ответ об успехе — только после очистки всех затронутых сервисов\
-        \ и кэшей.\n Вызывает доверенный сервис от имени ADMIN; операция идемпотентна по operation_id."
+      summary: Выполнить локальную очистку Operator Work
+      description: |
+        Import Worker вызывает локальную очистку по утверждённому плану.
+        CLIENT удаляет всю работу клиента. QUARTER и BATCH удаляют только
+        цели, явно выбранные координатором. Указываются устойчивые ID циклов
+        и событий. Цикл нельзя удалить без перечисления всех его событий.
+        Сохраняются общие события с пустой или множественной привязкой к исходным кварталам.
+        При QUARTER удаляются только события с единственной привязкой к указанному кварталу.
+        Системные события удаляются вместе с явно выбранным циклом.
+        При откате удаляемые циклы должны быть созданы указанным пакетом.
+        Если откат удаляет текущий цикл и остаётся история, координатор
+        передаёт явное состояние для восстановления. Повтор с тем же ID,
+        инициатором и данными подтверждает уже выполненную очистку.
+      x-roles: [ADMIN]
+      parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { const: ADMIN }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-              - operation_id
-              - kcr_code
-              - scope
-              properties:
-                operation_id:
-                  type: string
-                  format: uuid
-                kcr_code:
-                  type: string
-                scope:
-                  type: string
-                  enum:
-                  - CLIENT
-                  - QUARTER
-                  - BATCH
-                quarter:
-                  type: string
-                  pattern: ^\d{4}_Q[1-4]$
-                  example: 2026_Q2
-                batch_id:
-                  type: string
-                  format: uuid
+              oneOf:
+              - $ref: '#/components/schemas/ClientCleanupRequest'
+              - $ref: '#/components/schemas/QuarterCleanupRequest'
+              - $ref: '#/components/schemas/BatchCleanupRequest'
+              discriminator:
+                propertyName: scope
+                mapping:
+                  CLIENT: '#/components/schemas/ClientCleanupRequest'
+                  QUARTER: '#/components/schemas/QuarterCleanupRequest'
+                  BATCH: '#/components/schemas/BatchCleanupRequest'
       responses:
         '200':
-          description: Связанная работа, сроки и переносы удалены.
+          description: Локальная очистка завершена или уже была выполнена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operation_id, kcr_code, scope, status]
+                properties:
+                  operation_id: { type: string, format: uuid }
+                  kcr_code: { type: string }
+                  scope: { enum: [CLIENT, QUARTER, BATCH] }
+                  status: { const: COMPLETED }
+        '401':
+          description: Нужна авторизация доверенного сервиса.
+        '403':
+          description: Действие доступно администратору.
         '409':
-          description: Конфликт состояния, операция подлежит повтору.
+          description: Конфликт ID операции, целей или состояния для восстановления.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректный запрос или состояние для восстановления.
 components:
+  securitySchemes:
+    ServiceBearer: { type: http, scheme: bearer }
   parameters:
     WorkQuarter:
       name: work_quarter
@@ -262,6 +564,93 @@ components:
         type: string
         format: uuid
   schemas:
+    SnapshotDelivery:
+      type: object
+      additionalProperties: false
+      required: [delivery_id, part_number, part_count]
+      properties:
+        delivery_id: { type: string, format: uuid }
+        part_number: { type: integer, minimum: 1, maximum: 1000 }
+        part_count: { type: integer, minimum: 2, maximum: 1000 }
+      description: Номер части не превышает количество частей. ID доставки и номер уникальны внутри пакета.
+    CycleInfo:
+      type: object
+      required: [cycle_id, work_quarter, is_current, published_at, source_import_batch_id,
+                 assigned_operator_id, stage, wait_until, wait_source_work_quarter]
+      properties:
+        cycle_id: { type: string, format: uuid }
+        work_quarter: { type: string }
+        is_current: { type: boolean }
+        published_at: { type: [string, 'null'], format: date-time }
+        source_import_batch_id: { type: [string, 'null'], format: uuid }
+        assigned_operator_id: { type: [string, 'null'], format: uuid }
+        stage: { enum: [POOL, IN_WORK, WAIT_DEADLINE, CLAIM, CLOSED, null] }
+        wait_until: { type: [string, 'null'], format: date }
+        wait_source_work_quarter: { type: [string, 'null'], pattern: '^[0-9]{4}_Q[1-4]$' }
+    ClientCleanupRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kcr_code, scope]
+      properties:
+        operation_id: { type: string, format: uuid }
+        kcr_code: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\s\x00]+$' }
+        scope: { const: CLIENT }
+    QuarterCleanupRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kcr_code, scope, quarter]
+      properties:
+        operation_id: { type: string, format: uuid }
+        kcr_code: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\s\x00]+$' }
+        scope: { const: QUARTER }
+        quarter:
+          type: string
+          pattern: '^[0-9]{4}_Q[1-4]$'
+          description: Исходный квартал документов для контекста. Цели задаются ID.
+        cycle_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        event_ids:
+          type: array
+          maxItems: 5000
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    BatchCleanupRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kcr_code, scope, batch_id]
+      properties:
+        operation_id: { type: string, format: uuid }
+        kcr_code: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\s\x00]+$' }
+        scope: { const: BATCH }
+        batch_id: { type: string, format: uuid }
+        cycle_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        event_ids:
+          type: array
+          maxItems: 5000
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        restore:
+          oneOf:
+          - $ref: '#/components/schemas/RestoreCycle'
+          - type: 'null'
+    RestoreCycle:
+      type: object
+      additionalProperties: false
+      required: [cycle_id, published, stage, operator_id, wait_until]
+      properties:
+        cycle_id: { type: string, format: uuid }
+        published: { type: boolean }
+        stage: { enum: [POOL, IN_WORK, WAIT_DEADLINE] }
+        operator_id: { type: [string, 'null'], format: uuid }
+        wait_until: { type: [string, 'null'], format: date }
+        wait_source_work_quarter: { type: [string, 'null'], pattern: '^[0-9]{4}_Q[1-4]$' }
     Error:
       type: object
       required:
@@ -291,6 +680,76 @@ components:
       - REFUSAL
       - NO_ANSWER
       - WRONG_NUMBER
+    CallEventCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, expected_assignment_id, work_quarter, call_result]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: CALL_RESULT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторе запроса.
+        expected_assignment_id:
+          type: string
+          format: uuid
+          description: Назначение, под которым оператор открыл форму.
+        work_quarter: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+        comment_text: { type: string, maxLength: 4000, default: '' }
+        promised_date: { type: [string, 'null'], format: date }
+        wait_until:
+          type: [string, 'null']
+          format: date
+          description: Будущая дата ожидания по Москве. Применяется только при актуальном назначении.
+    HistoricalCommentCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, comment_text, historical_event_date]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: HISTORICAL_COMMENT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторной отправке.
+        comment_text: { type: string, minLength: 1, maxLength: 4000 }
+        historical_event_date:
+          type: string
+          format: date-time
+          description: Фактическая дата и время события в прошлом с часовым поясом.
+        work_quarter:
+          type: [string, 'null']
+          pattern: '^[0-9]{4}_Q[1-4]$'
+          description: Текущий квартал работы или null для общей истории клиента.
+    SavedCallEvent:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        required: [wait_applied]
+        properties:
+          event_type: { const: CALL_RESULT }
+          wait_applied: { type: boolean }
+    SavedHistoricalComment:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        required: [historical_event_date]
+        properties:
+          event_type: { const: HISTORICAL_COMMENT }
+          historical_event_date: { type: string, format: date-time }
     ClientEventCreate:
       type: object
       required:
@@ -387,6 +846,12 @@ components:
       - comment_text
       - created_at
       properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
         work_quarter:
           type:
           - string
@@ -404,7 +869,9 @@ components:
         event_type:
           $ref: '#/components/schemas/EventType'
         call_result:
-          $ref: '#/components/schemas/CallResult'
+          oneOf:
+          - $ref: '#/components/schemas/CallResult'
+          - type: 'null'
         promised_date:
           type:
           - string
@@ -447,11 +914,38 @@ components:
           type: integer
         total:
           type: integer
+    TakeRequest:
+      type: object
+      required: [expected_assignment_id, request_id]
+      properties:
+        expected_assignment_id:
+          type: [string, 'null']
+          format: uuid
+          description: ID назначения из карточки или null для свободного клиента.
+        request_id:
+          type: string
+          format: uuid
+          description: ID операции, сохраняемый при повторе после сетевого сбоя.
+    ReassignmentRequest:
+      type: object
+      required: [id, kcr_code, work_quarter, expected_assignment_id, owner_id, requester_id, created_at, expires_at, status, resolved_at]
+      properties:
+        id: { type: string, format: uuid }
+        kcr_code: { type: string }
+        work_quarter: { type: string }
+        expected_assignment_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        requester_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [PENDING, REJECTED, TRANSFERRED, CANCELLED] }
     TakeResponse:
       type: object
       required:
       - work_quarter
       - kcr_code
+      - assignment_id
       - assigned_operator_id
       - assigned_at
       properties:
@@ -461,9 +955,25 @@ components:
           description: Квартал цикла обзвона; может отличаться от кварталов документов.
         kcr_code:
           type: string
+        assignment_id: { type: string, format: uuid }
         assigned_operator_id:
           type: string
           format: uuid
         assigned_at:
           type: string
           format: date-time
+
+    AssignmentState:
+      type: object
+      required: [kcr_code, work_quarter, assignment_id, assigned_operator_id, assigned_at, awaiting_balance]
+      properties:
+        kcr_code: { type: string }
+        work_quarter: { type: string }
+        assignment_id: { type: [string, 'null'], format: uuid }
+        assigned_operator_id: { type: [string, 'null'], format: uuid }
+        assigned_at: { type: [string, 'null'], format: date-time }
+        stage: { type: [string, 'null'] }
+        wait_until: { type: [string, 'null'], format: date }
+        awaiting_balance:
+          type: boolean
+          description: Срок истёк. Цикл остаётся вне пула до подтверждения положительного остатка.

@@ -22,6 +22,22 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: operator_work
+          POSTGRES_PASSWORD: operator_work_test
+          POSTGRES_DB: operator_work_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U operator_work -d operator_work_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      OPERATOR_WORK_TEST_DATABASE_URL: postgresql+psycopg://operator_work:operator_work_test@localhost:5432/operator_work_test
 
     steps:
       # 1. Клонируем репозиторий
@@ -42,7 +58,7 @@ jobs:
 
       # 4. Установка зависимостей
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: poetry install --no-root --no-interaction
 
       # 5. Запуск линтера
       - name: Run Ruff
@@ -52,7 +68,7 @@ jobs:
 
       # 6. Запуск тестов с покрытием
       - name: Run tests with coverage (pytest)
-        run: poetry run pytest -v --cov=. --cov-report=term --cov-report=json
+        run: poetry run pytest -v --cov=operator_work --cov-report=term --cov-report=json
 
       # 7. Проверяем, что общее покрытие кода >= 90%
       - name: Check code coverage threshold
