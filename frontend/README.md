@@ -19,6 +19,25 @@ NEXT_PUBLIC_API_URL=https://gateway.example.local
 
 Значение — origin без `/api/v1`. Пустое `NEXT_PUBLIC_API_URL=` включает `/api/v1` того же origin (nginx должен направлять этот путь на Gateway). Gateway должен разрешать origin frontend и заголовки Authorization/Content-Type в CORS. Для HTTPS frontend нужен HTTPS Gateway. Адрес не содержит секретов; Next.js включает его в клиентскую сборку. Демонстрационных пользователей и локального backend нет: учётные записи создаёт Identity.
 
+## Docker
+
+Из корня репозитория:
+
+```sh
+docker build -t kontur-frontend ./frontend
+docker run --rm --name kontur-frontend -p 3000:3000 kontur-frontend
+```
+
+Frontend откроется на `http://localhost:3000`. Образ использует Node.js 26.12 из стека проекта, standalone-сборку Next.js и пользователя `node`. В runtime копируются только необходимые зависимости, сервер, статические файлы и `public`; healthcheck проверяет HTTP-ответ frontend.
+
+Адрес Gateway задаётся при сборке образа:
+
+```sh
+docker build --build-arg NEXT_PUBLIC_API_URL=http://176.109.100.140 -t kontur-frontend ./frontend
+```
+
+Этот адрес доступен браузеру пользователя, поэтому здесь нужен внешний IP/домен Gateway. Пустое `--build-arg NEXT_PUBLIC_API_URL=` включает обращение к `/api/v1` того же origin. Изменение `NEXT_PUBLIC_API_URL` через `docker run -e` не меняет уже собранный JavaScript — образ нужно пересобрать. Локальные `.env*`, `node_modules`, `.next` и отчёты покрытия исключены из контекста сборки.
+
 ## Интеграция
 
 - Вход: Bearer JWT, сохранение пользователя и срока сессии; выход и HTTP 401 очищают сессию. Роль управляет видимостью UI; права обязан проверять Gateway.
