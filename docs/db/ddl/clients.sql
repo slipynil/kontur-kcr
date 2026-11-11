@@ -113,3 +113,55 @@ CREATE TABLE snapshot_field_provenance (
     FOREIGN KEY (kcr_code, quarter) REFERENCES quarter_snapshots (kcr_code, quarter) ON DELETE CASCADE
 );
 COMMENT ON TABLE snapshot_field_provenance IS 'Происхождение унаследованных полей среза; клиент получает needs_review. Перенос остатка не создаёт второй комплект документов.';
+
+-- ADR-0004: локальное применение пакетов (миграция 0002).
+ALTER TABLE clients ADD COLUMN field_sources JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE quarter_snapshot_history
+    ADD COLUMN observation_order BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+    ADD COLUMN inherited_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX idx_history_observation ON quarter_snapshot_history
+    (kcr_code, quarter, snapshot_date DESC, observation_order DESC);
+
+CREATE TABLE clients_import_operations (
+    batch_id UUID PRIMARY KEY,
+    payload_hash TEXT NOT NULL,
+    result JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE clients_import_undo (
+    batch_id UUID NOT NULL REFERENCES clients_import_operations(batch_id) ON DELETE CASCADE,
+    kcr_code TEXT NOT NULL,
+    previous_state JSONB NOT NULL,
+    created_history_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    PRIMARY KEY (batch_id, kcr_code)
+);
+
+-- ADR-0006: локальный порядок новых пакетов и результат административных команд.
+CREATE SEQUENCE clients_change_order_seq;
+ALTER TABLE clients_import_operations
+    ADD COLUMN apply_order BIGINT UNIQUE,
+    ADD COLUMN rolled_back BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN rollback_result JSONB;
+ALTER TABLE clients_import_operations ALTER COLUMN apply_order
+    SET DEFAULT nextval('clients_change_order_seq');
+CREATE TABLE clients_data_operations (
+    operation_id UUID PRIMARY KEY,
+    payload_hash TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('ROLLBACK', 'DELETE_CLIENT', 'DELETE_QUARTER')),
+    kcr_code TEXT,
+    quarter TEXT,
+    batch_id UUID,
+    requested_by UUID NOT NULL,
+    change_order BIGINT NOT NULL UNIQUE DEFAULT nextval('clients_change_order_seq'),
+    result JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE clients_deleted_history (
+    operation_id UUID NOT NULL REFERENCES clients_data_operations(operation_id) ON DELETE CASCADE,
+    history_id UUID NOT NULL,
+    kcr_code TEXT NOT NULL,
+    quarter TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    PRIMARY KEY (operation_id, history_id)
+);
+CREATE INDEX idx_deleted_history_client ON clients_deleted_history(kcr_code);

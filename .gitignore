@@ -1,4 +1,12 @@
 data/
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 #FRONTEND
 # dependencies
@@ -33,6 +41,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env
+!.env.example
 
 # vercel
 .vercel
@@ -41,8 +50,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .idea
-# Python services
-__pycache__/
-.venv/
+
+.local-tools/
 .coverage
 coverage.json
