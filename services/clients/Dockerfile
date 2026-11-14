@@ -10,6 +10,8 @@ RUN poetry install --only-root
 FROM python:3.14-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
+# Listen port, overridable at runtime; EXPOSE documents the default.
+ENV CLIENTS_PORT=8000
 WORKDIR /app
 COPY --from=build /app/.venv ./.venv
 COPY --from=build /app/src ./src
@@ -18,4 +20,4 @@ COPY migrations ./migrations
 RUN useradd --uid 10001 --create-home clients
 USER clients
 EXPOSE 8000
-CMD ["uvicorn", "clients_service.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+CMD ["sh", "-c", "uvicorn clients_service.main:create_app --factory --host 0.0.0.0 --port ${CLIENTS_PORT} --no-access-log"]

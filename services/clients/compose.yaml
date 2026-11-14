@@ -26,13 +26,14 @@ services:
     build: .
     environment:
       CLIENTS_DATABASE_URL: postgresql+psycopg://clients:clients_local@db:5432/clients
+      CLIENTS_PORT: ${CLIENTS_PORT:-8000}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${CLIENTS_HOST_PORT:-8001}:${CLIENTS_PORT:-8000}"
     depends_on:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:' + __import__('os').environ['CLIENTS_PORT'] + '/health/ready', timeout=5)\""]
       interval: 10s
       timeout: 6s
       retries: 3
