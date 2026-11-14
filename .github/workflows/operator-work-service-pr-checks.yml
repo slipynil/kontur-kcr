@@ -68,7 +68,7 @@ jobs:
 
       # 6. Запуск тестов с покрытием
       - name: Run tests with coverage (pytest)
-        run: poetry run pytest -v --cov=operator_work --cov-report=term --cov-report=json
+        run: poetry run python -m pytest -v --cov=operator_work --cov-report=term --cov-report=json
 
       # 7. Проверяем, что общее покрытие кода >= 90%
       - name: Check code coverage threshold
