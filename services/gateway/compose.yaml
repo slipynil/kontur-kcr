@@ -1,0 +1,58 @@
+services:
+  identity-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: identity
+      POSTGRES_DB: identity
+    volumes:
+      - identity_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "identity", "-d", "identity"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:${IDENTITY_DB_HOST_PORT:-5432}:5432"
+
+  migrate:
+    image: migrate/migrate:v4.18.2
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path
+      - /migrations
+      - -database
+      - postgres://identity:identity@identity-db:5432/identity?sslmode=disable
+      - up
+    depends_on:
+      identity-db:
+        condition: service_healthy
+
+  gateway:
+    build: .
+    environment:
+      GATEWAY_PORT: ${GATEWAY_PORT:-8080}
+      GATEWAY_DEBUG: ${GATEWAY_DEBUG:-false}
+      IDENTITY_DSN: postgres://identity:identity@identity-db:5432/identity?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?Set a JWT secret (see .env.example)}
+      JWT_TTL: ${JWT_TTL:-8h}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-30s}
+      # Внутренние сервисы: по умолчанию адреса из docs/api/internal/*.yaml
+      # (общая docker-сеть); для host-запусков переопределите в .env
+      # на порты из docs/local-development.md.
+      CLIENTS_ENDPOINT: ${CLIENTS_ENDPOINT:-http://clients-service:8000}
+      IMPORT_API_ENDPOINT: ${IMPORT_API_ENDPOINT:-http://import-api:8000}
+      OPERATOR_WORK_ENDPOINT: ${OPERATOR_WORK_ENDPOINT:-http://operator-work-service:8000}
+      ASSISTANT_ENDPOINT: ${ASSISTANT_ENDPOINT:-http://assistant:8000}
+    depends_on:
+      identity-db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:${GATEWAY_PORT:-8080}"
+
+volumes:
+  identity_data:
