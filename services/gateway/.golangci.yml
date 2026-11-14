@@ -1,0 +1,44 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - gosec
+    - intrange
+    - nilerr
+    - perfsprint
+    - prealloc
+    - revive
+    - usestdlibvars
+  settings:
+    gocritic:
+      disabled-checks:
+        - hugeParam
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - performance
+        - style
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
