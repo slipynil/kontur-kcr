@@ -48,7 +48,11 @@ services:
 
   import-api:
     <<: *import
-    expose: ["8000"]
+    environment:
+      <<: *import-environment
+      IMPORT_API_PORT: ${IMPORT_API_PORT:-8000}
+    ports:
+      - "127.0.0.1:${IMPORT_API_HOST_PORT:-8002}:${IMPORT_API_PORT:-8000}"
     volumes:
       - import-uploads:/var/lib/import-uploads
     depends_on:
