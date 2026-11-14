@@ -11,17 +11,18 @@ type Config struct {
 }
 
 type serviceConfig struct {
-	GATEWAY_PORT           int
-	GATEWAY_DEBUG          bool
-	CLIENTS_ENDPOINT       string
-	IMPORT_API_ENDPOINT    string
-	OPERATOR_WORK_ENDPOINT string
-	ASSISTANT_ENDPOINT     string
+	GatewayPort           int
+	GatewayDebug          bool
+	ClientsEndpoint       string
+	ImportAPIEndpoint     string
+	OperatorWorkEndpoint  string
+	AssistantEndpoint     string
 }
 
 // Инициализирует переменные из .env файла.
 // Переменные окружения имеют приоритет над файлом (AutomaticEnv);
 // при отсутствии файла используются значения по умолчанию.
+// Ключи — SCREAMING_SNAKE, как в .env; поля структуры — CamelCase.
 func Initialize(filename, filepath, filetype string) {
 	viper.SetConfigName(filename)
 	viper.SetConfigType(filetype)
@@ -47,16 +48,16 @@ func Initialize(filename, filepath, filetype string) {
 }
 
 func GetConfig() *Config {
-	APP := serviceConfig{
-		GATEWAY_DEBUG:          viper.GetBool("GATEWAY_DEBUG"),
-		GATEWAY_PORT:           viper.GetInt("GATEWAY_PORT"),
-		CLIENTS_ENDPOINT:       viper.GetString("CLIENTS_ENDPOINT"),
-		IMPORT_API_ENDPOINT:    viper.GetString("IMPORT_API_ENDPOINT"),
-		OPERATOR_WORK_ENDPOINT: viper.GetString("OPERATOR_WORK_ENDPOINT"),
-		ASSISTANT_ENDPOINT:     viper.GetString("ASSISTANT_ENDPOINT"),
+	cfg := serviceConfig{
+		GatewayDebug:          viper.GetBool("GATEWAY_DEBUG"),
+		GatewayPort:           viper.GetInt("GATEWAY_PORT"),
+		ClientsEndpoint:       viper.GetString("CLIENTS_ENDPOINT"),
+		ImportAPIEndpoint:     viper.GetString("IMPORT_API_ENDPOINT"),
+		OperatorWorkEndpoint:  viper.GetString("OPERATOR_WORK_ENDPOINT"),
+		AssistantEndpoint:     viper.GetString("ASSISTANT_ENDPOINT"),
 	}
 
 	return &Config{
-		Service: APP,
+		Service: cfg,
 	}
 }
