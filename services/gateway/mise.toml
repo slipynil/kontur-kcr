@@ -1,0 +1,41 @@
+# Задачи и инструменты Gateway / Identity Service.
+# Запуск: mise run <task> из директории services/gateway.
+
+[tools]
+go = "1.27.3"
+
+[env]
+# DSN по умолчанию для локальной разработки (docker compose поднимает БД на 127.0.0.1:5432).
+default_dsn = "postgres://identity:identity@127.0.0.1:5432/identity?sslmode=disable"
+
+[tasks.run]
+description = "Run the gateway locally (requires identity DB and migrations)"
+run = "go run ./cmd"
+
+[tasks.test]
+description = "Run unit tests with race detector and coverage"
+run = "go test -race -cover ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.fmt]
+description = "Format sources with gofmt and golangci-lint fmt"
+run = "gofmt -w cmd internal configs && golangci-lint fmt"
+
+[tasks."migrate-up"]
+description = "Apply identity DB migrations (IDENTITY_DSN overrides target)"
+run = "migrate -path migrations -database \"${IDENTITY_DSN:-${default_dsn}}\" up"
+
+[tasks."migrate-down"]
+description = "Roll back the last identity DB migration"
+run = "migrate -path migrations -database \"${IDENTITY_DSN:-${default_dsn}}\" down 1"
+
+[tasks."migrate-create"]
+description = "Create a pair of sequential migration files: mise run migrate-create -- <name>"
+run = "migrate create -ext sql -dir migrations -seq"
+
+[tasks."seed-admin"]
+description = "Create the first admin user (ADMIN_LOGIN and ADMIN_PASSWORD env vars required)"
+run = "go run ./cmd/seed"
