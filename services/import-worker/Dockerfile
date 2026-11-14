@@ -32,4 +32,7 @@ CMD ["python", "-m", "pytest", "-p", "no:cacheprovider"]
 
 FROM app AS runtime
 COPY --from=builder /opt/import-venv /opt/import-venv
-CMD ["uvicorn", "import_worker.api:create_app", "--factory", "--host", "0.0.0.0"]
+# Listen port of the API container, overridable at runtime.
+ENV IMPORT_API_PORT=8000
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn import_worker.api:create_app --factory --host 0.0.0.0 --port ${IMPORT_API_PORT}"]
