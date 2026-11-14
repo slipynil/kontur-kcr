@@ -7,4 +7,7 @@ RUN poetry install --no-root --only main --no-interaction
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY operator_work ./operator_work
-CMD ["uvicorn", "operator_work.api:create_app", "--factory", "--host", "0.0.0.0"]
+# Listen port, overridable at runtime; EXPOSE documents the default.
+ENV OPERATOR_WORK_PORT=8000
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn operator_work.api:create_app --factory --host 0.0.0.0 --port ${OPERATOR_WORK_PORT}"]
