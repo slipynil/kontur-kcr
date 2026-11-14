@@ -53,3 +53,4 @@ next-env.d.ts
 
 .local-tools/
 .coverage
+coverage.json

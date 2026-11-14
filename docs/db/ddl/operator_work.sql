@@ -94,3 +94,87 @@ CREATE TABLE client_stages (
 CREATE INDEX idx_stages_client ON client_stages (kcr_code, work_quarter, changed_at DESC);
 
 COMMENT ON TABLE client_stages IS 'История этапов по квартальным циклам; актуальный этап — последняя запись выбранного цикла. WAIT_DEADLINE действует до wait_until, а не до конца квартала. Смена этапа дублируется событием STAGE_CHANGE в client_events, взятие в работу — OPERATOR_ASSIGN.';
+
+ALTER TABLE client_work_cycles ADD COLUMN published_at TIMESTAMPTZ;
+
+CREATE TABLE client_reassignment_requests (
+    id UUID PRIMARY KEY,
+    kcr_code TEXT NOT NULL,
+    work_quarter TEXT NOT NULL,
+    expected_assignment_id UUID NOT NULL REFERENCES client_assignments(id) ON DELETE CASCADE,
+    owner_id UUID NOT NULL,
+    requester_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'REJECTED', 'TRANSFERRED', 'CANCELLED')),
+    resolved_at TIMESTAMPTZ,
+    CHECK (owner_id <> requester_id),
+    CHECK (expires_at = created_at + INTERVAL '1 hour'),
+    CHECK ((status = 'PENDING') = (resolved_at IS NULL)),
+    FOREIGN KEY (kcr_code, work_quarter)
+        REFERENCES client_work_cycles(kcr_code, work_quarter) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX uq_pending_reassignment
+    ON client_reassignment_requests (kcr_code, work_quarter) WHERE status = 'PENDING';
+
+CREATE INDEX idx_reassignment_due
+    ON client_reassignment_requests (expires_at) WHERE status = 'PENDING';
+
+CREATE INDEX idx_reassignment_owner ON client_reassignment_requests (owner_id, created_at DESC);
+CREATE INDEX idx_reassignment_requester ON client_reassignment_requests (requester_id, created_at DESC);
+
+-- Call operation replay uses the event ID and the original assignment and deadline.
+ALTER TABLE client_events ADD COLUMN call_assignment_id UUID;
+ALTER TABLE client_events ADD COLUMN requested_wait_until DATE;
+ALTER TABLE client_events ADD CONSTRAINT ck_call_result_present
+    CHECK (event_type <> 'CALL_RESULT' OR call_result IS NOT NULL);
+
+CREATE TABLE client_cleanup_operations (
+    operation_id UUID PRIMARY KEY,
+    kcr_code TEXT NOT NULL,
+    actor_id UUID NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE applied_work_snapshots (
+    batch_id UUID PRIMARY KEY,
+    fingerprint TEXT NOT NULL
+);
+
+ALTER TABLE client_work_cycles
+    ADD COLUMN cycle_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    ADD CONSTRAINT uq_work_cycle_id UNIQUE (cycle_id),
+    ADD COLUMN is_current BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE UNIQUE INDEX uq_current_work_cycle
+    ON client_work_cycles (kcr_code) WHERE is_current;
+
+ALTER TABLE client_cleanup_operations
+    ADD COLUMN scope TEXT NOT NULL DEFAULT 'CLIENT'
+        CHECK (scope IN ('CLIENT', 'QUARTER', 'BATCH')),
+    ADD COLUMN fingerprint TEXT;
+
+ALTER TABLE client_events
+    ADD COLUMN document_quarters TEXT[] NOT NULL DEFAULT '{}'::text[];
+
+ALTER TABLE applied_work_snapshots
+    ALTER COLUMN fingerprint DROP NOT NULL,
+    ADD COLUMN work_quarter TEXT,
+    ADD COLUMN part_count INTEGER,
+    ADD CONSTRAINT ck_work_snapshot_delivery_mode CHECK (
+        (fingerprint IS NOT NULL AND work_quarter IS NULL AND part_count IS NULL)
+        OR (fingerprint IS NULL AND work_quarter IS NOT NULL
+            AND part_count IS NOT NULL AND part_count BETWEEN 2 AND 1000)
+    );
+
+CREATE TABLE applied_work_snapshot_parts (
+    batch_id UUID NOT NULL REFERENCES applied_work_snapshots(batch_id),
+    delivery_id UUID NOT NULL,
+    part_number INTEGER NOT NULL CHECK (part_number BETWEEN 1 AND 1000),
+    fingerprint TEXT NOT NULL,
+    client_codes TEXT[] NOT NULL,
+    PRIMARY KEY (batch_id, delivery_id),
+    UNIQUE (batch_id, part_number)
+);

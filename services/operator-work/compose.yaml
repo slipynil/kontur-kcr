@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: operator_work
+      POSTGRES_PASSWORD: operator_work
+      POSTGRES_DB: operator_work
+    volumes:
+      - operator_work_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "operator_work", "-d", "operator_work"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      OPERATOR_WORK_DATABASE_URL: postgresql+psycopg://operator_work:operator_work@db/operator_work
+      OPERATOR_WORK_CLIENTS_URL: ${OPERATOR_WORK_CLIENTS_URL:-}
+      OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?Set a local service token}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn operator_work.api:create_app --factory --host 0.0.0.0"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  operator_work_data:
