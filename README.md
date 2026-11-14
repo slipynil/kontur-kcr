@@ -11,6 +11,7 @@
 - [Техническая спецификация](spec.md)
 - [Актуальные юзкейсы](docs/use-cases.md)
 - [API](docs/api/README.md), [модель данных](docs/db/README.md)
+- [Локальный запуск и порты сервисов](docs/local-development.md)
 - [Архитектура C4 L2](docs/c4-l2-container-diagram.html), [ADR](docs/adr/)
 - [Исходное ТЗ, обновлённое по разговору](docs/requirements/ТЗ.md)
 - Исходные выгрузки и комментарии заказчика хранятся локально; актуальные решения отражены в [spec.md](spec.md) и [use-cases](docs/use-cases.md).
