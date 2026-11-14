@@ -19,12 +19,13 @@ services:
       OPERATOR_WORK_DATABASE_URL: postgresql+psycopg://operator_work:operator_work@db/operator_work
       OPERATOR_WORK_CLIENTS_URL: ${OPERATOR_WORK_CLIENTS_URL:-}
       OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?Set a local service token}
-    command: ["sh", "-c", "alembic upgrade head && exec uvicorn operator_work.api:create_app --factory --host 0.0.0.0"]
+      OPERATOR_WORK_PORT: ${OPERATOR_WORK_PORT:-8000}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn operator_work.api:create_app --factory --host 0.0.0.0 --port $${OPERATOR_WORK_PORT}"]
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${OPERATOR_WORK_HOST_PORT:-8003}:${OPERATOR_WORK_PORT:-8000}"
 
 volumes:
   operator_work_data:
