@@ -1,0 +1,225 @@
+# Полный стек «Контур КЦР» для dev-сервера. На сервере ничего не собирается:
+# образы приложений публикуются в GHCR джобами docker-build-and-push в CI.
+# Миграции применяются теми же образами (alembic) и migrate/migrate для
+# gateway; SQL-миграции gateway кладёт на сервер deploy-джоба CI
+# (путь ../services/gateway/migrations относительно этого файла).
+#
+# Запуск и одноразовая настройка — server/README.md:
+#   docker compose --env-file server/.env -f server/compose.yaml up -d
+name: kontur-kcr
+
+x-import-environment: &import-environment
+  IMPORT_DATABASE_URL: postgresql+asyncpg://${IMPORT_DB_USER:-import_user}:${IMPORT_DB_PASSWORD:?IMPORT_DB_PASSWORD is required in server/.env}@import-db:5432/${IMPORT_DB_NAME:-import_db}
+  IMPORT_AMQP_URL: amqp://${IMPORT_RABBITMQ_USER:-import_user}:${IMPORT_RABBITMQ_PASSWORD:?IMPORT_RABBITMQ_PASSWORD is required in server/.env}@rabbitmq:5672/
+  IMPORT_UPLOAD_DIR: /var/lib/import-uploads
+  IMPORT_MAX_UPLOAD_BYTES: ${IMPORT_MAX_UPLOAD_BYTES:-33554432}
+
+services:
+  identity-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${IDENTITY_DB_USER:-identity}
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:?IDENTITY_DB_PASSWORD is required in server/.env}
+      POSTGRES_DB: ${IDENTITY_DB_NAME:-identity}
+    volumes:
+      - identity_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${IDENTITY_DB_USER:-identity}", "-d", "${IDENTITY_DB_NAME:-identity}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  gateway-migrate:
+    image: migrate/migrate:v4.18.2
+    # one-shot: завершается с exit 0; up пересоздаёт его при смене образа.
+    restart: "no"
+    volumes:
+      - ../services/gateway/migrations:/migrations:ro
+    command:
+      - -path
+      - /migrations
+      - -database
+      - postgres://${IDENTITY_DB_USER:-identity}:${IDENTITY_DB_PASSWORD:?IDENTITY_DB_PASSWORD is required in server/.env}@identity-db:5432/${IDENTITY_DB_NAME:-identity}?sslmode=disable
+      - up
+    depends_on:
+      identity-db:
+        condition: service_healthy
+
+  gateway:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-gateway:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      GATEWAY_PORT: ${GATEWAY_PORT:-8080}
+      IDENTITY_DSN: postgres://${IDENTITY_DB_USER:-identity}:${IDENTITY_DB_PASSWORD:?IDENTITY_DB_PASSWORD is required in server/.env}@identity-db:5432/${IDENTITY_DB_NAME:-identity}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required in server/.env}
+      JWT_TTL: ${JWT_TTL:-8h}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://176.109.100.140}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-30s}
+      # Внутренние сервисы адресуются по именам compose-сервисов.
+      CLIENTS_ENDPOINT: http://clients:8000
+      IMPORT_API_ENDPOINT: http://import-api:8000
+      OPERATOR_WORK_ENDPOINT: http://operator-work:8000
+      # Assistant Service пока не развёрнут: его маршруты ответят 502.
+      ASSISTANT_ENDPOINT: http://assistant:8000
+    ports:
+      - "${GATEWAY_HOST_PORT:-8080}:${GATEWAY_PORT:-8080}"
+    depends_on:
+      identity-db:
+        condition: service_healthy
+      gateway-migrate:
+        condition: service_completed_successfully
+
+  clients-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CLIENTS_DB_NAME:-clients}
+      POSTGRES_USER: ${CLIENTS_DB_USER:-clients}
+      POSTGRES_PASSWORD: ${CLIENTS_DB_PASSWORD:?CLIENTS_DB_PASSWORD is required in server/.env}
+    volumes:
+      - clients_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CLIENTS_DB_USER:-clients} -d ${CLIENTS_DB_NAME:-clients}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  clients-migrate:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-clients:${IMAGE_TAG:-latest}
+    restart: "no"
+    environment:
+      CLIENTS_DATABASE_URL: postgresql+psycopg://${CLIENTS_DB_USER:-clients}:${CLIENTS_DB_PASSWORD:?CLIENTS_DB_PASSWORD is required in server/.env}@clients-db:5432/${CLIENTS_DB_NAME:-clients}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      clients-db:
+        condition: service_healthy
+
+  clients:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-clients:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CLIENTS_DATABASE_URL: postgresql+psycopg://${CLIENTS_DB_USER:-clients}:${CLIENTS_DB_PASSWORD:?CLIENTS_DB_PASSWORD is required in server/.env}@clients-db:5432/${CLIENTS_DB_NAME:-clients}
+      CLIENTS_PORT: "8000"
+    depends_on:
+      clients-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:' + __import__('os').environ['CLIENTS_PORT'] + '/health/ready', timeout=5)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+
+  import-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${IMPORT_DB_NAME:-import_db}
+      POSTGRES_USER: ${IMPORT_DB_USER:-import_user}
+      POSTGRES_PASSWORD: ${IMPORT_DB_PASSWORD:?IMPORT_DB_PASSWORD is required in server/.env}
+    volumes:
+      - import_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${IMPORT_DB_USER:-import_user}", "-d", "${IMPORT_DB_NAME:-import_db}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4
+    restart: unless-stopped
+    hostname: import-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${IMPORT_RABBITMQ_USER:-import_user}
+      RABBITMQ_DEFAULT_PASS: ${IMPORT_RABBITMQ_PASSWORD:?IMPORT_RABBITMQ_PASSWORD is required in server/.env}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  import-migrate:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-import-worker:${IMAGE_TAG:-latest}
+    restart: "no"
+    environment: *import-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      import-db:
+        condition: service_healthy
+
+  import-api:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-import-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *import-environment
+      IMPORT_API_PORT: "8000"
+    volumes:
+      - import_uploads:/var/lib/import-uploads
+    depends_on:
+      import-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  import-worker:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-import-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *import-environment
+      # Consumer применяет импорт в Clients Service по внутренней docker-сети.
+      IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-http://clients:8000}
+    command: ["python", "-m", "import_worker.consumer"]
+    volumes:
+      - import_uploads:/var/lib/import-uploads
+    depends_on:
+      import-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  operator-work-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${OPERATOR_WORK_DB_USER:-operator_work}
+      POSTGRES_PASSWORD: ${OPERATOR_WORK_DB_PASSWORD:?OPERATOR_WORK_DB_PASSWORD is required in server/.env}
+      POSTGRES_DB: ${OPERATOR_WORK_DB_NAME:-operator_work}
+    volumes:
+      - operator_work_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${OPERATOR_WORK_DB_USER:-operator_work}", "-d", "${OPERATOR_WORK_DB_NAME:-operator_work}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  operator-work:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-operator-work:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      OPERATOR_WORK_DATABASE_URL: postgresql+psycopg://${OPERATOR_WORK_DB_USER:-operator_work}:${OPERATOR_WORK_DB_PASSWORD:?OPERATOR_WORK_DB_PASSWORD is required in server/.env}@operator-work-db:5432/${OPERATOR_WORK_DB_NAME:-operator_work}
+      OPERATOR_WORK_CLIENTS_URL: ${OPERATOR_WORK_CLIENTS_URL:-http://clients:8000}
+      OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?OPERATOR_WORK_SERVICE_TOKEN is required in server/.env}
+      OPERATOR_WORK_PORT: "8000"
+    # $$ — экранирование compose: $OPERATOR_WORK_PORT раскрывается в контейнере.
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn operator_work.api:create_app --factory --host 0.0.0.0 --port $${OPERATOR_WORK_PORT}"]
+    depends_on:
+      operator-work-db:
+        condition: service_healthy
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      # Хостовый порт настраивается в server/.env; по умолчанию 80.
+      - "${FRONTEND_HOST_PORT:-80}:3000"
+
+volumes:
+  identity_data:
+  clients_data:
+  import_data:
+  operator_work_data:
+  rabbitmq_data:
+  import_uploads:

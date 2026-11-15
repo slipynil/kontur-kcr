@@ -110,3 +110,46 @@ jobs:
             ghcr.io/${{ env.OWNER_LC }}/kontur-kcr-gateway:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Деплой на dev-сервер (/srv/kontur): на сервере ничего не собирается —
+  # pull уже опубликованных образов и up. Стек и настройка — server/README.md.
+  deploy-to-dev-server:
+    needs: docker-build-and-push
+    # Пуш в dev — это мердж PR (PR открываются только в dev); main не деплоим.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    # Мердж, задевающий несколько сервисов, запускает несколько деплоев;
+    # общий group выстраивает их в очередь вместо гонки на сервере.
+    concurrency:
+      group: deploy-dev-server
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Compose-файл стека и SQL-миграции gateway кладём на сервер:
+      # миграции не запечены в образ, а git-клона на сервере нет.
+      # tar в scp-action сохраняет пути от корня репозитория, поэтому
+      # получаем /srv/kontur/server/compose.yaml и
+      # /srv/kontur/services/gateway/migrations — как ожидает compose.
+      - name: Copy stack compose and gateway migrations to server
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "server/compose.yaml,services/gateway/migrations"
+          target: "/srv/kontur"
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /srv/kontur
+            docker compose --env-file server/.env -f server/compose.yaml pull
+            docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orphans
+            docker image prune -f
