@@ -109,7 +109,7 @@ IMAGE_TAG=<full-commit-sha>
 - **Порты не статические:** фронтенд и gateway публикуются на хостовые порты из
   `server/.env` (`FRONTEND_HOST_PORT`, `GATEWAY_HOST_PORT`).
 - Frontend обращается к `/api/v1` текущего origin. Next.js проксирует запросы
-  в `http://gateway:8080` внутри compose. Для другого внутреннего адреса образ
-  собирается с `--build-arg GATEWAY_INTERNAL_URL=...`. Адрес сохраняется при сборке.
+  в `http://gateway:8080` внутри compose. Для другого внутреннего адреса задайте
+  `GATEWAY_INTERNAL_URL` в `server/.env` и пересоздайте контейнер frontend.
 - `server/.env` не коммитится (общий шаблон `.env` в корневом `.gitignore`);
   менять переменные можно прямо на сервере — следующий деплой их подхватит.
