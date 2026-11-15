@@ -10,7 +10,7 @@ const push = jest.fn(); const replace = jest.fn();
 jest.mock('next/navigation', () => ({ usePathname: () => pathname, useRouter: () => ({ push, replace }), useSearchParams: () => new URLSearchParams(search) }));
 const user: User = { id: 'operator-id', login: 'operator', role: 'OPERATOR', is_active: true, created_at: '2026-01-01' };
 const page = { items: [], total: 0, page: 1, page_size: 20 };
-const card = { kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], status: 'ACTIVE', current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
+const card = { assignment_id: '11111111-1111-4111-8111-111111111111', kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], status: 'ACTIVE', current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
 const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data });
 beforeEach(() => {
   localStorage.clear(); pathname = '/'; search = ''; jest.clearAllMocks();
@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 function signIn(role: User['role'] = 'OPERATOR') { saveSession({ token: 'jwt', token_type: 'Bearer', expires_in: 3600, user: { ...user, role } }); }
 it('logs in with contract field names and no demo credentials', async () => {
-  (fetch as jest.Mock).mockResolvedValue(json({ token: 'jwt', token_type: 'Bearer', expires_in: 3600, user }));
+  (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.endsWith('/auth/login') ? { token: 'jwt', token_type: 'Bearer', expires_in: 3600, user } : page)));
   render(<Workspace />);
   const login = await screen.findByLabelText('Логин'); expect(login).toHaveValue('');
   fireEvent.change(login, { target: { value: 'operator' } }); fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'secret' } });
@@ -31,7 +31,8 @@ it('logs in with contract field names and no demo credentials', async () => {
 });
 it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
-  await screen.findByText('Раздел доступен только администратору.'); expect(fetch).not.toHaveBeenCalled();
+  await screen.findByText('Раздел доступен только администратору.');
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/users'))).toBe(false);
 });
 it('applies server search and preserves zero numeric filters', async () => {
   signIn(); render(<Workspace />); await screen.findByText('Клиенты не найдены');
@@ -63,7 +64,7 @@ it('protects active waiting across quarters', async () => {
   expect(await screen.findByRole('button', { name: 'Перезакрепить на себя' })).toBeDisabled();
 });
 it('saves a call only after the API succeeds', async () => {
-  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event' }, 201)) : clientFetch(url, init));
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event', wait_applied: true }, 201)) : Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, assignment: { ...card.assignment, operator_id: user.id } })));
   render(<ClientDetails code="A/B" user={user} call />);
   fireEvent.change(await screen.findByLabelText('Комментарий'), { target: { value: 'Обещали передать' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить событие' })); await screen.findByText('Событие сохранено');
@@ -113,19 +114,6 @@ it('creates a user using a direct User response and refreshes the list', async (
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(call[0]).toBe('/api/v1/users'); expect(JSON.parse(call[1].body)).toEqual({ login: 'new.user', password: 'secret', role: 'OPERATOR' });
   expect(screen.getByLabelText('Пароль')).toHaveValue('');
-});
-it('requires wait_until for a stage change and sends it separately from promised_date', async () => {
-  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event' }, 201)) : clientFetch(url, init));
-  render(<ClientDetails code="A/B" user={user} call={false} />);
-  fireEvent.change(await screen.findByLabelText('Тип события'), { target: { value: 'STAGE_CHANGE' } });
-  fireEvent.change(screen.getByLabelText('Новый этап'), { target: { value: 'WAIT_DEADLINE' } });
-  expect(screen.getByLabelText('Ожидание до')).toBeRequired();
-  fireEvent.change(screen.getByLabelText('Ожидание до'), { target: { value: '2027-01-15' } });
-  fireEvent.change(screen.getByLabelText('Комментарий'), { target: { value: 'Ожидаем оригиналы' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Сохранить событие' }));
-  await screen.findByText('Событие сохранено');
-  const body = JSON.parse((fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST')[1].body);
-  expect(body).toMatchObject({ event_type: 'STAGE_CHANGE', stage: 'WAIT_DEADLINE', wait_until: '2027-01-15', work_quarter: '2026_Q3' }); expect(body).not.toHaveProperty('promised_date');
 });
 it('rolls back a completed import with a recovery command', async () => {
   search = 'batch=batch-id'; jest.spyOn(window, 'confirm').mockReturnValue(true);

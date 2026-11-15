@@ -3,6 +3,15 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://176.109.100.140').r
 const TOKEN_KEY = 'kontur-api-token';
 const SESSION_KEY = 'kontur-api-session';
 export const AUTH_CHANGED = 'kontur-auth-changed';
+
+export function newRequestId(): string {
+  // getRandomValues also works when the frontend is served over HTTP by IP.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 export function getToken() {
   return typeof window === 'undefined' ? null : window.localStorage.getItem(TOKEN_KEY);
 }

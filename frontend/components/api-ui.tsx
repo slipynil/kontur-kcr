@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { request } from '@/lib/api';
 
 export function message(error: unknown) { return error instanceof Error ? error.message : 'Не удалось выполнить запрос'; }
-export function useResource<T>(path: string | null, revision = 0, poll = false) {
+export function useResource<T>(path: string | null, revision = 0, poll = false, refreshMs = 0) {
   const [state, setState] = useState<{ key: string; path?: string; data?: T; error?: string }>({ key: '' });
   const key = `${path}:${revision}`;
   useEffect(() => {
@@ -15,7 +15,7 @@ export function useResource<T>(path: string | null, revision = 0, poll = false) 
         const data = await request<T>(path, { signal: controller.signal });
         if (!controller.signal.aborted) {
           setState({ key, path, data });
-          if (poll && (data as { status?: string }).status === 'PROCESSING') timer = setTimeout(load, 2000);
+          if (refreshMs || (poll && (data as { status?: string }).status === 'PROCESSING')) timer = setTimeout(load, refreshMs || 2000);
         }
       } catch (error) {
         if (!controller.signal.aborted) setState({ key, path, error: message(error) });
@@ -23,7 +23,7 @@ export function useResource<T>(path: string | null, revision = 0, poll = false) 
     };
     void load();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [path, key, poll]);
+  }, [path, key, poll, refreshMs]);
   return { data: state.path === path ? state.data : undefined, error: state.key === key ? state.error : undefined, loading: !!path && state.key !== key };
 }
 export function useAction() {
