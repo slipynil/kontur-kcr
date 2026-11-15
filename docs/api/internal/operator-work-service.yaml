@@ -27,6 +27,10 @@ info:
 
     Уточнения 07.11.2026: ADR-0003; удаление квартала сохраняет остальные кварталы и общую историю работы.
 
+    Уточнение 15.11.2026: ADR-0010 — проверка сервисного токена между сервисами не выполняется. За аутентификацию и
+    авторизацию отвечает Gateway: он проверяет JWT пользователя и передаёт личность и роль в заголовках X-User-Id и
+    X-User-Role, которым сервис доверяет безусловно. Внутренний контур изолируется на уровне сети.
+
     '
 servers:
 - url: http://operator-work-service:8000/internal/v1
@@ -36,8 +40,6 @@ tags:
   description: Закрепление клиентов за операторами.
 - name: Events
   description: Лента событий клиента.
-security:
-- ServiceBearer: []
 paths:
   /clients/{kcr_code}/take:
     post:
@@ -533,8 +535,6 @@ paths:
         '422':
           description: Некорректный запрос или состояние для восстановления.
 components:
-  securitySchemes:
-    ServiceBearer: { type: http, scheme: bearer }
   parameters:
     WorkQuarter:
       name: work_quarter

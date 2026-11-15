@@ -29,7 +29,7 @@
    editor /srv/kontur/server/.env   # по образцу .env.example из репозитория
    ```
 
-   Все `change-me` заменить: `JWT_SECRET`, `OPERATOR_WORK_SERVICE_TOKEN`,
+   Все `change-me` заменить: `JWT_SECRET`,
    пароли четырёх БД и RabbitMQ. Обязательно до первого деплоя: compose
    падает при отсутствующих обязательных переменных (`:?` в compose.yaml).
 

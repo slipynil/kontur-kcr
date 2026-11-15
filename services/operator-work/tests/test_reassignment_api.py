@@ -12,12 +12,10 @@ from operator_work.assignments import Assignments, WorkError
 CLIENT = "/internal/v1/clients/AAA00412"
 NOTIFICATIONS = "/internal/v1/reassignment-notifications"
 QUARTER = "2026_Q4"
-TOKEN = "test-service-token"
 
 
 def actor(user_id: UUID, role: str = "OPERATOR") -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {TOKEN}",
         "X-User-Id": str(user_id),
         "X-User-Role": role,
     }
@@ -29,7 +27,7 @@ def mock_api(monkeypatch):
     monkeypatch.setattr(api_module, "Assignments", lambda _engine: assignments)
     monkeypatch.delenv("OPERATOR_WORK_CLIENTS_URL", raising=False)
     database = create_autospec(Engine, instance=True)
-    with TestClient(api_module.create_app(database, TOKEN)) as client:
+    with TestClient(api_module.create_app(database)) as client:
         yield client, assignments
 
 
@@ -102,20 +100,14 @@ def test_take_serializes_assignment_conflict(mock_api):
     assignments.take.assert_called_once_with("AAA00412", QUARTER, operator_id, None, request_id)
 
 
-@pytest.mark.parametrize(
-    ("role", "token", "status"), [("ADMIN", TOKEN, 403), ("OPERATOR", "bad", 401)]
-)
-def test_take_requires_service_token_and_operator_role(mock_api, role, token, status):
+def test_take_requires_operator_role(mock_api):
     client, assignments = mock_api
-    headers = actor(uuid4(), role)
-    headers["Authorization"] = f"Bearer {token}"
-
     response = client.post(
         f"{CLIENT}/take",
         params={"work_quarter": QUARTER},
-        headers=headers,
+        headers=actor(uuid4(), "ADMIN"),
         json={"expected_assignment_id": None, "request_id": str(uuid4())},
     )
 
-    assert response.status_code == status
+    assert response.status_code == 403
     assignments.take.assert_not_called()
