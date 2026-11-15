@@ -26,7 +26,6 @@ NOTIFICATIONS = f"{BASE}/reassignment-notifications"
 
 def identity(role="OPERATOR"):
     return {
-        "Authorization": "Bearer local-test",
         "X-User-Role": role,
         "X-User-Id": str(uuid4()),
     }
@@ -63,7 +62,7 @@ def database(monkeypatch):
 
 @pytest.fixture
 def api(database):
-    with TestClient(create_app(database, "local-test")) as client:
+    with TestClient(create_app(database)) as client:
         yield client
 
 
@@ -115,7 +114,6 @@ def test_publish_and_concurrent_take(api, operators, database):
     assert take(api, a).status_code == 404
     assert api.get(f"{BASE}/pool", params=CYCLE, headers=a).json() == {"items": []}
     assert api.put(f"{CLIENT}/publication", params=CYCLE, headers=a).status_code == 403
-    assert take(api, {**a, "Authorization": "Bearer invalid"}).status_code == 401
     publish(api)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -433,7 +431,7 @@ def test_wait_worker_runs_on_startup(api, database, monkeypatch):
         "httpx",
         SimpleNamespace(Client=lambda **opts: httpx.Client(**opts, transport=fake_clients)),
     )
-    with TestClient(create_app(database, "local-test")) as client:
+    with TestClient(create_app(database)) as client:
         deadline = monotonic() + 3
         while monotonic() < deadline:
             state = client.get(f"{CLIENT}/assignment", headers=a, params=CYCLE).json()
@@ -699,7 +697,6 @@ def test_cleanup_requires_admin_and_full_client_scope(api, operators, database):
     before = client_work(database, CODE)
     payload = {"operation_id": str(uuid4()), "kcr_code": CODE, "scope": "CLIENT"}
     assert cleanup(api, a, payload).status_code == 403
-    assert cleanup(api, {**admin, "Authorization": "Bearer invalid"}, payload).status_code == 401
     for scope in ("QUARTER", "BATCH"):
         assert cleanup(api, admin, {**payload, "scope": scope}).status_code == 422
     assert cleanup(api, admin, {**payload, "quarter": QUARTER}).status_code == 422
@@ -1028,7 +1025,7 @@ def test_snapshot_delivery_recovers_after_failure_and_restart(database):
         )
     try:
         with (
-            TestClient(create_app(database, "local-test")) as failed,
+            TestClient(create_app(database)) as failed,
             pytest.raises(IntegrityError),
         ):
             apply_snapshot(failed, balances, batch_id=batch_id)
@@ -1041,10 +1038,10 @@ def test_snapshot_delivery_recovers_after_failure_and_restart(database):
                 text("ALTER TABLE client_work_cycles DROP CONSTRAINT simulated_delivery_failure")
             )
 
-    with TestClient(create_app(database, "local-test")) as committed:
+    with TestClient(create_app(database)) as committed:
         assert apply_snapshot(committed, balances, batch_id=batch_id).status_code == 204
     saved = client_work(database, CODE)
-    with TestClient(create_app(database, "local-test")) as restarted:
+    with TestClient(create_app(database)) as restarted:
         assert apply_snapshot(restarted, balances[::-1], batch_id=batch_id).status_code == 204
         assert apply_snapshot(restarted, [(CODE, 9)], quarter="2026_Q1").status_code == 204
     assert client_work(database, CODE) == saved
@@ -1052,9 +1049,9 @@ def test_snapshot_delivery_recovers_after_failure_and_restart(database):
 
 def test_gateway_read_contract_and_trusted_actor(api, operators):
     a, _, _ = operators
-    spoofed = {key: value for key, value in a.items() if key != "Authorization"}
-    assert api.get(f"{BASE}/pool", headers=spoofed, params=CYCLE).status_code == 401
-    assert api.get(f"{BASE}/pool", params=CYCLE).status_code == 401
+    # ADR-0010: межсервисной токенной проверки нет — личность приходит
+    # только заголовками X-User-Id и X-User-Role, их проставляет Gateway.
+    assert api.get(f"{BASE}/pool", params=CYCLE).status_code == 422
     assert (
         api.get(f"{BASE}/pool", headers={**a, "X-User-Id": "invalid"}, params=CYCLE).status_code
         == 422
@@ -1230,7 +1227,7 @@ def test_large_snapshot_resumes_a_failed_part_and_keeps_original_batch(api, data
                 text("ALTER TABLE client_work_cycles DROP CONSTRAINT simulated_part_failure")
             )
 
-    with TestClient(create_app(database, "local-test")) as restarted:
+    with TestClient(create_app(database)) as restarted:
         assert (
             apply_snapshot(restarted, large[::-1], batch_id=batch_id, delivery=first).status_code
             == 204
