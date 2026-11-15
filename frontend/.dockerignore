@@ -1,0 +1,10 @@
+node_modules
+.next
+.swc
+coverage
+.git
+.idea
+.env*
+*.log
+*.tsbuildinfo
+__tests__
