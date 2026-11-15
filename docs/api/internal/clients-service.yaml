@@ -218,8 +218,7 @@ paths:
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
         счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот
-        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
-        undo не согласовано.'
+        же ID с другим payload даёт 409. Восстановительные копии доступны внутри Clients.'
       parameters:
       - name: kcr_code
         in: path
@@ -463,7 +462,7 @@ paths:
         после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
         Пакеты без принятых строк сохраняют отчёт, но не участвуют в порядке отката.
         Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот же ID с другим
-        payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
+        payload даёт 409. После завершения всех шагов координатор подтверждает откат отдельным запросом.'
       parameters:
       - name: batch_id
         in: path
@@ -508,6 +507,61 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RecoveryCommand'
+  /import/{batch_id}/rollback-confirmation:
+    put:
+      tags:
+      - Import
+      operationId: confirmImportRollback
+      summary: Подтвердить завершение отката
+      description: >-
+        Import Worker вызывает маршрут после подтверждений всех участников отката. Clients сохраняет время первого
+        подтверждения и возвращает его при повторе. Очистка копий этого пакета возможна через 90 дней после этой даты.
+      parameters:
+      - name: batch_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Подтверждение сохранено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, rollback_confirmed_at]
+                properties:
+                  batch_id:
+                    type: string
+                    format: uuid
+                  rollback_confirmed_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Некорректный идентификатор пакета.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пакет отсутствует. Код IMPORT_NOT_FOUND.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Локальный откат ещё не выполнен. Код IMPORT_ROLLBACK_NOT_APPLIED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Clients временно недоступен. Повторить запрос с тем же идентификатором.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /clients/{kcr_code}/snapshots/{quarter}:
     delete:
       operationId: deleteClientQuarter
@@ -515,8 +569,7 @@ paths:
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
         счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот
-        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
-        undo не согласовано.'
+        же ID с другим payload даёт 409. Восстановительные копии доступны внутри Clients.'
       parameters:
       - name: kcr_code
         in: path

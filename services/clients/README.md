@@ -105,6 +105,8 @@ Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&min
 
 Серверный Compose включает бизнес-маршруты Clients и оставляет его HTTP-порт во внутренней сети. Доступ пользователей проверяет Gateway. [Серверный Compose](../../server/compose.yaml), [ADR-0010](../../docs/adr/0010-no-interservice-token-auth.md).
 
+При включённом `CLIENTS_ENABLE_DATA_RECOVERY` Clients проверяет срок хранения копий при запуске и затем каждый час. Время первого подтверждения записывает маршрут `PUT /internal/v1/import/{batch_id}/rollback-confirmation`. Import Worker вызывает его после завершения отката во всех затронутых сервисах. Через 90 дней Clients удаляет копии подтверждённо отменённого пакета и сохраняет результаты команд для повторов.
+
 ## Проверка отдельного HTTP-процесса
 
 ```powershell

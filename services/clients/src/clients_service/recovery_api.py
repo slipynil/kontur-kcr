@@ -4,7 +4,8 @@ from fastapi import APIRouter, Request
 
 from clients_service.import_models import CalendarQuarter
 from clients_service.recovery_application import execute_recovery
-from clients_service.recovery_models import RecoveryCommand
+from clients_service.recovery_models import RecoveryCommand, RollbackConfirmation
+from clients_service.recovery_retention import confirm_rollback
 
 router = APIRouter(prefix="/internal/v1", tags=["Recovery"])
 
@@ -12,6 +13,11 @@ router = APIRouter(prefix="/internal/v1", tags=["Recovery"])
 @router.post("/import/{batch_id}/rollback", operation_id="rollbackImport")
 def rollback(batch_id: UUID, command: RecoveryCommand, request: Request):
     return execute_recovery(request.app.state.engine, command, action="ROLLBACK", batch_id=batch_id)
+
+
+@router.put("/import/{batch_id}/rollback-confirmation", operation_id="confirmImportRollback")
+def rollback_confirmation(batch_id: UUID, request: Request) -> RollbackConfirmation:
+    return confirm_rollback(request.app.state.engine, batch_id)
 
 
 @router.delete("/clients/{kcr_code}", operation_id="deleteClient")

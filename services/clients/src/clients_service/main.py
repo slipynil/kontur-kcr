@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -20,6 +21,7 @@ from clients_service.read_api import router as read_router
 from clients_service.read_repository import ClientNotFound
 from clients_service.recovery_api import router as recovery_router
 from clients_service.recovery_application import RecoveryConflict
+from clients_service.recovery_retention import run_retention
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,10 +31,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         engine = build_engine(configuration)
         app.state.engine = engine
+        stop_retention = asyncio.Event()
+        retention_task = (
+            asyncio.create_task(run_retention(engine, stop_retention))
+            if configuration.enable_data_recovery
+            else None
+        )
         try:
             yield
         finally:
-            engine.dispose()
+            stop_retention.set()
+            try:
+                if retention_task is not None:
+                    await retention_task
+            finally:
+                engine.dispose()
 
     app = FastAPI(title="Clients Service", version="0.1.0", lifespan=lifespan)
 
