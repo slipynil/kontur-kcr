@@ -148,9 +148,29 @@ docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orph
 docker image prune -f
 """
 
-[tasks.e2e]
-description = "Run e2e tests against the local docker stack (mise run install once before)"
+[tasks."gateway:seed-admin"]
+description = "Seed the first admin in the running stack (idempotent; E2E_ADMIN_PASSWORD and E2E_USER_ADMIN_USERNAME override)"
+# Запускает бинарь из образа gateway тем же compose run, что и server/README.md:
+# образ может быть скачан из GHCR или собран локально — важен только поднятый стек.
 depends = ["stack:up"]
+run = """
+login="${E2E_USER_ADMIN_USERNAME:-admin}"
+password="${E2E_ADMIN_PASSWORD:-${E2E_USER_ADMIN_PASSWORD:-password123}}"
+if out=$(docker compose --env-file server/.env -f server/compose.yaml run --rm \
+      -e "ADMIN_LOGIN=$login" -e "ADMIN_PASSWORD=$password" \
+      gateway /usr/local/bin/seed-admin 2>&1); then
+  echo "admin '$login' seeded"
+elif echo "$out" | grep -q 'login already taken'; then
+  echo "admin '$login' already exists, skipping"
+else
+  printf '%s\\n' "$out" >&2
+  exit 1
+fi
+"""
+
+[tasks.e2e]
+description = "Run e2e tests against the local docker stack: seed admin, wait for readiness, run suite (mise run install once before)"
+depends = ["gateway:seed-admin"]
 run = """
 url="${APP_URL:-http://localhost:80}"
 for _ in $(seq 1 60); do
