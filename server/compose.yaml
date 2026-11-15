@@ -60,6 +60,7 @@ services:
       CLIENTS_ENDPOINT: http://clients:8000
       IMPORT_API_ENDPOINT: http://import-api:8000
       OPERATOR_WORK_ENDPOINT: http://operator-work:8000
+      OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?OPERATOR_WORK_SERVICE_TOKEN is required in server/.env}
       # Assistant Service пока не развёрнут: его маршруты ответят 502.
       ASSISTANT_ENDPOINT: http://assistant:8000
     ports:

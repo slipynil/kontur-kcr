@@ -41,6 +41,7 @@ func New(deps Deps) (http.Handler, error) {
 		cfg.ImportAPIEndpoint,
 		cfg.OperatorWorkEndpoint,
 		cfg.AssistantEndpoint,
+		cfg.OperatorWorkToken,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init upstreams: %w", err)

@@ -57,7 +57,7 @@ type Upstreams struct {
 func New(
 	log *slog.Logger,
 	timeout time.Duration,
-	clientsURL, importURL, operatorWorkURL, assistantURL string,
+	clientsURL, importURL, operatorWorkURL, assistantURL, operatorWorkToken string,
 ) (*Upstreams, error) {
 	services := map[string]string{
 		ServiceClients:      clientsURL,
@@ -88,7 +88,11 @@ func New(
 		if target.Scheme == "" || target.Host == "" {
 			return nil, fmt.Errorf("invalid %s upstream url %q: scheme and host are required", name, rawURL)
 		}
-		handlers[name] = newReverseProxy(log, name, target, transport)
+		var serviceToken string
+		if name == ServiceOperatorWork {
+			serviceToken = operatorWorkToken
+		}
+		handlers[name] = newReverseProxy(log, name, target, transport, serviceToken)
 	}
 	return &Upstreams{handlers: handlers}, nil
 }
@@ -109,7 +113,7 @@ func (u *Upstreams) HandlerFunc(service string) http.HandlerFunc {
 	}
 }
 
-func newReverseProxy(log *slog.Logger, name string, target *url.URL, transport http.RoundTripper) http.Handler {
+func newReverseProxy(log *slog.Logger, name string, target *url.URL, transport http.RoundTripper, serviceToken string) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
@@ -118,6 +122,9 @@ func newReverseProxy(log *slog.Logger, name string, target *url.URL, transport h
 			pr.Out.URL.Host = target.Host
 			pr.Out.URL.Path = rewritePath(pr.In.URL.Path)
 			setIdentityHeaders(pr.Out, pr.In)
+			if serviceToken != "" {
+				pr.Out.Header.Set("Authorization", "Bearer "+serviceToken)
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			// Технические детали наружу не отдаются, только в лог gateway.

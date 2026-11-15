@@ -18,6 +18,7 @@ type serviceConfig struct {
 	ClientsEndpoint      string
 	ImportAPIEndpoint    string
 	OperatorWorkEndpoint string
+	OperatorWorkToken    string
 	AssistantEndpoint    string
 	IdentityDSN          string
 	JWTSecret            string
@@ -68,6 +69,7 @@ func GetConfig() *Config {
 		ClientsEndpoint:      viper.GetString("CLIENTS_ENDPOINT"),
 		ImportAPIEndpoint:    viper.GetString("IMPORT_API_ENDPOINT"),
 		OperatorWorkEndpoint: viper.GetString("OPERATOR_WORK_ENDPOINT"),
+		OperatorWorkToken:    viper.GetString("OPERATOR_WORK_SERVICE_TOKEN"),
 		AssistantEndpoint:    viper.GetString("ASSISTANT_ENDPOINT"),
 		IdentityDSN:          viper.GetString("IDENTITY_DSN"),
 		JWTSecret:            viper.GetString("JWT_SECRET"),
