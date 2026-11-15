@@ -2,17 +2,22 @@ name: CI with Clients Service
 
 on:
   push:
-    branches: ["main"]
+    # dev: мердж PR публикует образ; main — прямой пуш.
+    branches: ["main", "dev"]
     paths:
       - 'services/clients/**/*.py'
       - 'services/clients/pyproject.toml'
       - 'services/clients/poetry.lock'
+      - 'services/clients/Dockerfile'
+      - 'services/clients/.dockerignore'
   pull_request:
     branches: ["dev"]
     paths:
       - 'services/clients/**/*.py'
       - 'services/clients/pyproject.toml'
       - 'services/clients/poetry.lock'
+      - 'services/clients/Dockerfile'
+      - 'services/clients/.dockerignore'
 
 defaults:
   run:
@@ -86,3 +91,47 @@ jobs:
                   print "✅ Success: Code coverage " cov "% meets the requirement (" min "%)."
               }
           }'
+
+  # Создание docker image
+  docker-build-and-push:
+    # Образ публикуем только после зелёных lint/test и только на push:
+    # публикация из PR перезаписывала бы тег latest до мерджа.
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # build-push-action НЕ приводит теги к нижнему регистру —
+      # владелец репозитория обязан быть в нижнем регистре, иначе пуш упадёт
+      - name: Lowercase repository owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
+      # Логин нужен только при публикации; в PR образ собирается без пуша
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # PR: push=false — проверяем, что Dockerfile собирается, latest не трогаем.
+      # Push: публикуем latest + неизменяемый тег по SHA коммита.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./services/clients
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/kontur-kcr-clients:latest
+            ghcr.io/${{ env.OWNER_LC }}/kontur-kcr-clients:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
