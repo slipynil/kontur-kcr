@@ -1,10 +1,11 @@
-node_modules
-.next
-.swc
-coverage
-.git
-.idea
-.env*
-*.log
-*.tsbuildinfo
-__tests__
+# Whitelist: только то, что нужно для npm ci и next build (Dockerfile: COPY . .).
+*
+!package.json
+!package-lock.json
+!next.config.ts
+!tsconfig.json
+!eslint.config.mjs
+!app
+!components
+!lib
+!public

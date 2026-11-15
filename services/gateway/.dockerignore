@@ -1,0 +1,7 @@
+# Whitelist: только то, что Dockerfile копирует в контекст сборки.
+*
+!go.mod
+!go.sum
+!cmd
+!configs
+!internal

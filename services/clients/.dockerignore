@@ -1,7 +1,9 @@
-.venv
-__pycache__
-.pytest_cache
-.ruff_cache
-*.egg-info
-.env
-tests
+# Whitelist: только то, что Dockerfile копирует в контекст сборки.
+*
+!pyproject.toml
+!poetry.lock
+!src
+!migrations
+!alembic.ini
+# Локальный мусор не тащим даже внутри разрешённых каталогов.
+**/__pycache__
