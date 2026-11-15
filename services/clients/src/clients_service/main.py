@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -18,6 +18,7 @@ from clients_service.read_api import router as read_router
 from clients_service.read_repository import ClientNotFound
 from clients_service.recovery_api import router as recovery_router
 from clients_service.recovery_application import ImportNotFound, RecoveryConflict
+from clients_service.service_auth import ServiceAccessDenied, require_service_access
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -33,6 +34,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine.dispose()
 
     app = FastAPI(title="Clients Service", version="0.1.0", lifespan=lifespan)
+    read_access, write_access = [], []
+    if not configuration.allow_unauthenticated_local:
+        read_access = [Depends(require_service_access(configuration))]
+        write_access = [Depends(require_service_access(configuration, write=True))]
+
+    @app.exception_handler(ServiceAccessDenied)
+    async def service_access_denied(request: Request, error: ServiceAccessDenied):
+        if error.authenticated:
+            return JSONResponse(
+                {
+                    "code": "FORBIDDEN",
+                    "message": "Service is not allowed to perform this operation",
+                },
+                status_code=403,
+            )
+        return JSONResponse(
+            {"code": "UNAUTHORIZED", "message": "Valid service credentials required"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError):
@@ -53,7 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     if configuration.enable_registry_read:
-        app.include_router(read_router)
+        app.include_router(read_router, dependencies=read_access)
 
     @app.exception_handler(RecoveryConflict)
     async def recovery_conflict(request: Request, error: RecoveryConflict):
@@ -74,11 +95,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     if configuration.enable_data_recovery:
-        app.include_router(recovery_router)
+        app.include_router(recovery_router, dependencies=write_access)
 
     if configuration.enable_import_apply:
 
-        @app.post("/internal/v1/import/apply", tags=["Import"], response_model=None)
+        @app.post(
+            "/internal/v1/import/apply",
+            tags=["Import"],
+            response_model=None,
+            dependencies=write_access,
+        )
         def import_apply(envelope: ImportEnvelope, request: Request) -> JSONResponse:
             try:
                 result = apply_import(request.app.state.engine, envelope)

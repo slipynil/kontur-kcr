@@ -134,7 +134,11 @@ def test_numeric_filters_precede_total_and_pagination(numeric_data):
 
 def test_numeric_http_validation(numeric_data):
     _, url = numeric_data
-    with TestClient(create_app(Settings(database_url=url, enable_registry_read=True))) as client:
+    with TestClient(
+        create_app(
+            Settings(database_url=url, allow_unauthenticated_local=True, enable_registry_read=True)
+        )
+    ) as client:
         path = "/internal/v1/clients"
         result = client.get(
             path,

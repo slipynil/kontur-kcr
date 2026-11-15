@@ -12,15 +12,27 @@ from clients_service.main import create_app
 pytestmark = pytest.mark.postgres
 
 
-def test_import_read_delete_rollback_over_http(database):
+@pytest.mark.parametrize("protected", [False, True])
+def test_import_read_delete_rollback_over_http(database, protected):
     _, config, url = database
     command.upgrade(config, "head")
     actor = str(uuid4())
+    tokens = (
+        {
+            "gateway_service_token": "test-gateway",
+            "operator_work_service_token": "test-operator-work",
+            "import_service_token": "test-import-worker",
+        }
+        if protected
+        else {}
+    )
     settings = Settings(
         database_url=url,
         enable_registry_read=True,
         enable_import_apply=True,
         enable_data_recovery=True,
+        allow_unauthenticated_local=not protected,
+        **tokens,
     )
     with TestClient(create_app(settings)) as client:
 
@@ -52,6 +64,8 @@ def test_import_read_delete_rollback_over_http(database):
             ]
 
         assert client.get("/health/ready").status_code == 200
+        if protected:
+            client.headers["Authorization"] = "Bearer test-import-worker"
         apply("REGISTRY", [{"client": {"kcr_code": "example", "tags": ["VIP"]}}], "2026-04-01")
         apply("SNAPSHOT", rows(10, 20), "2026-04-10")
         changed = apply("SNAPSHOT", rows(7, 15), "2026-04-20")
@@ -81,3 +95,7 @@ def test_import_read_delete_rollback_over_http(database):
         replay = client.request("DELETE", path + "/snapshots/2026_Q1", json=deletion)
         assert replay.json() == deleted.json()
         assert client.get(path).json()["outstanding_documents"] == 30
+        if protected:
+            for token in ("test-gateway", "test-operator-work"):
+                headers = {"Authorization": f"Bearer {token}"}
+                assert client.get(path, headers=headers).json()["outstanding_documents"] == 30

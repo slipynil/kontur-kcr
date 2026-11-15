@@ -9,8 +9,8 @@
 ```powershell
 docker compose up --build -d
 docker compose logs migrate clients
-Invoke-RestMethod http://localhost:8000/health/live
-Invoke-RestMethod http://localhost:8000/health/ready
+Invoke-RestMethod http://127.0.0.1:8001/health/live
+Invoke-RestMethod http://127.0.0.1:8001/health/ready
 ```
 
 Compose поднимает PostgreSQL, применяет миграции отдельным заданием и запускает HTTP-сервис. Порты привязаны к localhost. Демонстрационные пароли предназначены только для локальной разработки. БД сохраняется в volume при `docker compose down`.
@@ -24,7 +24,7 @@ poetry env use 3.14
 poetry install --no-interaction
 $env:CLIENTS_DATABASE_URL = 'postgresql+psycopg://clients:clients_local@localhost:5433/clients'
 poetry run alembic upgrade head
-poetry run uvicorn clients_service.main:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+poetry run uvicorn clients_service.main:create_app --factory --host 127.0.0.1 --port 8001 --no-access-log
 ```
 
 Для запуска только БД можно использовать `docker compose up -d db`. `.env.example` содержит пример URL; приложение читает переменные окружения, файл `.env` автоматически не загружает. URL обязателен; секретное значение скрыто в представлении настроек. Валидационные ошибки настроек не следует публиковать в публичном API.
@@ -49,7 +49,7 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 
 ## Применение пакета в изолированной разработке
 
-Бизнес-маршруты выключены по умолчанию. Переключатели `CLIENTS_ENABLE_*` предназначены для изолированной разработки. Для импорта задайте `CLIENTS_ENABLE_IMPORT_APPLY=true`.
+Бизнес-маршруты выключены по умолчанию. Для примеров ниже при запуске напрямую задайте `CLIENTS_ALLOW_UNAUTHENTICATED_LOCAL=true` на отдельном сервере, привязанном к loopback. Для проверки импорта задайте также `CLIENTS_ENABLE_IMPORT_APPLY=true`. В Compose режим этих примеров включает `compose.check.yaml`.
 
 Пример JSON конверта REGISTRY:
 
@@ -71,10 +71,10 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 Задайте `CLIENTS_ENABLE_REGISTRY_READ=true` перед запуском.
 
 ```powershell
-Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?search=123&tags=VIP,INTEGRATOR&page=1&page_size=20'
-Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&dynamics=REDUCING'
-Invoke-RestMethod 'http://localhost:8000/internal/v1/clients/example-001?quarter=2026_Q3&snapshots_limit=8'
-Invoke-RestMethod 'http://localhost:8000/internal/v1/clients/example-001/snapshots/history?quarter=2026_Q2&limit=20&offset=0'
+Invoke-RestMethod 'http://127.0.0.1:8001/internal/v1/clients?search=123&tags=VIP,INTEGRATOR&page=1&page_size=20'
+Invoke-RestMethod 'http://127.0.0.1:8001/internal/v1/clients?quarter=2026_Q3&dynamics=REDUCING'
+Invoke-RestMethod 'http://127.0.0.1:8001/internal/v1/clients/example-001?quarter=2026_Q3&snapshots_limit=8'
+Invoke-RestMethod 'http://127.0.0.1:8001/internal/v1/clients/example-001/snapshots/history?quarter=2026_Q2&limit=20&offset=0'
 ```
 
 Параметры и поля ответа описаны в [OpenAPI](../../docs/api/internal/clients-service.yaml), правила расчёта — в [ADR-0005](../../docs/adr/0005-clients-read-api-and-quarter-dynamics.md).
@@ -85,32 +85,42 @@ Invoke-RestMethod 'http://localhost:8000/internal/v1/clients/example-001/snapsho
 
 ```powershell
 $body = @{ operation_id = [guid]::NewGuid().ToString(); requested_by = '00000000-0000-0000-0000-000000000001' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -ContentType 'application/json' -Body $body 'http://localhost:8000/internal/v1/import/00000000-0000-0000-0000-000000000101/rollback'
+Invoke-RestMethod -Method Post -ContentType 'application/json' -Body $body 'http://127.0.0.1:8001/internal/v1/import/00000000-0000-0000-0000-000000000101/rollback'
 # Для каждого нового действия создавайте новый operation_id; при повторе сохраняйте прежний body.
 $body = @{ operation_id = [guid]::NewGuid().ToString(); requested_by = '00000000-0000-0000-0000-000000000001' } | ConvertTo-Json
-Invoke-RestMethod -Method Delete -ContentType 'application/json' -Body $body 'http://localhost:8000/internal/v1/clients/example-001/snapshots/2026_Q1'
+Invoke-RestMethod -Method Delete -ContentType 'application/json' -Body $body 'http://127.0.0.1:8001/internal/v1/clients/example-001/snapshots/2026_Q1'
 ```
 
-Для полного удаления передайте такое же тело в `DELETE /internal/v1/clients/{kcr_code}`. Для подключения других сервисов см. [порядок действий координатора](../../docs/clients-recovery-protocol.md).
+Для полного удаления передайте такое же тело в `DELETE /internal/v1/clients/{kcr_code}`. Порядок работы координатора описан в [контракте Import Worker и Operator Work](../../docs/api/import-operator-work-contract.md#откат-и-выборочная-очистка).
 
 ## Числовые фильтры выбранного квартала
 
 ```powershell
-Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&min_unsubmitted_documents=10&max_unsubmitted_documents=100&min_unsubmitted_percent=5&max_unsubmitted_percent=50'
+Invoke-RestMethod 'http://127.0.0.1:8001/internal/v1/clients?quarter=2026_Q3&min_unsubmitted_documents=10&max_unsubmitted_documents=100&min_unsubmitted_percent=5&max_unsubmitted_percent=50'
 ```
 
 Правила фильтрации и поля сводки за квартал описаны в [ADR-0007](../../docs/adr/0007-clients-numeric-filters-and-verification.md).
 
 ## Подключение соседних сервисов
 
-[Заметка для Gateway и Import](../../docs/clients-integration-handoff.md) описывает вопросы интеграции.
+При запуске всех процессов на хосте задайте `CLIENTS_ENDPOINT` в Gateway, `IMPORT_LOCAL_CLIENTS_URL` в Import Worker и `OPERATOR_WORK_CLIENTS_URL` в Operator Work равными `http://127.0.0.1:8001`. Для запуска в контейнерах укажите адрес Clients, доступный из сети каждого контейнера. См. [порты сервисов](../../docs/local-development.md).
+
+Для защищённого запуска включите нужные группы `CLIENTS_ENABLE_*` и передайте соответствующие секреты через окружение. Для вызывающего сервиса сгенерируйте отдельный случайный токен и передавайте `Authorization: Bearer <token>` по защищённому внутреннему соединению.
+
+| Настройка Clients | Права вызывающего сервиса |
+| --- | --- |
+| `CLIENTS_GATEWAY_SERVICE_TOKEN` | Реестр, карточка, история |
+| `CLIENTS_OPERATOR_WORK_SERVICE_TOKEN` | Реестр, карточка, история |
+| `CLIENTS_IMPORT_SERVICE_TOKEN` | Чтение, применение импорта, откат и удаление |
+
+При включении чтения нужен хотя бы один токен. При включении записи обязателен токен Import Worker. В режиме `CLIENTS_ALLOW_UNAUTHENTICATED_LOCAL=true` все токены должны быть пустыми. Без действительного токена защищённый маршрут отвечает `401`, а при попытке записи с токеном чтения — `403`. Health-маршруты доступны без токена. Import Worker передаёт `uploaded_by` и `requested_by` из проверенного контекста инициатора.
 
 ## Проверка отдельного HTTP-процесса
 
 ```powershell
-python scripts/check_http.py --base-url http://127.0.0.1:8000 --mode closed
-# Только отдельный тестовый сервер с тремя включёнными CLIENTS_ENABLE_* флагами:
-python scripts/check_http.py --base-url http://127.0.0.1:8000 --mode business
+poetry run python scripts/check_http.py --base-url http://127.0.0.1:8001 --mode closed
+# Отдельный тестовый сервер с CLIENTS_ALLOW_UNAUTHENTICATED_LOCAL=true и тремя CLIENTS_ENABLE_*:
+poetry run python scripts/check_http.py --base-url http://127.0.0.1:8001 --mode business
 ```
 
 Режим `business` создаёт синтетические записи. Запускайте его на loopback с отдельной тестовой БД и тремя включёнными флагами бизнес-маршрутов.
