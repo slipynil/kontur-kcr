@@ -11,13 +11,15 @@ npm ci
 npm run dev
 ```
 
-По умолчанию запросы идут на `http://176.109.100.140/api/v1`. Для другого Gateway задайте в `.env.local` перед запуском/сборкой:
+По умолчанию браузер отправляет запросы на `/api/v1` текущего сайта. Next.js проксирует их в Gateway по адресу `http://127.0.0.1:8080` при локальном запуске и `http://gateway:8080` в Docker. Внутренний адрес настраивается через `GATEWAY_INTERNAL_URL` перед запуском frontend.
+
+Если браузер должен обращаться к отдельному публичному Gateway, задайте в `.env.local` перед запуском/сборкой:
 
 ```dotenv
 NEXT_PUBLIC_API_URL=https://gateway.example.local
 ```
 
-Значение — origin без `/api/v1`. Пустое `NEXT_PUBLIC_API_URL=` включает `/api/v1` того же origin (nginx должен направлять этот путь на Gateway). Gateway должен разрешать origin frontend и заголовки Authorization/Content-Type в CORS. Для HTTPS frontend нужен HTTPS Gateway. Адрес не содержит секретов; Next.js включает его в клиентскую сборку. Демонстрационных пользователей и локального backend нет: учётные записи создаёт Identity.
+Значение `NEXT_PUBLIC_API_URL` — публичный origin без `/api/v1`. При прямом обращении браузера к отдельному Gateway требуется настройка CORS. При пустом значении используется прокси Next.js на текущем origin. Учётные записи создаёт Identity.
 
 ## Docker
 
@@ -30,13 +32,13 @@ docker run --rm --name kontur-frontend -p 3000:3000 kontur-frontend
 
 Frontend откроется на `http://localhost:3000`. Образ использует Node.js 26.12 из стека проекта, standalone-сборку Next.js и пользователя `node`. В runtime копируются только необходимые зависимости, сервер, статические файлы и `public`; healthcheck проверяет HTTP-ответ frontend.
 
-Адрес Gateway задаётся при сборке образа:
+Внутренний адрес Gateway задаётся при запуске контейнера:
 
 ```sh
-docker build --build-arg NEXT_PUBLIC_API_URL=http://176.109.100.140 -t kontur-frontend ./frontend
+docker run --rm -p 3000:3000 -e GATEWAY_INTERNAL_URL=http://gateway:8080 --network kontur-kcr_default kontur-frontend
 ```
 
-Этот адрес доступен браузеру пользователя, поэтому здесь нужен внешний IP/домен Gateway. Пустое `--build-arg NEXT_PUBLIC_API_URL=` включает обращение к `/api/v1` того же origin. Изменение `NEXT_PUBLIC_API_URL` через `docker run -e` не меняет уже собранный JavaScript — образ нужно пересобрать. Локальные `.env*`, `node_modules`, `.next` и отчёты покрытия исключены из контекста сборки.
+При запуске контейнер должен иметь доступ к Gateway по указанному имени и порту. `GATEWAY_INTERNAL_URL` читается сервером при выполнении запросов. В compose она передаётся из `server/.env`, пример указан в `server/.env.example`. После изменения пересоздайте frontend-контейнер. `NEXT_PUBLIC_API_URL` встраивается в клиентский JavaScript при сборке и требует пересборки при изменении. Локальные `.env*`, `node_modules`, `.next` и отчёты покрытия исключены из контекста сборки.
 
 ## Интеграция
 
