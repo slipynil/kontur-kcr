@@ -1,5 +1,5 @@
 import type { LoginResponse } from './contracts';
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://176.109.100.140').replace(/\/+$/, '');
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
 const TOKEN_KEY = 'kontur-api-token';
 const SESSION_KEY = 'kontur-api-session';
 export const AUTH_CHANGED = 'kontur-auth-changed';

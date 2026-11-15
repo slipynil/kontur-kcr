@@ -5,5 +5,5 @@ export default createJestConfig({
   testEnvironment: 'jsdom',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   modulePathIgnorePatterns: ['<rootDir>/.next/'],
-  collectCoverageFrom: ['lib/**/*.{ts,tsx}', 'app/api/**/*.{ts,tsx}', 'components/**/*.{ts,tsx}', '!**/*.d.ts'],
+  collectCoverageFrom: ['lib/**/*.{ts,tsx}', 'app/api/**/*.{ts,tsx}', 'components/**/*.{ts,tsx}', 'proxy.ts', '!**/*.d.ts'],
 })
