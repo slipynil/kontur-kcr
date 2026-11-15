@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { queryString, request } from '@/lib/api';
+import { newRequestId, queryString, request } from '@/lib/api';
 import type { ImportBatch, User, UserListResponse, Role } from '@/lib/contracts';
 import { Feedback, Pager, QuarterInput, useAction, useResource } from './api-ui';
 
@@ -40,7 +40,7 @@ export function Imports({ reportOnly }: { reportOnly: boolean }) {
     <form onSubmit={e => { e.preventDefault(); router.push(`/import-report?batch=${encodeURIComponent(id.trim())}`); }}><label>ID пакета<input required value={id} onChange={e => setId(e.target.value)} /></label><button className="button secondary">Открыть отчёт</button></form><Feedback {...report} />{batchId && <button className="text-link" onClick={() => setRevision(revision + 1)}>Обновить отчёт</button>}{report.data && <><h2>{report.data.filename}</h2><p>{report.data.selected_quarter} · {report.data.snapshot_date} · {report.data.status}</p><div className="stats-grid">{[['Строк в файле', report.data.total_rows], ['Принято', report.data.success_count], ['Ошибок', report.data.error_count]].map(([label, value]) => <div className="stat-card" key={label}><small>{label}</small><b>{value}</b></div>)}</div>{report.data.status === 'COMPLETED' && <button className="button secondary" disabled={action.busy} onClick={() => {
       if (!window.confirm(`Откатить пакет ${report.data!.filename}? Сервер проверит, что это последний применённый пакет.`)) return;
       void action.run(async () => {
-        const operation_id = operation.current[batchId] ||= crypto.randomUUID();
+        const operation_id = operation.current[batchId] ||= newRequestId();
         await request<ImportBatch>(`/imports/${encodeURIComponent(batchId)}/rollback`, { method: 'POST', body: JSON.stringify({ operation_id }) });
         delete operation.current[batchId]; setRevision(revision + 1); action.setNotice('Пакет откачен');
       });

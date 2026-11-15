@@ -28,3 +28,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .content form > label:not(.upload-box) { width: 100%; }
   .filter-line > label { max-width: none; }
 }
+.call-form fieldset { border: 0; min-width: 0; padding: 0; }
+.call-form fieldset > label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.call-form fieldset > label.checkbox-line { flex-direction: row; }

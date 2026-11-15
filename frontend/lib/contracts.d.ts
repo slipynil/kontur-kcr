@@ -61,6 +61,7 @@ export type QuarterSnapshotBrief = {
 };
 
 export type ClientListItem = {
+  assignment_id?: string | null;
   work_quarter?: string | null;
   kcr_code: string;
   inn: string | null;
@@ -111,6 +112,7 @@ export type ClientAssignmentInfo = {
 };
 
 export type ClientCard = {
+  assignment_id?: string | null;
   work_quarter?: string | null;
   kcr_code: string;
   inn: string | null;
@@ -169,24 +171,16 @@ export type EventType = "CALL_RESULT" | "HISTORICAL_COMMENT" | "EMAIL_SENT" | "S
 
 export type CallResult = "AGREEMENT" | "REFUSAL" | "NO_ANSWER" | "WRONG_NUMBER";
 
-export type ClientEventCreate = {
-  work_quarter?: string | null;
-  event_type: EventType;
-  call_result?: CallResult;
-  promised_date?: string | null;
-  comment_text: string;
-  historical_event_date?: string | null;
-  wait_until?: string | null;
-  stage?: "POOL" | "IN_WORK" | "WAIT_DEADLINE" | "CLAIM" | "CLOSED";
-};
+export type ClientEventCreate = CallEventCreate | HistoricalCommentCreate;
 
 export type ClientEvent = {
+  document_quarters?: (string)[];
   work_quarter?: string | null;
   id: string;
   kcr_code: string;
   author_id: string;
   event_type: EventType;
-  call_result?: CallResult;
+  call_result?: CallResult | null;
   promised_date?: string | null;
   comment_text: string;
   historical_event_date?: string | null;
@@ -196,6 +190,7 @@ export type ClientEvent = {
 };
 
 export type TakeResponse = {
+  assignment_id: string;
   work_quarter: string;
   kcr_code: string;
   assigned_operator_id: string;
@@ -257,4 +252,53 @@ export type QuarterSummary = {
   total_documents: number;
   unsubmitted_documents: number;
   unsubmitted_percent: number | null;
+};
+
+export type TakeRequest = {
+  expected_assignment_id: string | null;
+  request_id: string;
+};
+
+export type ReassignmentRequest = {
+  id: string;
+  kcr_code: string;
+  work_quarter: string;
+  expected_assignment_id: string;
+  owner_id: string;
+  requester_id: string;
+  created_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+  status: "PENDING" | "REJECTED" | "TRANSFERRED" | "CANCELLED";
+};
+
+export type CallEventCreate = {
+  document_quarters?: (string)[];
+  event_type: "CALL_RESULT";
+  request_id: string;
+  expected_assignment_id: string;
+  work_quarter: string;
+  call_result: CallResult;
+  comment_text?: string;
+  promised_date?: string | null;
+  wait_until?: string | null;
+};
+
+export type HistoricalCommentCreate = {
+  document_quarters?: (string)[];
+  event_type: "HISTORICAL_COMMENT";
+  request_id: string;
+  comment_text: string;
+  historical_event_date: string;
+  work_quarter?: string | null;
+};
+
+export type SavedCallEvent = ClientEvent & {
+  event_type?: "CALL_RESULT";
+  wait_applied: boolean;
+};
+
+export type SavedHistoricalComment = ClientEvent & {
+  event_type?: "HISTORICAL_COMMENT";
+  historical_event_date: string;
 };
