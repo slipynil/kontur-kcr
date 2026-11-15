@@ -1,0 +1,62 @@
+name: Deploy to Dev Server
+
+# Ручной деплой по кнопке «Run workflow»: собирает на сервере стек из уже
+# опубликованных образов GHCR, ничего не билдится. Автоматический деплой
+# остаётся в CI-воркфлоу сервисов (push в dev); этот воркфлоу — только
+# для запуска руками. Настройка сервера — server/README.md.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag из GHCR; по умолчанию latest. Откат — SHA коммита, собравшего ВСЕ сервисы (частичные SHA есть не у каждого образа, pull упадёт с manifest unknown)"
+        required: false
+        default: "latest"
+        type: string
+
+jobs:
+  deploy-to-dev-server:
+    runs-on: ubuntu-latest
+    # Тот же group, что у deploy-джоб CI-воркфлоу: ручной и автоматический
+    # деплой встают в общую очередь вместо гонки на сервере.
+    concurrency:
+      group: deploy-dev-server
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Compose-файл стека и SQL-миграции gateway кладём на сервер:
+      # миграции не запечены в образ, а git-клона на сервере нет.
+      # tar в scp-action сохраняет пути от корня репозитория, поэтому
+      # получаем /srv/kontur/server/compose.yaml и
+      # /srv/kontur/services/gateway/migrations — как ожидает compose.
+      - name: Copy stack compose and gateway migrations to server
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "server/compose.yaml,services/gateway/migrations"
+          target: "/srv/kontur"
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          # Переменная окружения процесса имеет приоритет над --env-file,
+          # поэтому тег из кнопки работает разово, не трогая server/.env.
+          DEPLOY_IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DEPLOY_IMAGE_TAG
+          script: |
+            set -e
+            cd /srv/kontur
+            export IMAGE_TAG="$DEPLOY_IMAGE_TAG"
+            echo "Deploying image tag: $IMAGE_TAG"
+            docker compose --env-file server/.env -f server/compose.yaml pull
+            docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orphans
+            docker image prune -f
+            docker compose --env-file server/.env -f server/compose.yaml ps

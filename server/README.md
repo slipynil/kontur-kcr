@@ -55,6 +55,20 @@ Assistant Service пока не реализован и не развёрнут.
 образов (пересоздаются при смене образа); gateway — `migrate/migrate` с
 SQL-файлами из `services/gateway/migrations`, которые CI кладёт рядом с compose.
 
+## Ручной деплой из GitHub Actions
+
+Воркфлоу **Deploy to Dev Server** (`.github/workflows/deploy.yml`) запускается
+только по кнопке: **Actions → Deploy to Dev Server → Run workflow** (ветка `dev`).
+Он выполняет те же шаги, что автодеплой: scp compose-файла и миграций gateway,
+затем `pull` + `up -d`. Общий `concurrency`-group ставит его в очередь с
+автоматическими деплоями.
+
+Необязательный вход `image_tag` деплоит указанный тег образов (по умолчанию
+`latest`). Тег разовый: он передаётся переменной окружения с приоритетом над
+`server/.env` и не меняет файл на сервере. Годятся SHA коммитов, после которых
+собрались **все** сервисы (например, большие мерджи); если у какого-то образа
+тега нет, `pull` упадёт с `manifest unknown` — это fail-fast, стек не тронут.
+
 ## Полезные команды (на сервере)
 
 ```bash
@@ -75,8 +89,11 @@ docker compose --env-file server/.env -f server/compose.yaml down
 
 ## Откат на предыдущую версию
 
-CI публикует неизменяемый тег по SHA коммита рядом с `latest`. Для откката
-укажите его в `server/.env`:
+CI публикует неизменяемый тег по SHA коммита рядом с `latest`. Два способа:
+
+1. **Разово, из UI:** Actions → Deploy to Dev Server → Run workflow →
+   `image_tag` = SHA (коммит, после которого собрались все сервисы).
+2. **Через `server/.env`:**
 
 ```bash
 # SHA нужного коммита: Packages → kontur-kcr-<svc> → история версий в GHCR
