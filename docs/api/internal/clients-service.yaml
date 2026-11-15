@@ -29,21 +29,16 @@ info:
 
 
     ADR-0005: динамика сравнивает актуальные остатки разных кварталов, по умолчанию текущий календарный квартал
-    Europe/Moscow и предыдущий.
+    Europe/Moscow и предыдущий. Внутреннее HTTP-чтение выключено до согласования авторизации; локальное включение
+    CLIENTS_ENABLE_REGISTRY_READ=true.
 
     ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
     глобального завершения.
 
-    ADR-0007: числовые диапазоны применяются только к выбранному quarter.
-
-    Бизнес-маршруты выключены по умолчанию. Группы включаются отдельными параметрами CLIENTS_ENABLE_REGISTRY_READ,
-    CLIENTS_ENABLE_IMPORT_APPLY и CLIENTS_ENABLE_DATA_RECOVERY. Контракт описывает защищённый режим. Для изолированного
-    запуска без токенов предусмотрен CLIENTS_ALLOW_UNAUTHENTICATED_LOCAL=true.'
+    ADR-0007: числовые диапазоны применяются только к выбранному quarter. Сервисная авторизация остаётся предложением.'
 servers:
 - url: http://clients-service:8000/internal/v1
   description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
-security:
-- ServiceBearer: []
 tags:
 - name: Registry
   description: Чтение реестра клиентов.
@@ -59,7 +54,8 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
+        межсервисной авторизации.'
       parameters:
       - name: search
         in: query
@@ -155,8 +151,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
         '503':
           description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
           content:
@@ -172,7 +166,8 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
+        межсервисной авторизации.'
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: snapshots_limit
@@ -209,8 +204,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
         '503':
           description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
           content:
@@ -222,8 +215,9 @@ paths:
       summary: Локально удалить выбранные данные
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
-        счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен;
-        тот же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
         undo не согласовано.'
       parameters:
       - name: kcr_code
@@ -250,10 +244,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '503':
           description: Локальная транзакция отменена; повторить тот же operation_id.
           content:
@@ -274,7 +264,7 @@ paths:
       summary: Журнал изменения статуса передачи документов
       description: 'История наблюдений: limit/offset/total, свежие даты и исправления первыми. quarter ограничивает
         историю исходным периодом; без фильтра — все периоды. Между отдельными страницами новый импорт может изменить
-        позиции.'
+        позиции. Маршруты выключены по умолчанию до согласования межсервисной авторизации.'
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: limit
@@ -336,8 +326,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
         '503':
           description: 'SERVICE_UNAVAILABLE: повторить позже; внутренние сведения БД не раскрываются.'
           content:
@@ -352,7 +340,9 @@ paths:
       summary: Локально применить пакет импорта
       description: 'ADR-0004: результат, данные и undo сохраняются одной транзакцией Clients DB. Повтор того же
         batch_id возвращает прежний результат; другой payload даёт 409. Ошибки строк возвращаются в errors с индексом
-        с единицы, корректные строки принимаются. Импорт во всех затронутых сервисах завершает координатор.'
+        с единицы, корректные строки принимаются. Import остаётся координатором; этот ответ не означает завершение
+        всей системы. Маршрут доступен только при CLIENTS_ENABLE_IMPORT_APPLY=true для изолированной разработки
+        до согласования авторизации.'
       requestBody:
         required: true
         content:
@@ -378,10 +368,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '503':
           description: 'IMPORT_RETRY_REQUIRED: локальная транзакция отменена; повторить тот же пакет.'
           content:
@@ -396,7 +382,8 @@ paths:
       summary: Локально откатить пакет
       description: 'ADR-0006: Восстановить состояние затронутых клиентов до импорта, включая данные, вручную удалённые
         после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
-        Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот же ID с другим
+        Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное включение
+        CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот же ID с другим
         payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
       parameters:
       - name: batch_id
@@ -430,10 +417,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '503':
           description: Локальная транзакция отменена; повторить тот же operation_id.
           content:
@@ -452,8 +435,9 @@ paths:
       summary: Локально удалить выбранные данные
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
-        счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен;
-        тот же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
+        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
+        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
         undo не согласовано.'
       parameters:
       - name: kcr_code
@@ -487,10 +471,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '503':
           description: Локальная транзакция отменена; повторить тот же operation_id.
           content:
@@ -504,38 +484,6 @@ paths:
             schema:
               $ref: '#/components/schemas/RecoveryCommand'
 components:
-  securitySchemes:
-    ServiceBearer:
-      type: http
-      scheme: bearer
-      description: >-
-        Отдельный сервисный токен для Gateway, Operator Work или Import Worker. Все три токена дают доступ к чтению.
-        Применение импорта, откат и удаление доступны только с токеном Import Worker.
-  responses:
-    Unauthorized:
-      description: Требуется действительный сервисный токен.
-      headers:
-        WWW-Authenticate:
-          required: true
-          schema:
-            type: string
-            const: Bearer
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: UNAUTHORIZED
-            message: Valid service credentials required
-    Forbidden:
-      description: Для этой операции требуется токен Import Worker.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: FORBIDDEN
-            message: Service is not allowed to perform this operation
   parameters:
     KcrCode:
       name: kcr_code
@@ -895,7 +843,7 @@ components:
     ImportApplyRequest:
       type: object
       description: Нормализованный пакет ADR-0004. Конверт проверяется целиком, строки — независимо. batch_id является
-        ключом повтора. REGISTRY
+        ключом повтора. HTTP-маршрут по умолчанию отсутствует; локальное включение не является авторизацией. REGISTRY
         принимает профиль без snapshot, SNAPSHOT требует известный КЦР и snapshot. Дата строки по умолчанию равна
         snapshot_date конверта.
       required:
@@ -913,7 +861,7 @@ components:
         uploaded_by:
           type: string
           format: uuid
-          description: Пользователь, загрузивший файл. Import Worker берёт ID из проверенного контекста.
+          description: Пользователь, загрузивший файл.
         items:
           type: array
           minItems: 1

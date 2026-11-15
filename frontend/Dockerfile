@@ -12,14 +12,15 @@ RUN npm ci --no-audit --no-fund
 FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-ARG NEXT_PUBLIC_API_URL=http://176.109.100.140
+ARG NEXT_PUBLIC_API_URL=
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN npm run build
 
 FROM base AS runtime
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
-    PORT=3000
+    PORT=3000 \
+    GATEWAY_INTERNAL_URL=http://gateway:8080
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public

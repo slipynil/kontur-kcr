@@ -1,6 +1,17 @@
 /** @jest-environment node */
 import { api, ApiError, queryString, request } from '../lib/api';
 beforeEach(() => { global.fetch = jest.fn(); });
+it('uses a relative API path when no public origin is configured', async () => {
+  const previous = process.env.NEXT_PUBLIC_API_URL;
+  delete process.env.NEXT_PUBLIC_API_URL;
+  try {
+    let client: typeof import('../lib/api');
+    jest.isolateModules(() => { client = jest.requireActual('../lib/api'); });
+    (fetch as jest.Mock).mockResolvedValue(new Response('{}'));
+    await client!.api('/auth/login', { method: 'POST', body: '{}' });
+    expect((fetch as jest.Mock).mock.calls[0][0]).toBe('/api/v1/auth/login');
+  } finally { process.env.NEXT_PUBLIC_API_URL = previous; }
+});
 it('sends JSON to the public Gateway path', async () => {
   (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ id: 'u1' }), { status: 201 }));
   expect(await request('/users', { method: 'POST', body: JSON.stringify({ login: 'user' }) })).toEqual({ id: 'u1' });

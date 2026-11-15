@@ -307,11 +307,7 @@ def test_http_disabled_by_default_and_local_opt_in(ready_database):
     with TestClient(create_app(Settings(database_url=url))) as client:
         assert client.post("/internal/v1/import/apply", json={}).status_code == 404
         assert "/internal/v1/import/apply" not in client.get("/openapi.json").json()["paths"]
-    with TestClient(
-        create_app(
-            Settings(database_url=url, allow_unauthenticated_local=True, enable_import_apply=True)
-        )
-    ) as client:
+    with TestClient(create_app(Settings(database_url=url, enable_import_apply=True))) as client:
         payload = packet([{"client": {"kcr_code": "a"}}], kind="REGISTRY").model_dump(mode="json")
         assert client.post("/internal/v1/import/apply", json=payload).status_code == 200
         payload["items"] = [{"client": {"kcr_code": "b"}}]

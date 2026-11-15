@@ -282,11 +282,7 @@ def test_recovery_http_opt_in_and_safe_validation(setup):
     path = f"/internal/v1/import/{target.batch_id}/rollback"
     with TestClient(create_app(Settings(database_url=url))) as client:
         assert client.post(path, json=command().model_dump(mode="json")).status_code == 404
-    with TestClient(
-        create_app(
-            Settings(database_url=url, allow_unauthenticated_local=True, enable_data_recovery=True)
-        )
-    ) as client:
+    with TestClient(create_app(Settings(database_url=url, enable_data_recovery=True))) as client:
         assert client.post(path, json={"private": "secret"}).status_code == 400
         response = client.request(
             "DELETE",

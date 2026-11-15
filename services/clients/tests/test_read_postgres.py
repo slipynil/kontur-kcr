@@ -197,11 +197,7 @@ def test_http_read_opt_in_validation_and_no_private_columns(data):
     engine, url, _ = data
     with TestClient(create_app(Settings(database_url=url))) as client:
         assert client.get("/internal/v1/clients").status_code == 404
-    with TestClient(
-        create_app(
-            Settings(database_url=url, allow_unauthenticated_local=True, enable_registry_read=True)
-        )
-    ) as client:
+    with TestClient(create_app(Settings(database_url=url, enable_registry_read=True))) as client:
         assert client.get("/internal/v1/clients/a").status_code == 200
         assert client.get("/internal/v1/clients/missing").status_code == 404
         assert client.get("/internal/v1/clients/missing/snapshots/history").status_code == 404
@@ -261,11 +257,7 @@ def test_read_failure_is_sanitized_and_process_stays_live(data):
     engine, url, _ = data
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE clients RENAME TO temporarily_missing"))
-    with TestClient(
-        create_app(
-            Settings(database_url=url, allow_unauthenticated_local=True, enable_registry_read=True)
-        )
-    ) as client:
+    with TestClient(create_app(Settings(database_url=url, enable_registry_read=True))) as client:
         response = client.get("/internal/v1/clients")
         assert response.status_code == 503
         assert response.json() == {"code": "SERVICE_UNAVAILABLE", "message": "Try again later"}
