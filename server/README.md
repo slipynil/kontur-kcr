@@ -69,6 +69,36 @@ SQL-файлами из `services/gateway/migrations`, которые CI кла�
 собрались **все** сервисы (например, большие мерджи); если у какого-то образа
 тега нет, `pull` упадёт с `manifest unknown` — это fail-fast, стек не тронут.
 
+## Первый администратор
+
+Пользователи живут в Identity DB (`identity-db`, таблица `users`), но создать
+админа через API нельзя — `POST /api/v1/users` требует роль `ADMIN`. Для этого
+в образ gateway запечён бинарь `seed-admin` (`services/gateway/cmd/seed`):
+
+```bash
+cd /srv/kontur
+docker compose --env-file server/.env -f server/compose.yaml run --rm \
+  -e ADMIN_LOGIN=admin -e ADMIN_PASSWORD='надёжный пароль' \
+  gateway /usr/local/bin/seed-admin
+```
+
+- `run` сам поднимет зависимости сервиса (identity-db + миграции) и подставит
+  `IDENTITY_DSN` из окружения gateway — больше ничего настраивать не нужно;
+- пароль: 8–72 символа, логин: до 64; повторный запуск с занятым логином
+  завершится понятной ошибкой — перезапуск безопасен;
+- чтобы пароль не остался в истории shell, вводите его без эха и передавайте
+  переменной (эндпоинта смены пароля в API пока нет):
+
+  ```bash
+  read -rs ADMIN_PASSWORD
+  docker compose --env-file server/.env -f server/compose.yaml run --rm \
+    -e ADMIN_LOGIN=admin -e ADMIN_PASSWORD \
+    gateway /usr/local/bin/seed-admin
+  unset ADMIN_PASSWORD
+  ```
+
+После этого остальные пользователи заводятся через API/UI под админом.
+
 ## Полезные команды (на сервере)
 
 ```bash

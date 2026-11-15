@@ -56,6 +56,10 @@ ADMIN_LOGIN=admin ADMIN_PASSWORD=password123 mise run seed-admin
 mise run run                  # gateway на :8080
 ```
 
+В docker-образ вместе с gateway собирается и `seed-admin`
+(`/usr/local/bin/seed-admin`): на сервере первый админ создаётся разовым
+запуском `docker compose run` — см. «Первый администратор» в `server/README.md`.
+
 Python-сервисы адресуются переменными `*_ENDPOINT` (порты —
 docs/local-development.md). Контейнерный `gateway` из compose по умолчанию
 использует имена сервисов из внутренних контрактов (общая docker-сеть).
