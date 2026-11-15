@@ -64,3 +64,6 @@ node_modules/
 .e2e/summary.md
 .e2e/logs/
 .e2e/videos/
+
+# e2e workbook fixtures: real КЦР exports must never be published
+data/

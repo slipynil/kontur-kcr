@@ -1,15 +1,19 @@
 import { test } from '@e2e-dev/web';
 import { credentials, expect } from 'e2e';
 
-test.setup('sign in as admin', { sessions: ['admin'] }, async ({ app, screen, session }) => {
+test.setup('sign in as admin', { sessions: ['admin'] }, async ({ app, agent, screen, session }) => {
   const admin = credentials.user('admin');
 
   await app.open('/');
-  await screen.getByLabel('Логин').fill(admin.username);
-  await screen.getByLabel('Пароль').fill(admin.password);
-  await screen.getByRole('button', 'Войти').tap();
+  await agent.act('sign in with the given credentials', {
+    params: {
+      username: admin.username,
+      password: admin.password, // a Secret: the model sees its name, the runner fills the field
+    },
+  });
 
-  // The admin-only navigation link proves the session took before it is saved.
+  // The admin-only navigation link proves the session took before it is saved
+  // and confirms the goal for the replay cache.
   await expect(screen.getByRole('button', 'Загрузка реестра')).toBeVisible();
   await session.save('admin');
 });

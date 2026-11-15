@@ -1,0 +1,182 @@
+# Инструменты и задачи всего проекта «Контур КЦР».
+# Запуск из корня репозитория: mise run <task>; список — mise tasks.
+# Версии синхронизированы с CI (.github/workflows/*-pr-checks.yml) и spec.md §1.1:
+#   node 26.12 — фронтенд и e2e; python 3.14 + poetry 2.5.1 — Python-сервисы.
+# Go 1.27.3 живёт в services/gateway/mise.toml: задачи с dir подхватывают его автоматически.
+#
+# Типичный цикл после клона:  mise run install → mise run build → mise run e2e.
+
+[tools]
+node = "26.12"
+python = "3.14"
+poetry = "2.5.1"
+
+# --- Установка зависимостей ---
+
+[tasks.install]
+description = "Install dependencies for every service (run once after clone)"
+depends = [
+  "install:root",
+  "install:frontend",
+  "install:gateway",
+  "install:clients",
+  "install:import-worker",
+  "install:operator-work",
+]
+
+[tasks."install:root"]
+description = "Root e2e deps: npm ci + chromium for @e2e-dev/web"
+run = "npm ci && npx e2e-web install chromium"
+
+[tasks."install:frontend"]
+dir = "frontend"
+run = "npm ci"
+
+[tasks."install:gateway"]
+dir = "services/gateway"
+run = "go mod download"
+
+[tasks."install:clients"]
+dir = "services/clients"
+run = "poetry env use 3.14 && poetry install --no-interaction"
+
+[tasks."install:import-worker"]
+dir = "services/import-worker"
+run = "poetry env use 3.14 && poetry install --no-interaction"
+
+[tasks."install:operator-work"]
+dir = "services/operator-work"
+run = "poetry env use 3.14 && poetry install --no-root --no-interaction"
+
+# --- Локальная сборка ---
+
+[tasks.build]
+description = "Build gateway and frontend locally (Python services need no build artifact)"
+depends = ["gateway:build", "frontend:build"]
+
+[tasks."gateway:build"]
+dir = "services/gateway"
+run = "go build ./..."
+
+[tasks."frontend:build"]
+dir = "frontend"
+run = "npm run build"
+
+# --- Тесты ---
+
+[tasks.test]
+description = "Run unit tests for every service (e2e is separate: mise run e2e)"
+depends = [
+  "gateway:test",
+  "frontend:test",
+  "clients:test",
+  "import-worker:test",
+  "operator-work:test",
+]
+
+[tasks."gateway:test"]
+dir = "services/gateway"
+run = "go test -race -cover ./..."
+
+[tasks."frontend:test"]
+dir = "frontend"
+run = "npm test"
+
+[tasks."clients:test"]
+dir = "services/clients"
+run = "poetry run pytest -v"
+
+[tasks."import-worker:test"]
+dir = "services/import-worker"
+run = "poetry run pytest -v"
+
+[tasks."operator-work:test"]
+dir = "services/operator-work"
+run = "poetry run python -m pytest -v"
+
+# --- Линт (зеркалит CI) ---
+
+[tasks.lint]
+description = "Run linters for every service"
+depends = [
+  "gateway:lint",
+  "frontend:lint",
+  "clients:lint",
+  "import-worker:lint",
+  "operator-work:lint",
+]
+
+[tasks."gateway:lint"]
+dir = "services/gateway"
+run = "golangci-lint run"
+
+[tasks."frontend:lint"]
+dir = "frontend"
+run = "npm run lint"
+
+[tasks."clients:lint"]
+dir = "services/clients"
+run = "poetry run ruff check . && poetry run ruff format --check ."
+
+[tasks."import-worker:lint"]
+dir = "services/import-worker"
+run = "poetry run ruff check . && poetry run ruff format --check ."
+
+[tasks."operator-work:lint"]
+dir = "services/operator-work"
+run = "poetry run ruff check . && poetry run ruff format --check ."
+
+# --- Локальный стек (server/compose.yaml) и e2e ---
+
+[tasks."stack:up"]
+description = "Start the full dev stack from GHCR images (requires server/.env)"
+run = "docker compose --env-file server/.env -f server/compose.yaml up -d"
+
+[tasks."stack:down"]
+description = "Stop the dev stack"
+run = "docker compose --env-file server/.env -f server/compose.yaml down"
+
+[tasks."stack:ps"]
+description = "Show dev stack status"
+run = "docker compose --env-file server/.env -f server/compose.yaml ps"
+
+[tasks."stack:deploy"]
+description = "Pull ready-made GHCR images and recreate the stack (same as CI deploy; IMAGE_TAG=<sha> for a one-off rollback)"
+run = """
+docker compose --env-file server/.env -f server/compose.yaml pull
+docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orphans
+docker image prune -f
+"""
+
+[tasks."gateway:seed-admin"]
+description = "Seed the first admin in the running stack (idempotent; E2E_ADMIN_PASSWORD and E2E_USER_ADMIN_USERNAME override)"
+# Запускает бинарь из образа gateway тем же compose run, что и server/README.md:
+# образ может быть скачан из GHCR или собран локально — важен только поднятый стек.
+depends = ["stack:up"]
+run = """
+login="${E2E_USER_ADMIN_USERNAME:-admin}"
+password="${E2E_ADMIN_PASSWORD:-${E2E_USER_ADMIN_PASSWORD:-password123}}"
+if out=$(docker compose --env-file server/.env -f server/compose.yaml run --rm \
+      -e "ADMIN_LOGIN=$login" -e "ADMIN_PASSWORD=$password" \
+      gateway /usr/local/bin/seed-admin 2>&1); then
+  echo "admin '$login' seeded"
+elif echo "$out" | grep -q 'login already taken'; then
+  echo "admin '$login' already exists, skipping"
+else
+  printf '%s\\n' "$out" >&2
+  exit 1
+fi
+"""
+
+[tasks.e2e]
+description = "Run e2e tests against the local docker stack: seed admin, wait for readiness, run suite (mise run install once before)"
+depends = ["gateway:seed-admin"]
+run = """
+url="${APP_URL:-http://localhost:80}"
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null "$url" && exec npm run test:e2e
+  sleep 1
+done
+echo "frontend did not become ready at $url within 60s (see: mise run stack:ps)" >&2
+exit 1
+"""

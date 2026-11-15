@@ -2,12 +2,12 @@ import { describe, test } from '@e2e-dev/web';
 import { expect } from 'e2e';
 
 describe('login', () => {
-  test('submitting the login form reaches the API instead of a 404 page', async ({ app, screen }) => {
+  test('submitting the login form reaches the API instead of a 404 page', async ({ app, agent, screen }) => {
     await app.open('/');
 
-    await screen.getByLabel('Логин').fill('e2e-probe');
-    await screen.getByLabel('Пароль').fill('definitely-wrong-password');
-    await screen.getByRole('button', { name: 'Войти' }).click();
+    await agent.act('submit the login form with the given credentials', {
+      params: { username: 'e2e-probe', password: 'definitely-wrong-password' },
+    });
 
     // The message comes from the Gateway JSON response. Before the proxy fix
     // the XHR hit a Next.js prerendered 404 page and the form showed
