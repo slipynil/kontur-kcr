@@ -36,8 +36,7 @@ info:
 
     ADR-0007: числовые диапазоны применяются только к выбранному quarter.
 
-    По ADR-0010 API Clients доступен во внутренней сети, доступ пользователей проверяет Gateway. Группы маршрутов
-    включаются настройками CLIENTS_ENABLE_REGISTRY_READ, CLIENTS_ENABLE_IMPORT_APPLY и CLIENTS_ENABLE_DATA_RECOVERY.'
+    По ADR-0010 маршруты Clients доступны при обычном запуске во внутренней сети, доступ пользователей проверяет Gateway.'
 servers:
 - url: http://clients-service:8000/internal/v1
   description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).

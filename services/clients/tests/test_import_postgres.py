@@ -305,12 +305,7 @@ def test_two_periods_one_client_and_atomic_failure(ready_database):
 def test_invalid_calendar_quarter_is_rejected_at_http_boundaries(ready_database):
     engine, url = ready_database
     register(engine)
-    settings = Settings(
-        database_url=url,
-        enable_import_apply=True,
-        enable_registry_read=True,
-        enable_data_recovery=True,
-    )
+    settings = Settings(database_url=url)
     payload = packet([row(quarter="0000_Q4"), row()]).model_dump(mode="json")
     base = "/internal/v1/clients/a/snapshots"
     with TestClient(create_app(settings)) as client:
@@ -331,12 +326,10 @@ def test_invalid_calendar_quarter_is_rejected_at_http_boundaries(ready_database)
         assert client.get(base + "/history").json()["total"] == 1
 
 
-def test_http_disabled_by_default_and_local_opt_in(ready_database):
-    engine, url = ready_database
+def test_http_import_available_by_default(ready_database):
+    _, url = ready_database
     with TestClient(create_app(Settings(database_url=url))) as client:
-        assert client.post("/internal/v1/import/apply", json={}).status_code == 404
-        assert "/internal/v1/import/apply" not in client.get("/openapi.json").json()["paths"]
-    with TestClient(create_app(Settings(database_url=url, enable_import_apply=True))) as client:
+        assert "/internal/v1/import/apply" in client.get("/openapi.json").json()["paths"]
         payload = packet([{"client": {"kcr_code": "a"}}], kind="REGISTRY").model_dump(mode="json")
         assert client.post("/internal/v1/import/apply", json=payload).status_code == 200
         payload["items"] = [{"client": {"kcr_code": "b"}}]

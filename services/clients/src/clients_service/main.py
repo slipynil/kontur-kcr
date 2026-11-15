@@ -32,18 +32,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = build_engine(configuration)
         app.state.engine = engine
         stop_retention = asyncio.Event()
-        retention_task = (
-            asyncio.create_task(run_retention(engine, stop_retention))
-            if configuration.enable_data_recovery
-            else None
-        )
+        retention_task = asyncio.create_task(run_retention(engine, stop_retention))
         try:
             yield
         finally:
             stop_retention.set()
             try:
-                if retention_task is not None:
-                    await retention_task
+                await retention_task
             finally:
                 engine.dispose()
 
@@ -67,9 +62,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"code": "SERVICE_UNAVAILABLE", "message": "Try again later"}, status_code=503
         )
 
-    if configuration.enable_registry_read:
-        app.include_router(read_router)
-        app.include_router(import_read_router)
+    app.include_router(read_router)
+    app.include_router(import_read_router)
 
     @app.exception_handler(RecoveryConflict)
     async def recovery_conflict(request: Request, error: RecoveryConflict):
@@ -89,36 +83,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"code": "IMPORT_ALREADY_ROLLED_BACK", "message": "Use a new batch ID"}, status_code=409
         )
 
-    if configuration.enable_data_recovery:
-        app.include_router(recovery_router)
+    app.include_router(recovery_router)
 
-    if configuration.enable_import_apply:
-
-        @app.post("/internal/v1/import/apply", tags=["Import"], response_model=None)
-        def import_apply(envelope: ImportEnvelope, request: Request) -> JSONResponse:
-            try:
-                result = apply_import(request.app.state.engine, envelope)
-            except PayloadConflict:
-                return JSONResponse(
-                    {
-                        "code": "IMPORT_PAYLOAD_CONFLICT",
-                        "message": "Batch ID has different content",
-                    },
-                    status_code=409,
-                )
-            except ValueError:
-                return JSONResponse(
-                    {"code": "INVALID_REQUEST", "message": "Invalid request"}, status_code=400
-                )
-            except SQLAlchemyError:
-                return JSONResponse(
-                    {
-                        "code": "IMPORT_RETRY_REQUIRED",
-                        "message": "Retry the same batch later",
-                    },
-                    status_code=503,
-                )
-            return JSONResponse(result)
+    @app.post("/internal/v1/import/apply", tags=["Import"], response_model=None)
+    def import_apply(envelope: ImportEnvelope, request: Request) -> JSONResponse:
+        try:
+            result = apply_import(request.app.state.engine, envelope)
+        except PayloadConflict:
+            return JSONResponse(
+                {
+                    "code": "IMPORT_PAYLOAD_CONFLICT",
+                    "message": "Batch ID has different content",
+                },
+                status_code=409,
+            )
+        except ValueError:
+            return JSONResponse(
+                {"code": "INVALID_REQUEST", "message": "Invalid request"}, status_code=400
+            )
+        except SQLAlchemyError:
+            return JSONResponse(
+                {
+                    "code": "IMPORT_RETRY_REQUIRED",
+                    "message": "Retry the same batch later",
+                },
+                status_code=503,
+            )
+        return JSONResponse(result)
 
     @app.get("/health/live", tags=["Health"])
     def live() -> dict[str, str]:

@@ -17,12 +17,7 @@ def test_affected_clients_lists_accepted_codes_and_preserves_quarter_after_delet
     _, config, url = database
     command.upgrade(config, "head")
     actor = str(uuid4())
-    settings = Settings(
-        database_url=url,
-        enable_registry_read=True,
-        enable_import_apply=True,
-        enable_data_recovery=True,
-    )
+    settings = Settings(database_url=url)
 
     def row(code, quarter, balance):
         return {
@@ -125,7 +120,7 @@ def test_affected_clients_paginates_large_batch(database):
                 FROM generate_series(1, 1001) AS entries(number)"""),
             {"batch_id": batch_id},
         )
-    settings = Settings(database_url=url, enable_registry_read=True)
+    settings = Settings(database_url=url)
     with TestClient(create_app(settings)) as client:
         path = f"/internal/v1/import/{batch_id}/affected-clients"
         first = client.get(path).json()
@@ -140,12 +135,7 @@ def test_import_read_delete_rollback_over_http(database):
     _, config, url = database
     command.upgrade(config, "head")
     actor = str(uuid4())
-    settings = Settings(
-        database_url=url,
-        enable_registry_read=True,
-        enable_import_apply=True,
-        enable_data_recovery=True,
-    )
+    settings = Settings(database_url=url)
     with TestClient(create_app(settings)) as client:
 
         def apply(kind, items, day):

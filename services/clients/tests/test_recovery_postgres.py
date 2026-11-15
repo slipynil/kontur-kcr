@@ -222,7 +222,7 @@ def test_retention_expires_only_confirmed_rollback_copies(setup):
     expired, expired_result = roll_back_archived_snapshot()
     retained, _ = roll_back_archived_snapshot()
     unconfirmed, _ = roll_back_archived_snapshot()
-    settings = Settings(database_url=url, enable_data_recovery=True)
+    settings = Settings(database_url=url)
     with TestClient(create_app(settings)) as client:
 
         def confirmation(batch_id):
@@ -365,13 +365,11 @@ def test_concurrent_rollback_repeat_is_applied_once(setup):
         assert conn.scalar(text("SELECT count(*) FROM clients_data_operations")) == 1
 
 
-def test_recovery_http_opt_in_and_safe_validation(setup):
-    engine, url, apply, _ = setup
+def test_recovery_http_available_by_default_and_safe_validation(setup):
+    _, url, apply, _ = setup
     target = apply([snapshot("2026_Q1", 10)])
     path = f"/internal/v1/import/{target.batch_id}/rollback"
     with TestClient(create_app(Settings(database_url=url))) as client:
-        assert client.post(path, json=command().model_dump(mode="json")).status_code == 404
-    with TestClient(create_app(Settings(database_url=url, enable_data_recovery=True))) as client:
         assert client.post(path, json={"private": "secret"}).status_code == 400
         response = client.request(
             "DELETE",
