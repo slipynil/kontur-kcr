@@ -49,7 +49,7 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 
 ## Применение пакета в изолированной разработке
 
-Бизнес-маршруты выключены по умолчанию. Переключатели `CLIENTS_ENABLE_*` предназначены для изолированной разработки. Для импорта задайте `CLIENTS_ENABLE_IMPORT_APPLY=true`.
+При самостоятельном запуске бизнес-маршруты выключены по умолчанию. Для локальной проверки импорта задайте `CLIENTS_ENABLE_IMPORT_APPLY=true`.
 
 Пример JSON конверта REGISTRY:
 
@@ -103,7 +103,7 @@ Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&min
 
 ## Подключение соседних сервисов
 
-[Заметка для Gateway и Import](../../docs/clients-integration-handoff.md) описывает вопросы интеграции.
+Серверный Compose включает бизнес-маршруты Clients и оставляет его HTTP-порт во внутренней сети. Доступ пользователей проверяет Gateway. [Серверный Compose](../../server/compose.yaml), [ADR-0010](../../docs/adr/0010-no-interservice-token-auth.md).
 
 ## Проверка отдельного HTTP-процесса
 

@@ -7,8 +7,8 @@ from pydantic import TypeAdapter
 from sqlalchemy import MetaData, Table, delete, insert, select, text, update
 from sqlalchemy.engine import Engine
 
-from clients_service.import_application import IMPORT_LOCK, Repository, json_value
-from clients_service.import_models import Quarter
+from clients_service.import_application import IMPORT_LOCK, ImportNotFound, Repository, json_value
+from clients_service.import_models import CalendarQuarter
 from clients_service.recovery_models import RecoveryCommand
 
 
@@ -16,10 +16,6 @@ class RecoveryConflict(Exception):
     def __init__(self, code):
         super().__init__(code)
         self.code = code
-
-
-class ImportNotFound(Exception):
-    pass
 
 
 RESTORABLE = {
@@ -86,9 +82,15 @@ def _rollback(repo, batch_id, operation_id):
             "operation_id": str(operation_id),
             "already_rolled_back": True,
         }
+    if batch["result"].get("accepted_rows") == 0:
+        raise RecoveryConflict("IMPORT_NOT_LATEST")
     active = connection.execute(
         select(operations.c.batch_id, operations.c.apply_order)
-        .where(operations.c.rolled_back.is_(False))
+        .where(
+            operations.c.rolled_back.is_(False),
+            # Legacy results without a row count still participate in rollback ordering.
+            operations.c.result["accepted_rows"].as_integer().is_distinct_from(0),
+        )
         .order_by(operations.c.apply_order.desc().nulls_last())
     ).all()
     if batch["apply_order"] is None:
@@ -241,7 +243,7 @@ def execute_recovery(
         if not isinstance(code, str) or not code.strip() or batch_id is not None:
             raise ValueError("Deletion requires a client code")
         if action == "DELETE_QUARTER":
-            TypeAdapter(Quarter).validate_python(quarter)
+            TypeAdapter(CalendarQuarter).validate_python(quarter)
         elif quarter is not None:
             raise ValueError("Client deletion has no quarter")
     payload = {

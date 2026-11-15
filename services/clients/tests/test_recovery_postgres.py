@@ -7,12 +7,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
 from clients_service.config import Settings
-from clients_service.import_application import ImportAlreadyRolledBack, apply_import
+from clients_service.import_application import ImportAlreadyRolledBack, ImportNotFound, apply_import
 from clients_service.import_models import ImportEnvelope
 from clients_service.main import create_app
 from clients_service.read_repository import ClientNotFound, get_card, get_history
 from clients_service.recovery_application import (
-    ImportNotFound,
     RecoveryConflict,
     execute_recovery,
 )
@@ -183,6 +182,30 @@ def test_latest_guard_replay_and_no_reapply_rolled_back_batch(setup):
         apply_import(engine, target)
     rollback(engine, later)
     assert get_card(engine, "a").outstanding_documents == 0
+
+
+def test_only_batches_with_accepted_rows_block_rollback(setup):
+    engine, _, apply, _ = setup
+    first = apply([snapshot("2026_Q1", 10)])
+    rejected_row = {**snapshot("2026_Q1", 5), "client": {"kcr_code": "unknown"}}
+    rejected = first.model_copy(update={"batch_id": uuid4(), "items": [rejected_row]})
+    report = apply_import(engine, rejected)
+    assert (report["accepted_rows"], report["rejected_rows"]) == (0, 1)
+
+    partial = first.model_copy(
+        update={"batch_id": uuid4(), "items": [snapshot("2026_Q1", 5), rejected_row]}
+    )
+    report_partial = apply_import(engine, partial)
+    assert (report_partial["accepted_rows"], report_partial["rejected_rows"]) == (1, 1)
+    with pytest.raises(RecoveryConflict, match="IMPORT_NOT_LATEST"):
+        rollback(engine, first)
+
+    rollback(engine, partial)
+    with pytest.raises(RecoveryConflict, match="IMPORT_NOT_LATEST"):
+        rollback(engine, rejected)
+    assert rollback(engine, first)["removed_history_records"] == 1
+    assert get_history(engine, "a").total == 0
+    assert apply_import(engine, rejected) == report
 
 
 def test_sequence_of_rollbacks_does_not_resurrect_cancelled_history(setup):

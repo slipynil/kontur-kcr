@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CLIENTS_", extra="ignore")
 
     database_url: SecretStr
-    # Development switch, not an authentication mechanism.
+    # Business route groups are opt-in for standalone runs.
     enable_import_apply: bool = False
     enable_registry_read: bool = False
     enable_data_recovery: bool = False

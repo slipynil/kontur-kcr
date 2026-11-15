@@ -302,6 +302,35 @@ def test_two_periods_one_client_and_atomic_failure(ready_database):
         assert undo["previous_state"]["quarter_snapshots"] == []
 
 
+def test_invalid_calendar_quarter_is_rejected_at_http_boundaries(ready_database):
+    engine, url = ready_database
+    register(engine)
+    settings = Settings(
+        database_url=url,
+        enable_import_apply=True,
+        enable_registry_read=True,
+        enable_data_recovery=True,
+    )
+    payload = packet([row(quarter="0000_Q4"), row()]).model_dump(mode="json")
+    base = "/internal/v1/clients/a/snapshots"
+    with TestClient(create_app(settings)) as client:
+        apply_path = "/internal/v1/import/apply"
+        assert (
+            client.post(apply_path, json={**payload, "selected_quarter": "0000_Q4"}).status_code
+            == 400
+        )
+        response = client.post(apply_path, json=payload)
+        assert response.status_code == 200
+        result = response.json()
+        assert (result["accepted_rows"], result["rejected_rows"]) == (1, 1)
+        assert result["errors"][0]["field"] == "snapshot.quarter"
+        assert client.get(base + "/history", params={"quarter": "0000_Q4"}).status_code == 400
+        assert client.get(base + "/history", params={"quarter": "2026_Q4\n"}).status_code == 400
+        deletion = {"operation_id": str(uuid4()), "requested_by": str(uuid4())}
+        assert client.request("DELETE", base + "/0000_Q4", json=deletion).status_code == 400
+        assert client.get(base + "/history").json()["total"] == 1
+
+
 def test_http_disabled_by_default_and_local_opt_in(ready_database):
     engine, url = ready_database
     with TestClient(create_app(Settings(database_url=url))) as client:

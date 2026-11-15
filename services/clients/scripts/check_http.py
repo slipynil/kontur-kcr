@@ -48,6 +48,7 @@ def check_closed(client):
         ("GET", f"/clients/{code}"),
         ("GET", f"/clients/{code}/snapshots/history"),
         ("POST", "/import/apply"),
+        ("GET", f"/import/{batch_id}/affected-clients"),
         ("POST", f"/import/{batch_id}/rollback"),
         ("DELETE", f"/clients/{code}"),
         ("DELETE", f"/clients/{code}/snapshots/2026_Q1"),
