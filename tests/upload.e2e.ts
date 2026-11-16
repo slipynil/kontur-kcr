@@ -75,4 +75,55 @@ describe('upload', { session: 'admin' }, () => {
     await expect(formError).toContainText('Выберите файл .xlsx');
     await expect(browser).toHaveURL('/upload');
   });
+
+  // The explore run found «Загрузить» gave no feedback at all when another field
+  // was also invalid: native validation silently blocked submit (invisible in
+  // headless). Every invalid field must surface a visible message instead.
+  test('keeps showing the upload error when the quarter format is wrong too', async ({ app, screen, browser }) => {
+    await app.open('/upload');
+
+    await screen.getByLabel('Файл реестра .xlsx').setInputFiles('package.json');
+    await screen.getByLabel('Квартал').fill('2026-Q4');
+    await screen.getByLabel('Дата среза').fill('2026-11-15');
+    await screen.getByRole('button', 'Загрузить').tap();
+
+    const formError = screen.getByRole('alert').filter({ hasText: /\S/ });
+    await expect(formError).toContainText('Выберите файл .xlsx');
+    await expect(browser).toHaveURL('/upload');
+  });
+});
+
+describe('import-report', { session: 'admin' }, () => {
+  test('explains that the package ID is required', async ({ app, screen, browser }) => {
+    await app.open('/import-report');
+
+    await screen.getByRole('button', 'Открыть отчёт').tap();
+
+    // The same empty-announcer filter as in the upload suite.
+    const formError = screen.getByRole('alert').filter({ hasText: /\S/ });
+    await expect(formError).toContainText('Введите ID пакета');
+    await expect(browser).toHaveURL('/import-report');
+  });
+
+  test('explains the UUID format for a malformed package ID', async ({ app, screen, browser }) => {
+    await app.open('/import-report');
+
+    await screen.getByLabel('ID пакета').fill('1');
+    await screen.getByRole('button', 'Открыть отчёт').tap();
+
+    const formError = screen.getByRole('alert').filter({ hasText: /\S/ });
+    await expect(formError).toContainText('ID пакета должен быть UUID');
+    await expect(browser).toHaveURL('/import-report');
+  });
+
+  test('shows the server not-found error for an unknown UUID package', async ({ app, screen, browser }) => {
+    await app.open('/import-report');
+
+    await screen.getByLabel('ID пакета').fill('3f2504e0-4f89-41d4-9a0c-0305e82c3301');
+    await screen.getByRole('button', 'Открыть отчёт').tap();
+
+    await expect(browser).toHaveURL('/import-report?batch=3f2504e0-4f89-41d4-9a0c-0305e82c3301');
+    const formError = screen.getByRole('alert').filter({ hasText: /\S/ });
+    await expect(formError).toContainText('Пакет не найден');
+  });
 });

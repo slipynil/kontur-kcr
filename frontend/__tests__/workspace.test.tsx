@@ -83,6 +83,37 @@ it('uploads the file and all four required multipart fields', async () => {
   expect(body.get('file')).toBe(file); expect(body.get('selected_quarter')).toBe('2025_Q2'); expect(body.get('import_type')).toBe('REGISTRY'); expect(body.get('snapshot_date')).toBe('2025-06-01');
 });
 
+it('shows a visible quarter format error instead of silently blocking submit', async () => {
+  render(<Imports reportOnly={false} />);
+  fireEvent.change(screen.getByLabelText('Файл реестра .xlsx'), { target: { files: [new File(['xlsx'], 'clients.xlsx')] } });
+  fireEvent.change(screen.getByLabelText('Квартал'), { target: { value: '2025-Q2' } });
+  fireEvent.change(screen.getByLabelText('Дата среза'), { target: { value: '2025-06-01' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Загрузить' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Квартал загрузки должен быть в формате 2026_Q4');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('requires a package ID before opening the report', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите ID пакета');
+  expect(push).not.toHaveBeenCalled();
+});
+
+it('rejects a package ID that is not a UUID without leaving the form', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.change(screen.getByLabelText('ID пакета'), { target: { value: '1' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('ID пакета должен быть UUID');
+  expect(push).not.toHaveBeenCalled();
+});
+
+it('opens the report for a UUID package ID', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.change(screen.getByLabelText('ID пакета'), { target: { value: '3f2504e0-4f89-41d4-9a0c-0305e82c3301' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  await waitFor(() => expect(push).toHaveBeenCalledWith('/import-report?batch=3f2504e0-4f89-41d4-9a0c-0305e82c3301'));
+});
 
 it('reuses the deletion operation ID after a lost response and accepts bodyless 200', async () => {
   jest.spyOn(window, 'confirm').mockReturnValue(true);

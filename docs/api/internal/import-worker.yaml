@@ -110,6 +110,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
+        '400':
+          description: `batch_id` не является UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_IMPORT_ID
+                message: ID пакета должен быть UUID
         '404':
           description: Пакет не найден.
           content:
@@ -142,6 +151,15 @@ paths:
               schema:
                 type: string
                 format: binary
+        '400':
+          description: '`batch_id` не является UUID.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_IMPORT_ID
+                message: ID пакета должен быть UUID
         '404':
           description: Пакет не найден.
           content:
@@ -171,6 +189,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
+        '400':
+          description: '`batch_id` не является UUID.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_IMPORT_ID
+                message: ID пакета должен быть UUID
         '404':
           description: Пакет не найден.
           content:

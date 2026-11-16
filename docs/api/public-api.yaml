@@ -848,6 +848,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
+        '400':
+          description: '`batch_id` не является UUID (INVALID_IMPORT_ID).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Пакет не найден.
           content:

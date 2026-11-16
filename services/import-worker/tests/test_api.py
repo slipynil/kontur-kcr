@@ -45,6 +45,29 @@ async def test_invalid_upload(
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize(
+    ("suffix", "method"),
+    [
+        ("", "GET"),
+        ("/errors.xlsx", "GET"),
+        ("/rollback", "POST"),
+    ],
+)
+@pytest.mark.parametrize("raw", ["1", "abc", "not-a-uuid"])
+async def test_malformed_batch_id_reports_dedicated_error(
+    tmp_path: Path, raw: str, suffix: str, method: str
+) -> None:
+    app = create_app(Settings("postgresql+asyncpg://unused", "amqp://unused", tmp_path))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://import"
+    ) as client:
+        response = await client.request(method, f"/internal/v1/imports/{raw}{suffix}")
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_IMPORT_ID"
+    assert body["message"] == "ID пакета должен быть UUID"
+
+
 @pytest.mark.parametrize("valid", [False, True])
 async def test_upload_discards_file_if_rejected_before_commit(
     tmp_path: Path, xlsx: WorkbookFactory, monkeypatch: pytest.MonkeyPatch, valid: bool
