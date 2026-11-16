@@ -1,11 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { AUTH_CHANGED, readSession, request, saveSession, setToken } from '@/lib/api';
-import type { LoginResponse, User } from '@/lib/contracts';
-import { Feedback, useAction } from './api-ui';
+import { AUTH_CHANGED, readSession, setToken } from '@/lib/api';
+import type { User } from '@/lib/contracts';
 import { Clients, ClientDetails } from './clients';
 import { Imports, Users } from './management';
+import { Login } from './login';
 import { ReassignmentNotifications } from './reassignment-notifications';
 
 export default function Workspace() {
@@ -13,9 +13,6 @@ export default function Workspace() {
   const pathname = usePathname();
   const [session, setSession] = useState<{ user: User } | null>(null);
   const [ready, setReady] = useState(false);
-  const [login, setLogin] = useState('');
-  const [password, setPassword] = useState('');
-  const action = useAction();
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const sync = () => {
@@ -30,10 +27,7 @@ export default function Workspace() {
     return () => { clearTimeout(timer); window.removeEventListener(AUTH_CHANGED, sync); window.removeEventListener('storage', sync); };
   }, []);
   if (!ready) return <main className="auth-loading" aria-label="Загрузка" />;
-  if (!session) return <main className="login-page"><form className="login-card" onSubmit={e => { e.preventDefault(); void action.run(async () => {
-    const data = await request<LoginResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ login, password }) });
-    saveSession(data); setPassword(''); router.replace('/');
-  }); }}><h1>Контур КЦР</h1><p>Контроль передачи оригиналов документов</p><label>Логин<input name="login" required autoComplete="username" value={login} onChange={e => setLogin(e.target.value)} /></label><label>Пароль<input name="password" required autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} /></label><Feedback error={action.error} /><button className="button primary" disabled={action.busy}>Войти</button></form></main>;
+  if (!session) return <Login />;
   const admin = session.user.role === 'ADMIN';
   const match = pathname.match(/^\/(client|call)\/([^/]+)$/);
   let code = '';
