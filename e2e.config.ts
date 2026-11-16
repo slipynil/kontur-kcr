@@ -2,7 +2,7 @@ import type { E2EConfig } from 'e2e';
 import { web } from '@e2e-dev/web';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-// e2e loads no .env itself: pull the model key (ZAI_API_KEY) from it when present.
+// e2e loads no .env itself: pull the model key (MODEL_API_KEY) from it when present.
 // In CI the file is absent and the variables come from the environment.
 try { process.loadEnvFile(); } catch { /* no .env; env comes from the shell or CI */ }
 
@@ -11,10 +11,10 @@ export default {
   agents: {
     default: {
       model: createOpenAICompatible({
-        name: 'zai',
-        baseURL: 'https://api.z.ai/api/coding/paas/v4',
-        apiKey: process.env.ZAI_API_KEY,
-      }).chatModel('glm-5.3'),
+        name: process.env.MODEL_NAME ?? 'OpenAI comparable',
+        baseURL: process.env.OPEN_BASE_URL,
+        apiKey: process.env.MODEL_API_KEY,
+      }).chatModel(process.env.CHAT_MODEL),
       system: 'You are a thorough QA agent. Verify every outcome.',
     },
   },
