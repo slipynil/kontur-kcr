@@ -110,6 +110,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise APIError(503, "IMPORT_UNAVAILABLE", "Import DB временно недоступна") from exc
         return batch
 
+    def batch_id_or_400(raw: str) -> UUID:
+        # A dedicated code instead of the generic INVALID_IMPORT_REQUEST:
+        # the report form must tell the user the expected UUID format.
+        try:
+            return UUID(raw)
+        except ValueError:
+            raise APIError(400, "INVALID_IMPORT_ID", "ID пакета должен быть UUID") from None
+
     async def batch_report(batch_id: UUID) -> Batch:
         async with reports.begin() as db:
             batch = await db.get(ImportBatch, batch_id)
@@ -118,8 +126,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await report(db, batch)
 
     @app.get("/internal/v1/imports/{batch_id}", operation_id="getImport")
-    async def get_import(batch_id: UUID) -> Batch:
-        return await batch_report(batch_id)
+    async def get_import(batch_id: str) -> Batch:
+        return await batch_report(batch_id_or_400(batch_id))
 
     @app.get(
         "/internal/v1/imports/{batch_id}/errors.xlsx",
@@ -129,8 +137,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             200: {"content": {XLSX_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}}}
         },
     )
-    async def download_errors(batch_id: UUID) -> Response:
-        batch = await batch_report(batch_id)
+    async def download_errors(batch_id: str) -> Response:
+        batch = await batch_report(batch_id_or_400(batch_id))
         content = await asyncio.to_thread(errors_xlsx, batch.error_log)
         return Response(
             content=content,
@@ -142,7 +150,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/internal/v1/imports/{batch_id}/rollback", operation_id="rollbackImport")
-    async def rollback(batch_id: UUID) -> Batch:
+    async def rollback(batch_id: str) -> Batch:
+        batch_id = batch_id_or_400(batch_id)
         async with reports.begin() as db:
             batch = await db.get(ImportBatch, batch_id)
             if batch is None:
