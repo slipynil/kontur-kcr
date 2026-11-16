@@ -105,3 +105,17 @@ class HistoryPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AffectedClient(BaseModel):
+    kcr_code: str
+    source_quarters: list[Quarter]
+    outstanding_documents: int | None
+
+
+class AffectedClientsPage(BaseModel):
+    batch_id: UUID
+    items: list[AffectedClient]
+    total: int
+    limit: int
+    offset: int

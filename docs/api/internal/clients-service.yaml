@@ -29,13 +29,14 @@ info:
 
 
     ADR-0005: динамика сравнивает актуальные остатки разных кварталов, по умолчанию текущий календарный квартал
-    Europe/Moscow и предыдущий. Внутреннее HTTP-чтение выключено до согласования авторизации; локальное включение
-    CLIENTS_ENABLE_REGISTRY_READ=true.
+    Europe/Moscow и предыдущий.
 
     ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
     глобального завершения.
 
-    ADR-0007: числовые диапазоны применяются только к выбранному quarter. Сервисная авторизация остаётся предложением.'
+    ADR-0007: числовые диапазоны применяются только к выбранному quarter.
+
+    По ADR-0010 маршруты Clients доступны при обычном запуске во внутренней сети, доступ пользователей проверяет Gateway.'
 servers:
 - url: http://clients-service:8000/internal/v1
   description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
@@ -43,7 +44,7 @@ tags:
 - name: Registry
   description: Чтение реестра клиентов.
 - name: Import
-  description: Применение и откат данных импорта. Вызывает только Import Worker.
+  description: Применение импорта, сведения о пакете и откат для Import Worker.
 paths:
   /clients:
     get:
@@ -54,8 +55,7 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
-        межсервисной авторизации.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
       parameters:
       - name: search
         in: query
@@ -101,7 +101,8 @@ paths:
         description: Квартал сравнения с предшествующим; по умолчанию текущий календарный квартал Europe/Moscow.
         schema:
           type: string
-          pattern: ^\d{4}_Q[1-4]$
+          maxLength: 7
+          pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
       - name: min_unsubmitted_documents
         in: query
         description: Минимум непереданных документов выбранного квартала, включительно. Без quarter используется
@@ -166,8 +167,7 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Маршруты выключены по умолчанию до согласования
-        межсервисной авторизации.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: snapshots_limit
@@ -184,7 +184,8 @@ paths:
         description: Квартал сравнения с предшествующим; по умолчанию текущий календарный квартал Europe/Moscow.
         schema:
           type: string
-          pattern: ^\d{4}_Q[1-4]$
+          maxLength: 7
+          pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
       responses:
         '200':
           description: Карточка клиента.
@@ -215,10 +216,8 @@ paths:
       summary: Локально удалить выбранные данные
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
-        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
-        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
-        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
-        undo не согласовано.'
+        счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии доступны внутри Clients.'
       parameters:
       - name: kcr_code
         in: path
@@ -262,9 +261,10 @@ paths:
       - Registry
       operationId: getSnapshotHistory
       summary: Журнал изменения статуса передачи документов
-      description: 'История наблюдений: limit/offset/total, свежие даты и исправления первыми. quarter ограничивает
-        историю исходным периодом; без фильтра — все периоды. Между отдельными страницами новый импорт может изменить
-        позиции. Маршруты выключены по умолчанию до согласования межсервисной авторизации.'
+      description: >-
+        Свежие даты и исправления возвращаются первыми. Передайте limit и offset либо page и page_size.
+        Если параметры заданы в обоих форматах, limit должен совпасть с page_size, а offset — со смещением страницы.
+        Без параметров возвращаются первые 20 записей. Новый импорт может изменить позиции между запросами страниц.
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - name: limit
@@ -274,20 +274,33 @@ paths:
           type: integer
           minimum: 1
           maximum: 100
-          default: 20
+      - name: page
+        in: query
+        description: Номер страницы с единицы.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+      - name: page_size
+        in: query
+        description: Размер страницы.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
       - name: quarter
         in: query
         description: Исходный квартал истории; без фильтра — все.
         schema:
           type: string
-          pattern: ^\d{4}_Q[1-4]$
+          maxLength: 7
+          pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
       - name: offset
         in: query
         schema:
           type: integer
           minimum: 0
           maximum: 100000000
-          default: 0
       responses:
         '200':
           description: Записи журнала, свежие первыми.
@@ -321,7 +334,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '400':
-          description: Некорректные или неподдерживаемые параметры запроса.
+          description: Некорректные, неподдерживаемые или противоречащие друг другу параметры запроса.
           content:
             application/json:
               schema:
@@ -341,8 +354,7 @@ paths:
       description: 'ADR-0004: результат, данные и undo сохраняются одной транзакцией Clients DB. Повтор того же
         batch_id возвращает прежний результат; другой payload даёт 409. Ошибки строк возвращаются в errors с индексом
         с единицы, корректные строки принимаются. Import остаётся координатором; этот ответ не означает завершение
-        всей системы. Маршрут доступен только при CLIENTS_ENABLE_IMPORT_APPLY=true для изолированной разработки
-        до согласования авторизации.'
+        всей системы.'
       requestBody:
         required: true
         content:
@@ -374,6 +386,71 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /import/{batch_id}/affected-clients:
+    get:
+      tags:
+      - Import
+      operationId: listAffectedClients
+      summary: Клиенты, затронутые пакетом импорта
+      description: >-
+        Для координатора Import Worker. Возвращает только КЦР, по которым приняты строки пакета, в порядке КЦР.
+        source_quarters содержит исходные кварталы наблюдений этого пакета, включая удалённые вручную после импорта.
+        Для пакета реестра список исходных кварталов пуст. outstanding_documents содержит сумму по всем текущим срезам
+        клиента на момент чтения. Если срезов нет, значение равно null. Пакет без принятых строк возвращает пустую страницу.
+        Для нескольких страниц координатор исключает параллельные изменения затронутых данных и сохраняет собранный
+        результат перед отправкой в Operator Work.
+      parameters:
+      - name: batch_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 1000
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100000000
+          default: 0
+      responses:
+        '200':
+          description: Страница затронутых клиентов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffectedClientsPage'
+        '400':
+          description: Некорректные параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пакет отсутствует в Clients Service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Пакет уже отменён. Код IMPORT_ALREADY_ROLLED_BACK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Clients временно недоступен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /import/{batch_id}/rollback:
     post:
       tags:
@@ -382,9 +459,9 @@ paths:
       summary: Локально откатить пакет
       description: 'ADR-0006: Восстановить состояние затронутых клиентов до импорта, включая данные, вручную удалённые
         после пакета. Import проверяет глобальный последний пакет; Clients дополнительно проверяет локальный порядок.
-        Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное включение
-        CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот же ID с другим
-        payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение undo не согласовано.'
+        Пакеты без принятых строк сохраняют отчёт, но не участвуют в порядке отката.
+        Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот же ID с другим
+        payload даёт 409. После завершения всех шагов координатор подтверждает откат отдельным запросом.'
       parameters:
       - name: batch_id
         in: path
@@ -429,16 +506,69 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RecoveryCommand'
+  /import/{batch_id}/rollback-confirmation:
+    put:
+      tags:
+      - Import
+      operationId: confirmImportRollback
+      summary: Подтвердить завершение отката
+      description: >-
+        Import Worker вызывает маршрут после подтверждений всех участников отката. Clients сохраняет время первого
+        подтверждения и возвращает его при повторе. Очистка копий этого пакета возможна через 90 дней после этой даты.
+      parameters:
+      - name: batch_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Подтверждение сохранено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, rollback_confirmed_at]
+                properties:
+                  batch_id:
+                    type: string
+                    format: uuid
+                  rollback_confirmed_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Некорректный идентификатор пакета.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пакет отсутствует. Код IMPORT_NOT_FOUND.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Локальный откат ещё не выполнен. Код IMPORT_ROLLBACK_NOT_APPLIED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Clients временно недоступен. Повторить запрос с тем же идентификатором.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /clients/{kcr_code}/snapshots/{quarter}:
     delete:
       operationId: deleteClientQuarter
       summary: Локально удалить выбранные данные
       description: 'ADR-0006: Удаление клиента очищает его рабочие данные. Удаление исходного квартала сохраняет
         остальные кварталы, профиль, теги и общую операторскую историю. Отсутствующий объект успешен с нулевыми
-        счётчиками. Ответ local_only=true означает только commit Clients DB. Маршрут по умолчанию отсутствует; локальное
-        включение CLIENTS_ENABLE_DATA_RECOVERY=true не является авторизацией. Повтор operation_id безопасен; тот
-        же ID с другим payload даёт 409. Восстановительные копии не выдаются Registry API; необратимое уничтожение
-        undo не согласовано.'
+        счётчиками. Ответ local_only=true подтверждает локальную транзакцию Clients. Повтор operation_id безопасен; тот
+        же ID с другим payload даёт 409. Восстановительные копии доступны внутри Clients.'
       parameters:
       - name: kcr_code
         in: path
@@ -450,7 +580,8 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^\d{4}_Q[1-4]$
+          maxLength: 7
+          pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
           example: 2026_Q2
       responses:
         '200':
@@ -494,6 +625,42 @@ components:
         type: string
       example: 6671-0042
   schemas:
+    AffectedClientsPage:
+      type: object
+      required: [batch_id, items, total, limit, offset]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            required: [kcr_code, source_quarters, outstanding_documents]
+            properties:
+              kcr_code:
+                type: string
+              source_quarters:
+                type: array
+                uniqueItems: true
+                items:
+                  type: string
+                  pattern: ^\d{4}_Q[1-4]$
+              outstanding_documents:
+                type: [integer, 'null']
+                minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 100000000
     Error:
       type: object
       required:
@@ -843,7 +1010,7 @@ components:
     ImportApplyRequest:
       type: object
       description: Нормализованный пакет ADR-0004. Конверт проверяется целиком, строки — независимо. batch_id является
-        ключом повтора. HTTP-маршрут по умолчанию отсутствует; локальное включение не является авторизацией. REGISTRY
+        ключом повтора. REGISTRY
         принимает профиль без snapshot, SNAPSHOT требует известный КЦР и snapshot. Дата строки по умолчанию равна
         snapshot_date конверта.
       required:
@@ -924,7 +1091,8 @@ components:
                 properties:
                   quarter:
                     type: string
-                    pattern: ^\d{4}_Q[1-4]$
+                    maxLength: 7
+                    pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
                     example: 2026_Q1
                     description: Обязательный исходный квартал документов; отличается от selected_quarter наблюдения.
                   total_documents:
@@ -967,7 +1135,8 @@ components:
             additionalProperties: false
         selected_quarter:
           type: string
-          pattern: ^\d{4}_Q[1-4]$
+          maxLength: 7
+          pattern: ^(?!0000)[0-9]{4}_Q[1-4]$
           example: 2026_Q2
         import_type:
           type: string

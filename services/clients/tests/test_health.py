@@ -34,6 +34,14 @@ class FakeEngine:
         self.disposed = True
 
 
+@pytest.fixture(autouse=True)
+def stub_retention(monkeypatch):
+    async def wait_for_shutdown(engine, stop):
+        await stop.wait()
+
+    monkeypatch.setattr("clients_service.main.run_retention", wait_for_shutdown)
+
+
 @pytest.mark.parametrize(
     ("revisions", "unavailable", "expected"),
     [

@@ -101,13 +101,6 @@ services:
     environment:
       CLIENTS_DATABASE_URL: postgresql+psycopg://${CLIENTS_DB_USER:-clients}:${CLIENTS_DB_PASSWORD:?CLIENTS_DB_PASSWORD is required in server/.env}@clients-db:5432/${CLIENTS_DB_NAME:-clients}
       CLIENTS_PORT: "8000"
-      # Полный dev-стек: бизнес-маршруты включены (по умолчанию выключены для
-      # изолированной разработки; см. services/clients/README.md). Без
-      # IMPORT_APPLY import-worker получает 404 на /internal/v1/import/apply,
-      # без REGISTRY_READ недоступна общая таблица, без DATA_RECOVERY — откат.
-      CLIENTS_ENABLE_IMPORT_APPLY: "true"
-      CLIENTS_ENABLE_REGISTRY_READ: "true"
-      CLIENTS_ENABLE_DATA_RECOVERY: "true"
     depends_on:
       clients-migrate:
         condition: service_completed_successfully

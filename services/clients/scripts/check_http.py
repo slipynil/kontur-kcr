@@ -41,23 +41,6 @@ class Client:
             return body
 
 
-def check_closed(client):
-    code, batch_id = "check-absent", str(uuid4())
-    for method, path in [
-        ("GET", "/clients"),
-        ("GET", f"/clients/{code}"),
-        ("GET", f"/clients/{code}/snapshots/history"),
-        ("POST", "/import/apply"),
-        ("POST", f"/import/{batch_id}/rollback"),
-        ("DELETE", f"/clients/{code}"),
-        ("DELETE", f"/clients/{code}/snapshots/2026_Q1"),
-    ]:
-        client.call(method, "/internal/v1" + path, expected=404)
-    paths = client.call("GET", "/openapi.json")["paths"]
-    assert not any(path.startswith("/internal/v1/") for path in paths)
-    return ["all_business_routes_closed", "openapi_excludes_business_routes"]
-
-
 def check_business(client):
     actor, code = str(uuid4()), f"http-check-{uuid4().hex}"
     peer = code + "-peer"
@@ -106,6 +89,9 @@ def check_business(client):
     initial, _ = apply("SNAPSHOT", snapshots(10, 20), "2026-04-10")
     changed, applied = apply("SNAPSHOT", snapshots(7, 15), "2026-04-20")
     assert client.call("POST", "/internal/v1/import/apply", changed) == applied
+    batch_path = "/internal/v1/import/" + changed["batch_id"]
+    affected = client.call("GET", batch_path + "/affected-clients")
+    assert affected["total"] == 1 and affected["items"][0]["outstanding_documents"] == 22
     path = "/internal/v1/clients/" + code
     card = client.call("GET", path + "?quarter=2026_Q2&snapshots_limit=1")
     assert card["outstanding_documents"] == 22 and card["dynamics"] == "GROWING"
@@ -124,6 +110,8 @@ def check_business(client):
     assert removed["local_only"]
     assert client.call("GET", path)["outstanding_documents"] == 15
     rollback(changed["batch_id"])
+    confirmation = client.call("PUT", batch_path + "/rollback-confirmation")
+    assert confirmation["batch_id"] == changed["batch_id"] and confirmation["rollback_confirmed_at"]
     assert client.call("GET", path)["outstanding_documents"] == 30
     assert client.call("GET", path + "/snapshots/history")["total"] == 2
     assert client.call("DELETE", path + "/snapshots/2026_Q1", deletion) == removed
@@ -136,10 +124,12 @@ def check_business(client):
     client.call("GET", "/internal/v1/clients/" + peer, expected=404)
     return [
         "apply_and_replay",
+        "affected_clients",
         "registry_and_numeric_filter",
         "history",
         "delete_quarter",
         "restore_after_manual_deletion",
+        "rollback_confirmation",
         "replay_does_not_delete_restored_data",
         "other_client_preserved",
         "synthetic_clients_cleaned_up",
@@ -149,13 +139,11 @@ def check_business(client):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--mode", choices=["closed", "business"], default="closed")
     args = parser.parse_args()
     client = Client(args.base_url)
     for path in ("/health/live", "/health/ready"):
         assert client.call("GET", path) == {"status": "ok"}
-    checks = check_closed(client) if args.mode == "closed" else check_business(client)
-    print(json.dumps({"mode": args.mode, "status": "passed", "checks": checks}))
+    print(json.dumps({"status": "passed", "checks": check_business(client)}))
 
 
 if __name__ == "__main__":

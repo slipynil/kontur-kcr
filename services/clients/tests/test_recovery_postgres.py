@@ -7,16 +7,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
 from clients_service.config import Settings
-from clients_service.import_application import ImportAlreadyRolledBack, apply_import
+from clients_service.import_application import ImportAlreadyRolledBack, ImportNotFound, apply_import
 from clients_service.import_models import ImportEnvelope
 from clients_service.main import create_app
 from clients_service.read_repository import ClientNotFound, get_card, get_history
 from clients_service.recovery_application import (
-    ImportNotFound,
     RecoveryConflict,
     execute_recovery,
 )
 from clients_service.recovery_models import RecoveryCommand
+from clients_service.recovery_retention import purge_expired_copies
 
 pytestmark = pytest.mark.postgres
 
@@ -185,6 +185,95 @@ def test_latest_guard_replay_and_no_reapply_rolled_back_batch(setup):
     assert get_card(engine, "a").outstanding_documents == 0
 
 
+def test_only_batches_with_accepted_rows_block_rollback(setup):
+    engine, _, apply, _ = setup
+    first = apply([snapshot("2026_Q1", 10)])
+    rejected_row = {**snapshot("2026_Q1", 5), "client": {"kcr_code": "unknown"}}
+    rejected = first.model_copy(update={"batch_id": uuid4(), "items": [rejected_row]})
+    report = apply_import(engine, rejected)
+    assert (report["accepted_rows"], report["rejected_rows"]) == (0, 1)
+
+    partial = first.model_copy(
+        update={"batch_id": uuid4(), "items": [snapshot("2026_Q1", 5), rejected_row]}
+    )
+    report_partial = apply_import(engine, partial)
+    assert (report_partial["accepted_rows"], report_partial["rejected_rows"]) == (1, 1)
+    with pytest.raises(RecoveryConflict, match="IMPORT_NOT_LATEST"):
+        rollback(engine, first)
+
+    rollback(engine, partial)
+    with pytest.raises(RecoveryConflict, match="IMPORT_NOT_LATEST"):
+        rollback(engine, rejected)
+    assert rollback(engine, first)["removed_history_records"] == 1
+    assert get_history(engine, "a").total == 0
+    assert apply_import(engine, rejected) == report
+
+
+def test_retention_expires_only_confirmed_rollback_copies(setup):
+    engine, url, apply, registry = setup
+    active = apply([snapshot("2026_Q2", 7)])
+    delete(engine, quarter="2026_Q2")
+
+    def roll_back_archived_snapshot():
+        batch = apply([snapshot("2026_Q1", 10)])
+        delete(engine, quarter="2026_Q1")
+        return batch, rollback(engine, batch)
+
+    expired, expired_result = roll_back_archived_snapshot()
+    retained, _ = roll_back_archived_snapshot()
+    unconfirmed, _ = roll_back_archived_snapshot()
+    settings = Settings(database_url=url)
+    with TestClient(create_app(settings)) as client:
+
+        def confirmation(batch_id):
+            return client.put(f"/internal/v1/import/{batch_id}/rollback-confirmation")
+
+        missing = confirmation(uuid4())
+        assert missing.status_code == 404 and missing.json()["code"] == "IMPORT_NOT_FOUND"
+        pending = confirmation(active.batch_id)
+        assert (
+            pending.status_code == 409 and pending.json()["code"] == "IMPORT_ROLLBACK_NOT_APPLIED"
+        )
+        first = confirmation(expired.batch_id)
+        assert first.status_code == 200 and first.json()["rollback_confirmed_at"]
+        assert confirmation(expired.batch_id).json() == first.json()
+        assert confirmation(retained.batch_id).status_code == 200
+
+    with engine.begin() as connection:
+        connection.execute(
+            text("""
+                UPDATE clients_import_operations
+                SET rollback_confirmed_at = clock_timestamp() - INTERVAL '2160 hours'
+                WHERE batch_id = :batch_id
+            """),
+            {"batch_id": expired.batch_id},
+        )
+        connection.execute(
+            text("""
+                UPDATE clients_import_operations
+                SET rollback_confirmed_at = clock_timestamp() - INTERVAL '89 days'
+                WHERE batch_id = :batch_id
+            """),
+            {"batch_id": retained.batch_id},
+        )
+        connection.execute(
+            text("UPDATE clients_import_operations SET created_at = now() - INTERVAL '180 days'")
+        )
+    assert not purge_expired_copies(engine)
+    assert not purge_expired_copies(engine)
+    with engine.connect() as connection:
+        surviving = {str(batch.batch_id) for batch in (active, retained, unconfirmed)}
+        undo_ids = connection.scalars(text("SELECT batch_id::text FROM clients_import_undo"))
+        assert set(undo_ids) == surviving | {str(registry.batch_id)}
+        archive_ids = connection.scalars(
+            text("SELECT payload->>'import_batch_id' FROM clients_deleted_history")
+        )
+        assert set(archive_ids) == surviving
+    replay = rollback(engine, expired)
+    assert replay["already_rolled_back"]
+    assert replay["removed_history_records"] == expired_result["removed_history_records"]
+
+
 def test_sequence_of_rollbacks_does_not_resurrect_cancelled_history(setup):
     engine, _, apply, _ = setup
     first = apply([snapshot("2026_Q1", 10)])
@@ -276,13 +365,11 @@ def test_concurrent_rollback_repeat_is_applied_once(setup):
         assert conn.scalar(text("SELECT count(*) FROM clients_data_operations")) == 1
 
 
-def test_recovery_http_opt_in_and_safe_validation(setup):
-    engine, url, apply, _ = setup
+def test_recovery_http_available_by_default_and_safe_validation(setup):
+    _, url, apply, _ = setup
     target = apply([snapshot("2026_Q1", 10)])
     path = f"/internal/v1/import/{target.batch_id}/rollback"
     with TestClient(create_app(Settings(database_url=url))) as client:
-        assert client.post(path, json=command().model_dump(mode="json")).status_code == 404
-    with TestClient(create_app(Settings(database_url=url, enable_data_recovery=True))) as client:
         assert client.post(path, json={"private": "secret"}).status_code == 400
         response = client.request(
             "DELETE",

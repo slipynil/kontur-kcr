@@ -193,11 +193,31 @@ def test_history_pages_latest_correction_first_and_quarter_scope(data):
     assert get_history(engine, "b").items == []
 
 
-def test_http_read_opt_in_validation_and_no_private_columns(data):
-    engine, url, _ = data
+def test_history_http_accepts_frontend_and_offset_pagination(data):
+    _, url, add = data
+    add([snapshot("a", "2026_Q1", 10)])
+    add([snapshot("a", "2026_Q1", 7)])
+    path = "/internal/v1/clients/a/snapshots/history"
     with TestClient(create_app(Settings(database_url=url))) as client:
-        assert client.get("/internal/v1/clients").status_code == 404
-    with TestClient(create_app(Settings(database_url=url, enable_registry_read=True))) as client:
+        response = client.get(path, params={"page": 1, "page_size": 20, "offset": 0})
+        assert response.status_code == 200
+        assert response.json() == client.get(path).json()
+
+        second = client.get(path, params={"limit": 1, "offset": 1})
+        assert (
+            second.status_code == 200 and second.json()["items"][0]["unsubmitted_documents"] == 10
+        )
+        for params in ({"page": 2, "page_size": 1}, {"page": 2, "page_size": 1, "offset": 1}):
+            assert client.get(path, params=params).json() == second.json()
+
+        for params in ({"page": 2, "page_size": 1, "offset": 0}, {"limit": 2, "page_size": 1}):
+            assert client.get(path, params=params).status_code == 400
+
+
+def test_http_read_validation_and_no_private_columns(data):
+    _, url, _ = data
+    with TestClient(create_app(Settings(database_url=url))) as client:
+        assert client.get("/internal/v1/clients").status_code == 200
         assert client.get("/internal/v1/clients/a").status_code == 200
         assert client.get("/internal/v1/clients/missing").status_code == 404
         assert client.get("/internal/v1/clients/missing/snapshots/history").status_code == 404
@@ -257,7 +277,7 @@ def test_read_failure_is_sanitized_and_process_stays_live(data):
     engine, url, _ = data
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE clients RENAME TO temporarily_missing"))
-    with TestClient(create_app(Settings(database_url=url, enable_registry_read=True))) as client:
+    with TestClient(create_app(Settings(database_url=url))) as client:
         response = client.get("/internal/v1/clients")
         assert response.status_code == 503
         assert response.json() == {"code": "SERVICE_UNAVAILABLE", "message": "Try again later"}
