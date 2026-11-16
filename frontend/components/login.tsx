@@ -19,7 +19,11 @@ export function Login() {
       <div className="login-logo"><b>Контур КЦР</b></div>
       {/* No self-service registration: accounts are created by an administrator. */}
       <div className="login-tabs"><span className="login-tab active" aria-current="page">Вход</span></div>
-      <form className="login-form" onSubmit={e => { e.preventDefault(); void action.run(async () => {
+      {/* Native required bubbles are invisible to the a11y tree and headless runs
+          (management.tsx:37-38): both fields validate here and render via Feedback. */}
+      <form className="login-form" noValidate onSubmit={e => { e.preventDefault(); void action.run(async () => {
+        if (!login.trim()) throw new Error('Введите логин');
+        if (!password) throw new Error('Введите пароль');
         const data = await request<LoginResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ login, password }) });
         saveSession(data); setPassword(''); router.replace('/');
       }); }}>
