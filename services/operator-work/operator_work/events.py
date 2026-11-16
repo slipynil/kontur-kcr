@@ -1,7 +1,10 @@
+import logging
 from datetime import date
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
+import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import Engine, text
 
@@ -17,6 +20,8 @@ from operator_work.assignments import (
     _settle_overdue,
 )
 from operator_work.contracts import QuarterValue
+
+logger = logging.getLogger(__name__)
 
 
 class EventRequest(BaseModel):
@@ -68,21 +73,42 @@ def _event_result(row) -> dict:
     return result
 
 
+def _client_exists(clients: httpx.Client | None, code: str) -> bool | None:
+    """Registry lookup through Clients: True (known), False (absent), None (cannot verify)."""
+    if clients is None:
+        return None
+    try:
+        response = clients.get("/internal/v1/clients/" + quote(code, safe=""))
+    except httpx.HTTPError:
+        logger.debug("Could not confirm the client in Clients", exc_info=True)
+        return None
+    if response.status_code == 200:
+        return True
+    if response.status_code == 404:
+        return False
+    return None
+
+
 class ClientEvents:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, clients: httpx.Client | None = None):
         self.engine = engine
+        self.clients = clients
 
     def list(self, code: str, quarter: str | None, page: int, size: int, role: str) -> dict:
         with self.engine.connect() as db:
             cycle = _current_cycle(db, code)
             if role == "OPERATOR" and (cycle is None or cycle["published_at"] is None):
                 raise WorkError(404, "CLIENT_NOT_PUBLISHED", "Клиент недоступен")
-            if cycle is None and not db.scalar(
+            no_work_data = cycle is None and not db.scalar(
                 text("""SELECT EXISTS (SELECT 1 FROM client_work_cycles WHERE kcr_code = :code)
                             OR EXISTS (SELECT 1 FROM client_events WHERE kcr_code = :code)"""),
                 {"code": code},
-            ):
-                raise WorkError(404, "CLIENT_NOT_PUBLISHED", "Клиент недоступен")
+            )
+            # A registry client without work data yet (fresh import, after a rollback or client
+            # deletion) has an empty feed, not an error; only Clients can tell an absent code
+            # from an unused one.
+            if no_work_data and _client_exists(self.clients, code) is False:
+                raise WorkError(404, "CLIENT_NOT_FOUND", "Клиент не найден")
             params = {"code": code, "quarter": quarter, "size": size, "skip": (page - 1) * size}
             where = """WHERE kcr_code = :code
                          AND (CAST(:quarter AS text) IS NULL OR work_quarter = :quarter)"""

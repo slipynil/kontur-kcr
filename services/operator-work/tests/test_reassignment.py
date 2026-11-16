@@ -3,6 +3,7 @@ from datetime import datetime
 from os import getenv
 from time import monotonic, sleep
 from types import SimpleNamespace
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import httpx
@@ -308,6 +309,47 @@ def test_invalid_wait_does_not_save_partial_call(api, operators):
     assert history["total"] == 1
     assert history["items"][0]["event_type"] == "OPERATOR_ASSIGN"
     assert record_call(api, a, {**payload, "wait_until": None}).status_code == 201
+
+
+def events_api(database, monkeypatch, existing=True):
+    """An app whose Clients lookup answers 200 for CODE and 404 otherwise."""
+    code_path = "/internal/v1/clients/" + quote(CODE, safe="")
+
+    def clients(request):
+        if request.url.path == code_path and existing:
+            return httpx.Response(200, json={"kcr_code": CODE})
+        return httpx.Response(404, json={"code": "CLIENT_NOT_FOUND", "message": "Клиент не найден"})
+
+    monkeypatch.setenv("OPERATOR_WORK_CLIENTS_URL", "http://clients.test")
+    transport = httpx.MockTransport(clients)
+    monkeypatch.setattr(
+        api_module,
+        "httpx",
+        SimpleNamespace(Client=lambda **opts: httpx.Client(**opts, transport=transport)),
+    )
+    return TestClient(create_app(database))
+
+
+def test_events_feed_is_empty_for_a_registry_client_without_work(database, monkeypatch):
+    # A fresh registry import has no cycles and no events: the feed is empty, not an error.
+    with events_api(database, monkeypatch) as client:
+        response = client.get(f"{CLIENT}/events", headers=identity("ADMIN"))
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": 0, "page": 1, "page_size": 20}
+
+
+def test_events_feed_keeps_404_for_a_code_absent_from_the_registry(database, monkeypatch):
+    with events_api(database, monkeypatch, existing=False) as client:
+        response = client.get(f"{CLIENT}/events", headers=identity("ADMIN"))
+    assert response.status_code == 404
+    assert response.json()["code"] == "CLIENT_NOT_FOUND"
+
+
+def test_events_feed_degrades_to_empty_when_the_registry_check_cannot_run(api):
+    # Without OPERATOR_WORK_CLIENTS_URL the existence check cannot run: empty feed, not an error.
+    response = api.get(f"{CLIENT}/events", headers=identity("ADMIN"))
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def enter_wait(api, database, *, expired=True):
