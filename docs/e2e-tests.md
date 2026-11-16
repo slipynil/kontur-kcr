@@ -42,10 +42,8 @@ Go-инструменты (`go 1.27.3`, `golangci-lint`, `gomigrate`) описа
 |---|---|---|
 | `.env` в корне: `ZAI_API_KEY` | для agent-шагов | Ключ модели (OpenAI-совместимый endpoint задан в `e2e.config.ts`). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без ключа agentic-тесты упадут на первом вызове модели |
 | `server/.env` (из `server/.env.example`) | для задач `stack:*` и `e2e` | Пароли БД/JWT для docker-стека; как настроить — `server/README.md` |
-| Docker-логин в GHCR | для `stack:deploy` | Образы приватные: `docker login ghcr.io` (см. `server/README.md`) |
 | `APP_URL` | опционально | Адрес фронтенда; дефолт `http://localhost:80` |
 | `E2E_ADMIN_PASSWORD` | опционально | Пароль админа: им задача `gateway:seed-admin` сеет админа и e2e-тесты логинятся; дефолт `password123` |
-| `IMAGE_TAG` | опционально | Разовый откат стека: `IMAGE_TAG=<sha> mise run stack:deploy` |
 
 ## 4. Запуск
 
@@ -60,9 +58,8 @@ mise run e2e       # поднимет docker-стек, засеет админа
 |---|---|
 | `install` / `build` / `test` / `lint` | Зависимости, локальная сборка (gateway + frontend), юнит-тесты и линтеры всех сервисов; подзадачи вида `clients:test`, `gateway:build` — по отдельности |
 | `e2e` | `gateway:seed-admin` (→ `stack:up`) → ожидание готовности фронтенда → `npm run test:e2e` |
-| `gateway:seed-admin` | Создаёт первого админа в запущенном стеке — `docker compose run` бинаря из образа gateway (образ скачан из GHCR или собран локально — важно лишь, что стек поднят). Повторный запуск безопасен: «логин уже занят» не считается ошибкой |
-| `stack:up` / `stack:down` / `stack:ps` | Запуск/остановка/статус docker-стека из готовых образов GHCR |
-| `stack:deploy` | Обновление стека из GHCR: `pull` → `up -d --remove-orphans` → чистка слоёв (то же, что деплой CI) |
+| `gateway:seed-admin` | Создаёт первого админа в запущенном стеке — `docker compose run` бинаря из образа gateway (важно лишь, что стек поднят). Повторный запуск безопасен: «логин уже занят» не считается ошибкой |
+| `stack:up` / `stack:down` / `stack:ps` | Запуск (с локальной сборкой образов)/остановка/статус docker-стека |
 
 ## 5. Отчёты и отладка
 
