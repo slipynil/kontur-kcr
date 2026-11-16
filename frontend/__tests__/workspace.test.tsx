@@ -29,6 +29,12 @@ it('logs in with contract field names and no demo credentials', async () => {
   expect((fetch as jest.Mock).mock.calls[0][0]).toBe('/api/v1/auth/login');
   expect(JSON.parse((fetch as jest.Mock).mock.calls[0][1].body)).toEqual({ login: 'operator', password: 'secret' });
 });
+it('shows field validation on an empty login submit instead of calling the API', async () => {
+  render(<Workspace />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Войти' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите логин');
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => String(url).includes('/auth/login'))).toBe(false);
+});
 it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
   await screen.findByText('Раздел доступен только администратору.');
