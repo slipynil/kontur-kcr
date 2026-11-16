@@ -38,12 +38,18 @@ Go-инструменты (`go 1.27.3`, `golangci-lint`, `gomigrate`) описа
 
 ## 3. Переменные окружения
 
+Переменные для e2e делятся на два файла: корневой `.env` (из `.env.example`) —
+доступ к модели для agent-шагов, `server/.env` — пароли docker-стека.
+
 | Файл / переменная | Обязательность | Назначение |
 |---|---|---|
-| `.env` в корне: `ZAI_API_KEY` | для agent-шагов | Ключ модели (OpenAI-совместимый endpoint задан в `e2e.config.ts`). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без ключа agentic-тесты упадут на первом вызове модели |
+| `.env` в корне: `MODEL_API_KEY`, `OPEN_BASE_URL`, `CHAT_MODEL` | для agent-шагов | Доступ к модели через OpenAI-совместимый endpoint любого провайдера: `MODEL_API_KEY` — ключ, `OPEN_BASE_URL` — базовый URL провайдера, `CHAT_MODEL` — id модели, которой раннер водит UI (id зависит от провайдера). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без этих переменных agentic-тесты упадут на первом вызове модели |
+| `.env` в корне: `MODEL_NAME` | опционально | Отображаемое имя провайдера в AI SDK; дефолт в `e2e.config.ts` — `OpenAI comparable` |
 | `server/.env` (из `server/.env.example`) | для задач `stack:*` и `e2e` | Пароли БД/JWT для docker-стека; как настроить — `server/README.md` |
 | `APP_URL` | опционально | Адрес фронтенда; дефолт `http://localhost:80` |
 | `E2E_ADMIN_PASSWORD` | опционально | Пароль админа: им задача `gateway:seed-admin` сеет админа и e2e-тесты логинятся; дефолт `password123` |
+| `E2E_USER_ADMIN_USERNAME` / `E2E_USER_ADMIN_PASSWORD` | опционально | Переопределение credential `admin` самим раннером (`E2E_USER_<NAME>_*`): приоритетнее значений из `e2e.config.ts`, включая `E2E_ADMIN_PASSWORD`; удобно в CI, где переменные приходят из секретов |
+| `IMAGE_TAG` | опционально | Разовый откат стека: `IMAGE_TAG=<sha> mise run stack:deploy` |
 
 ## 4. Запуск
 
