@@ -43,7 +43,7 @@ Go-инструменты (`go 1.27.3`, `golangci-lint`, `gomigrate`) описа
 
 | Файл / переменная | Обязательность | Назначение |
 |---|---|---|
-| `.env` в корне: `ZAI_API_KEY`, `OPEN_BASE_URL`, `CHAT_MODEL` | для agent-шагов | Доступ к модели через OpenAI-совместимый endpoint: `ZAI_API_KEY` — ключ, `OPEN_BASE_URL` — базовый URL провайдера, `CHAT_MODEL` — id модели, которой раннер водит UI (пример — `glm-5.3`). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без этих переменных agentic-тесты упадут на первом вызове модели |
+| `.env` в корне: `MODEL_API_KEY`, `OPEN_BASE_URL`, `CHAT_MODEL` | для agent-шагов | Доступ к модели через OpenAI-совместимый endpoint любого провайдера: `MODEL_API_KEY` — ключ, `OPEN_BASE_URL` — базовый URL провайдера, `CHAT_MODEL` — id модели, которой раннер водит UI (id зависит от провайдера). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без этих переменных agentic-тесты упадут на первом вызове модели |
 | `.env` в корне: `MODEL_NAME` | опционально | Отображаемое имя провайдера в AI SDK; дефолт в `e2e.config.ts` — `OpenAI comparable` |
 | `server/.env` (из `server/.env.example`) | для задач `stack:*` и `e2e` | Пароли БД/JWT для docker-стека; как настроить — `server/README.md` |
 | Docker-логин в GHCR | для `stack:deploy` | Образы приватные: `docker login ghcr.io` (см. `server/README.md`) |
