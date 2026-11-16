@@ -46,7 +46,6 @@ Go-инструменты (`go 1.27.3`, `golangci-lint`, `gomigrate`) описа
 | `.env` в корне: `MODEL_API_KEY`, `OPEN_BASE_URL`, `CHAT_MODEL` | для agent-шагов | Доступ к модели через OpenAI-совместимый endpoint любого провайдера: `MODEL_API_KEY` — ключ, `OPEN_BASE_URL` — базовый URL провайдера, `CHAT_MODEL` — id модели, которой раннер водит UI (id зависит от провайдера). Раннер сам не читает `.env` — его подгружает `e2e.config.ts` через `process.loadEnvFile()`. Без этих переменных agentic-тесты упадут на первом вызове модели |
 | `.env` в корне: `MODEL_NAME` | опционально | Отображаемое имя провайдера в AI SDK; дефолт в `e2e.config.ts` — `OpenAI comparable` |
 | `server/.env` (из `server/.env.example`) | для задач `stack:*` и `e2e` | Пароли БД/JWT для docker-стека; как настроить — `server/README.md` |
-| Docker-логин в GHCR | для `stack:deploy` | Образы приватные: `docker login ghcr.io` (см. `server/README.md`) |
 | `APP_URL` | опционально | Адрес фронтенда; дефолт `http://localhost:80` |
 | `E2E_ADMIN_PASSWORD` | опционально | Пароль админа: им задача `gateway:seed-admin` сеет админа и e2e-тесты логинятся; дефолт `password123` |
 | `E2E_USER_ADMIN_USERNAME` / `E2E_USER_ADMIN_PASSWORD` | опционально | Переопределение credential `admin` самим раннером (`E2E_USER_<NAME>_*`): приоритетнее значений из `e2e.config.ts`, включая `E2E_ADMIN_PASSWORD`; удобно в CI, где переменные приходят из секретов |
@@ -65,9 +64,8 @@ mise run e2e       # поднимет docker-стек, засеет админа
 |---|---|
 | `install` / `build` / `test` / `lint` | Зависимости, локальная сборка (gateway + frontend), юнит-тесты и линтеры всех сервисов; подзадачи вида `clients:test`, `gateway:build` — по отдельности |
 | `e2e` | `gateway:seed-admin` (→ `stack:up`) → ожидание готовности фронтенда → `npm run test:e2e` |
-| `gateway:seed-admin` | Создаёт первого админа в запущенном стеке — `docker compose run` бинаря из образа gateway (образ скачан из GHCR или собран локально — важно лишь, что стек поднят). Повторный запуск безопасен: «логин уже занят» не считается ошибкой |
-| `stack:up` / `stack:down` / `stack:ps` | Запуск/остановка/статус docker-стека из готовых образов GHCR |
-| `stack:deploy` | Обновление стека из GHCR: `pull` → `up -d --remove-orphans` → чистка слоёв (то же, что деплой CI) |
+| `gateway:seed-admin` | Создаёт первого админа в запущенном стеке — `docker compose run` бинаря из образа gateway (важно лишь, что стек поднят). Повторный запуск безопасен: «логин уже занят» не считается ошибкой |
+| `stack:up` / `stack:down` / `stack:ps` | Запуск (с локальной сборкой образов)/остановка/статус docker-стека |
 
 ## 5. Отчёты и отладка
 
