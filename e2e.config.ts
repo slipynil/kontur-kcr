@@ -11,10 +11,10 @@ export default {
   agents: {
     default: {
       model: createOpenAICompatible({
-        name: 'zai',
-        baseURL: 'https://api.z.ai/api/coding/paas/v4',
+        name: process.env.MODEL_NAME ?? 'OpenAI comparable',
+        baseURL: process.env.OPEN_BASE_URL,
         apiKey: process.env.ZAI_API_KEY,
-      }).chatModel('glm-5.3'),
+      }).chatModel(process.env.CHAT_MODEL),
       system: 'You are a thorough QA agent. Verify every outcome.',
     },
   },
