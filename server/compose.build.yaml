@@ -1,0 +1,34 @@
+# Override для локальной сборки стека: добавляет build к сервисам приложений,
+# оставляя всё остальное (БД, миграции, переменные, healthcheck) в compose.yaml.
+#
+# Образы собираются из Dockerfiles репозитория и тегируются теми же именами
+# ghcr.io/...:latest — локально затеняют скачанные из GHCR, без пуша.
+# Одноразовые *-migrate сервисы без build берут собранный тег: build идёт
+# до старта контейнеров.
+#
+# Запуск: mise run stack:build-local (только сборка) / stack:up-local (сборка + старт).
+# Вернуться на образы GHCR: mise run stack:deploy (pull перезапишет локальные теги).
+services:
+  gateway:
+    build:
+      context: ../services/gateway
+
+  clients:
+    build:
+      context: ../services/clients
+
+  import-api:
+    build:
+      context: ../services/import-worker
+
+  import-worker:
+    build:
+      context: ../services/import-worker
+
+  operator-work:
+    build:
+      context: ../services/operator-work
+
+  frontend:
+    build:
+      context: ../frontend
