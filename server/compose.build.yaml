@@ -6,8 +6,9 @@
 # Одноразовые *-migrate сервисы без build берут собранный тег: build идёт
 # до старта контейнеров.
 #
-# Запуск: mise run stack:build-local (только сборка) / stack:up-local (сборка + старт).
-# Вернуться на образы GHCR: mise run stack:deploy (pull перезапишет локальные теги).
+# Запуск: mise run stack:up (сборка + старт).
+# Вернуться на образы GHCR (деплой dev-сервера): docker compose --env-file
+# server/.env -f server/compose.yaml pull — см. server/README.md.
 services:
   gateway:
     build:

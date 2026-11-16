@@ -126,11 +126,11 @@ run = "poetry run ruff check . && poetry run ruff format --check ."
 dir = "services/operator-work"
 run = "poetry run ruff check . && poetry run ruff format --check ."
 
-# --- Локальный стек (server/compose.yaml) и e2e ---
+# --- Локальный стек (server/compose.yaml + server/compose.build.yaml) и e2e ---
 
 [tasks."stack:up"]
-description = "Start the full dev stack from GHCR images (requires server/.env)"
-run = "docker compose --env-file server/.env -f server/compose.yaml up -d"
+description = "Build app images locally and start the dev stack (requires server/.env)"
+run = "docker compose --env-file server/.env -f server/compose.yaml -f server/compose.build.yaml up -d --build"
 
 [tasks."stack:down"]
 description = "Stop the dev stack"
@@ -139,22 +139,6 @@ run = "docker compose --env-file server/.env -f server/compose.yaml down"
 [tasks."stack:ps"]
 description = "Show dev stack status"
 run = "docker compose --env-file server/.env -f server/compose.yaml ps"
-
-[tasks."stack:deploy"]
-description = "Pull ready-made GHCR images and recreate the stack (same as CI deploy; IMAGE_TAG=<sha> for a one-off rollback)"
-run = """
-docker compose --env-file server/.env -f server/compose.yaml pull
-docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orphans
-docker image prune -f
-"""
-
-[tasks."stack:build-local"]
-description = "Build all app images locally from repo Dockerfiles (server/compose.build.yaml overrides GHCR images)"
-run = "docker compose --env-file server/.env -f server/compose.yaml -f server/compose.build.yaml build"
-
-[tasks."stack:up-local"]
-description = "Start the dev stack from locally built images (builds first; local tags shadow GHCR)"
-run = "docker compose --env-file server/.env -f server/compose.yaml -f server/compose.build.yaml up -d --build"
 
 [tasks."gateway:seed-admin"]
 description = "Seed the first admin in the running stack (idempotent; E2E_ADMIN_PASSWORD and E2E_USER_ADMIN_USERNAME override)"
