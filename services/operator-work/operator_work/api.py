@@ -68,7 +68,12 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         )
         assignments = Assignments(database)
         app.state.assignments = assignments
-        app.state.events = ClientEvents(database)
+        clients_url = os.environ.get("OPERATOR_WORK_CLIENTS_URL")
+        # The events feed asks Clients whether an unknown-to-work code exists at all (events.list).
+        registry = (
+            httpx.Client(base_url=clients_url, timeout=3, trust_env=False) if clients_url else None
+        )
+        app.state.events = ClientEvents(database, registry)
         app.state.cleanup = Cleanup(database)
         stop = asyncio.Event()
 
@@ -97,7 +102,6 @@ def create_app(engine: Engine | None = None) -> FastAPI:
                         pass
 
         stop_waits = Event()
-        clients_url = os.environ.get("OPERATOR_WORK_CLIENTS_URL")
         task = asyncio.create_task(process_deadlines())
         wait_task = asyncio.create_task(process_waits(clients_url)) if clients_url else None
         try:
@@ -108,6 +112,8 @@ def create_app(engine: Engine | None = None) -> FastAPI:
             await task
             if wait_task is not None:
                 await wait_task
+            if registry is not None:
+                registry.close()
             if engine is None:
                 database.dispose()
 
