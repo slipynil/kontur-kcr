@@ -146,6 +146,12 @@ it('creates a user using a direct User response and refreshes the list', async (
   expect(call[0]).toBe('/api/v1/users'); expect(JSON.parse(call[1].body)).toEqual({ login: 'new.user', password: 'secret', role: 'OPERATOR' });
   expect(screen.getByLabelText('Пароль')).toHaveValue('');
 });
+it('shows field validation on an empty user submit instead of calling the API', async () => {
+  render(<Users />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать пользователя' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите логин');
+  expect((fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+});
 it('rolls back a completed import with a recovery command', async () => {
   search = 'batch=batch-id'; jest.spyOn(window, 'confirm').mockReturnValue(true);
   const batch = { id: 'batch-id', filename: 'clients.xlsx', status: 'COMPLETED', selected_quarter: '2026_Q4', snapshot_date: '2026-11-10', total_rows: 10, success_count: 10, error_count: 0 };
