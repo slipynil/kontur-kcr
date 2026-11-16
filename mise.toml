@@ -148,6 +148,14 @@ docker compose --env-file server/.env -f server/compose.yaml up -d --remove-orph
 docker image prune -f
 """
 
+[tasks."stack:build-local"]
+description = "Build all app images locally from repo Dockerfiles (server/compose.build.yaml overrides GHCR images)"
+run = "docker compose --env-file server/.env -f server/compose.yaml -f server/compose.build.yaml build"
+
+[tasks."stack:up-local"]
+description = "Start the dev stack from locally built images (builds first; local tags shadow GHCR)"
+run = "docker compose --env-file server/.env -f server/compose.yaml -f server/compose.build.yaml up -d --build"
+
 [tasks."gateway:seed-admin"]
 description = "Seed the first admin in the running stack (idempotent; E2E_ADMIN_PASSWORD and E2E_USER_ADMIN_USERNAME override)"
 # Запускает бинарь из образа gateway тем же compose run, что и server/README.md:
