@@ -83,12 +83,12 @@ type env struct {
 
 func (e *env) get(t *testing.T, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	identity := auth.Identity{
+	id := auth.Identity{
 		UserID: uuid.MustParse(operatorID),
 		Role:   auth.RoleOperator,
 	}
-	request := httptest.NewRequest(http.MethodGet, target, nil)
-	request = request.WithContext(auth.WithIdentity(request.Context(), identity))
+	request := httptest.NewRequest(http.MethodGet, target, http.NoBody)
+	request = request.WithContext(auth.WithIdentity(request.Context(), id))
 	w := httptest.NewRecorder()
 	e.router.ServeHTTP(w, request)
 	return w
@@ -147,11 +147,11 @@ func operatorState(operator any) string {
 
 func decodeCard(t *testing.T, body string) map[string]any {
 	t.Helper()
-	var card map[string]any
-	if err := json.Unmarshal([]byte(body), &card); err != nil {
+	var cardMap map[string]any
+	if err := json.Unmarshal([]byte(body), &cardMap); err != nil {
 		t.Fatalf("card is not a json object: %s", body)
 	}
-	return card
+	return cardMap
 }
 
 func TestCardMergesClientsProfileAndWorkState(t *testing.T) {
@@ -304,9 +304,9 @@ func TestCardFailsWith502WhenOperatorWorkUnreachable(t *testing.T) {
 	router := chi.NewRouter()
 	router.Get("/api/v1/clients/{kcr_code}", aggregator.Client)
 
-	identity := auth.Identity{UserID: uuid.MustParse(operatorID), Role: auth.RoleOperator}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/clients/"+operatorCode, nil)
-	request = request.WithContext(auth.WithIdentity(request.Context(), identity))
+	id := auth.Identity{UserID: uuid.MustParse(operatorID), Role: auth.RoleOperator}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/clients/"+operatorCode, http.NoBody)
+	request = request.WithContext(auth.WithIdentity(request.Context(), id))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, request)
 
@@ -427,7 +427,7 @@ func TestCardRejectsAnonymousRequest(t *testing.T) {
 	operator := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, operatorState(nil) }}
 	e := newAggregator(t, clients, operator, &fakeUsers{})
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/clients/"+operatorCode, nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/clients/"+operatorCode, http.NoBody)
 	w := httptest.NewRecorder()
 	e.router.ServeHTTP(w, request)
 

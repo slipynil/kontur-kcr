@@ -148,7 +148,8 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var state *workState
-	if stateResult.failure == nil {
+	switch {
+	case stateResult.failure != nil:
 		var parsed workState
 		if err := json.Unmarshal(stateResult.body, &parsed); err != nil {
 			a.log.Error("operator work state is not a json object", "error", err)
@@ -157,13 +158,13 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		state = &parsed
-	} else if stateResult.failure.status != http.StatusNotFound &&
-		stateResult.failure.status != http.StatusConflict {
+	case stateResult.failure.status != http.StatusNotFound &&
+		stateResult.failure.status != http.StatusConflict:
 		// Недоступность Operator Work срывает карточку целиком — решением
 		// зафиксирован полный 502, деградации нет.
 		a.respondBadGateway(w, stateResult.failure)
 		return
-	} else if stateResult.failure.status == http.StatusConflict {
+	case stateResult.failure.status == http.StatusConflict:
 		// Исторический цикл запрошен явно: ответ Operator Work в едином формате.
 		a.respondUpstreamFailure(w, stateResult.failure, "operator-work")
 		return
@@ -242,7 +243,7 @@ func (a *Aggregator) fetchCard(r *http.Request, who auth.Identity, code string) 
 	target.Path = a.clientsURL.Path + fmt.Sprintf(clientsCardEndpoint, url.PathEscape(code))
 	// Параметры карточки (quarter, snapshots_limit, work_quarter) передаются как есть.
 	target.RawQuery = r.URL.RawQuery
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), http.NoBody)
 	if err != nil {
 		return nil, unavailable()
 	}
@@ -256,7 +257,7 @@ func (a *Aggregator) fetchState(r *http.Request, who auth.Identity, code, quarte
 	if quarter != "" {
 		target.RawQuery = workQuarterParam + "=" + url.QueryEscape(quarter)
 	}
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), http.NoBody)
 	if err != nil {
 		return nil, unavailable()
 	}
