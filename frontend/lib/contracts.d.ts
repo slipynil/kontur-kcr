@@ -247,6 +247,19 @@ export type RecoveryCommand = {
   operation_id: string;
 };
 
+export type PoolPublicationRequest = {
+  codes: string[];
+};
+
+export type PoolClient = {
+  kcr_code: string;
+  assigned_operator_id: string | null;
+};
+
+export type PoolResponse = {
+  items: PoolClient[];
+};
+
 export type QuarterSummary = {
   quarter: string;
   total_documents: number;
