@@ -112,12 +112,18 @@ def test_take_requires_operator_role(mock_api):
     assert response.status_code == 403
     assignments.take.assert_not_called()
 
+
 def test_assignment_uses_current_cycle_without_quarter(mock_api):
     client, assignments = mock_api
     assignments.state.return_value = {
-        "kcr_code": "AAA00412", "work_quarter": "2025_Q3",
-        "assignment_id": None, "assigned_operator_id": None, "assigned_at": None,
-        "stage": "POOL", "wait_until": None, "awaiting_balance": False,
+        "kcr_code": "AAA00412",
+        "work_quarter": "2025_Q3",
+        "assignment_id": None,
+        "assigned_operator_id": None,
+        "assigned_at": None,
+        "stage": "POOL",
+        "wait_until": None,
+        "awaiting_balance": False,
     }
     result = client.get(f"{CLIENT}/assignment", headers=actor(uuid4()))
     assert result.status_code == 200
