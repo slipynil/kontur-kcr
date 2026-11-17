@@ -263,13 +263,70 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 		t.Errorf("body = %q", w.Body.String())
 	}
 
-	// Удаления клиентов пока нет в контрактах — метод не поддерживается.
-	w = env.do(http.MethodDelete, "/api/v1/clients/6671-0042", admin)
+	// PUT клиентов не поддерживается — метод не поддерживается.
+	w = env.do(http.MethodPut, "/api/v1/clients/6671-0042", admin)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", w.Code)
 	}
 	if !strings.Contains(w.Body.String(), `"code"`) {
 		t.Errorf("body must be JSON error, got %q", w.Body.String())
+	}
+}
+
+func TestRecoveryDeleteRoutes(t *testing.T) {
+	env := newTestEnv(t)
+	admin := env.login(t, "admin")
+	operator := env.login(t, "operator")
+
+	// Публичное удаление — только для администратора (public-api.yaml x-roles).
+	for _, tt := range []struct {
+		name  string
+		token string
+	}{
+		{name: "operator forbidden", token: operator},
+		{name: "anonymous unauthorized", token: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			beforeClients, beforeOperator := len(env.clients.paths), len(env.operator.paths)
+			w := env.do(http.MethodDelete, "/api/v1/clients/6671-0042", tt.token)
+			if w.Code != http.StatusForbidden && w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401/403", w.Code)
+			}
+			if len(env.clients.paths) != beforeClients || len(env.operator.paths) != beforeOperator {
+				t.Error("upstreams must not be called without admin rights")
+			}
+		})
+	}
+
+	// Административное удаление клиента координирует оба сервиса.
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/clients/6671-0042",
+		strings.NewReader(`{"operation_id":"`+uuid.NewString()+`"}`))
+	r.Header.Set("Authorization", "Bearer "+admin)
+	w := httptest.NewRecorder()
+	env.handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	clientPaths := env.clients.paths
+	if len(clientPaths) == 0 || clientPaths[len(clientPaths)-1] != "DELETE /internal/v1/clients/6671-0042" {
+		t.Errorf("clients got %v, want DELETE /internal/v1/clients/6671-0042", clientPaths)
+	}
+	operatorPaths := env.operator.paths
+	if len(operatorPaths) == 0 || operatorPaths[len(operatorPaths)-1] != "POST /internal/v1/data-cleanup" {
+		t.Errorf("operator got %v, want POST /internal/v1/data-cleanup", operatorPaths)
+	}
+
+	// Удаление квартала: лента Operator Work пуста — очистка не требуется.
+	r = httptest.NewRequest(http.MethodDelete, "/api/v1/clients/6671-0042/snapshots/2026_Q3",
+		strings.NewReader(`{"operation_id":"`+uuid.NewString()+`"}`))
+	r.Header.Set("Authorization", "Bearer "+admin)
+	w = httptest.NewRecorder()
+	env.handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(env.clients.paths[len(env.clients.paths)-1], "snapshots/2026_Q3") {
+		t.Errorf("clients got %v, want the snapshot deletion", env.clients.paths)
 	}
 }
 
