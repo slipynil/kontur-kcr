@@ -185,6 +185,40 @@ def test_latest_guard_replay_and_no_reapply_rolled_back_batch(setup):
     assert get_card(engine, "a").outstanding_documents == 0
 
 
+def test_newer_apply_for_other_clients_does_not_block_rollback(setup):
+    engine, _, apply, _ = setup
+    target = apply([snapshot("2026_Q1", 10)])
+    apply(
+        [
+            {
+                "client": {"kcr_code": "b"},
+                "snapshot": {
+                    "quarter": "2026_Q2",
+                    "total_documents": 100,
+                    "unsubmitted_documents": 4,
+                },
+            }
+        ],
+        day="2026-04-20",
+    )
+    apply([{"client": {"kcr_code": "c", "organization_name": "later"}}], kind="REGISTRY")
+    assert rollback(engine, target)["removed_history_records"] == 1
+    assert get_card(engine, "a").outstanding_documents == 0
+    assert get_history(engine, "b").total == 1
+    assert get_card(engine, "c").organization_name == "later"
+
+
+def test_later_apply_sharing_a_client_still_blocks_rollback(setup):
+    engine, _, apply, _ = setup
+    target = apply([snapshot("2026_Q1", 10)])
+    later = apply([snapshot("2026_Q1", 3)], day="2026-04-20")
+    apply([{"client": {"kcr_code": "c", "organization_name": "unrelated"}}], kind="REGISTRY")
+    with pytest.raises(RecoveryConflict, match="IMPORT_NOT_LATEST"):
+        rollback(engine, target)
+    rollback(engine, later)
+    assert get_card(engine, "a").outstanding_documents == 10
+
+
 def test_only_batches_with_accepted_rows_block_rollback(setup):
     engine, _, apply, _ = setup
     first = apply([snapshot("2026_Q1", 10)])

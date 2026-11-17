@@ -84,22 +84,34 @@ def _rollback(repo, batch_id, operation_id):
         }
     if batch["result"].get("accepted_rows") == 0:
         raise RecoveryConflict("IMPORT_NOT_LATEST")
-    active = connection.execute(
-        select(operations.c.batch_id, operations.c.apply_order)
-        .where(
-            operations.c.rolled_back.is_(False),
-            # Legacy results without a row count still participate in rollback ordering.
-            operations.c.result["accepted_rows"].as_integer().is_distinct_from(0),
-        )
-        .order_by(operations.c.apply_order.desc().nulls_last())
-    ).all()
+    active = select(operations.c.batch_id, operations.c.apply_order).where(
+        operations.c.rolled_back.is_(False),
+        # Legacy results without a row count still participate in rollback ordering.
+        operations.c.result["accepted_rows"].as_integer().is_distinct_from(0),
+    )
     if batch["apply_order"] is None:
-        if any(row.apply_order is not None for row in active):
+        # Pre-migration batches carry no undo rows, so their unknown order stays global.
+        legacy = active.order_by(operations.c.apply_order.desc().nulls_last())
+        rows = connection.execute(legacy).all()
+        if any(row.apply_order is not None for row in rows):
             raise RecoveryConflict("IMPORT_NOT_LATEST")
-        if len(active) > 1:
+        if len(rows) > 1:
             raise RecoveryConflict("IMPORT_ORDER_UNKNOWN")
-    elif active[0].batch_id != batch_id:
-        raise RecoveryConflict("IMPORT_NOT_LATEST")
+    else:
+        # ADR-0011: only a later application sharing a client with this batch blocks
+        # its rollback; Import Worker still guards the globally latest batch.
+        undo = repo.clients_import_undo
+        touched = select(undo.c.kcr_code).where(undo.c.batch_id == batch_id)
+        overlapping = connection.execute(
+            active.where(
+                operations.c.apply_order > batch["apply_order"],
+                operations.c.batch_id.in_(
+                    select(undo.c.batch_id).where(undo.c.kcr_code.in_(touched))
+                ),
+            ).limit(1)
+        ).first()
+        if overlapping is not None:
+            raise RecoveryConflict("IMPORT_NOT_LATEST")
     undo_rows = (
         connection.execute(
             select(repo.clients_import_undo).where(repo.clients_import_undo.c.batch_id == batch_id)
