@@ -21,6 +21,7 @@ import (
 	"github.com/slipynil/kontur-kcr/services/identity/internal/identity"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/middlewares"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/proxy"
+	"github.com/slipynil/kontur-kcr/services/identity/internal/recovery"
 )
 
 // Deps — зависимости сборки роутера.
@@ -44,6 +45,18 @@ func New(deps Deps) (http.Handler, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init upstreams: %w", err)
+	}
+
+	// Публичное удаление клиента/квартала координирует Clients и Operator Work
+	// вместо прозрачного проксирования (ADR-0006, import-operator-work-contract.md).
+	recoveryCoordinator, err := recovery.New(
+		deps.Log,
+		cfg.UpstreamTimeout,
+		cfg.ClientsEndpoint,
+		cfg.OperatorWorkEndpoint,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("init recovery coordinator: %w", err)
 	}
 
 	users := &identity.Handlers{Store: deps.Store, Tokens: deps.Tokens}
@@ -71,7 +84,7 @@ func New(deps Deps) (http.Handler, error) {
 		r.Group(func(r chi.Router) {
 			r.Use(middlewares.Authenticate(deps.Tokens))
 
-			// Управление пользователями и импортом — только ADMIN.
+			// Управление пользователями, импортом и удалением данных — только ADMIN.
 			r.Group(func(r chi.Router) {
 				r.Use(middlewares.RequireRole(auth.RoleAdmin))
 				r.Get("/users", users.ListUsers)
@@ -79,6 +92,8 @@ func New(deps Deps) (http.Handler, error) {
 				r.Post("/imports", upstreams.HandlerFunc(proxy.ServiceImport))
 				r.Get("/imports/{batch_id}", upstreams.HandlerFunc(proxy.ServiceImport))
 				r.Post("/imports/{batch_id}/rollback", upstreams.HandlerFunc(proxy.ServiceImport))
+				r.Delete("/clients/{kcr_code}", recoveryCoordinator.DeleteClient)
+				r.Delete("/clients/{kcr_code}/snapshots/{quarter}", recoveryCoordinator.DeleteQuarter)
 			})
 
 			// Чтение реестра, карточек, лента событий и ИИ — обе роли.
