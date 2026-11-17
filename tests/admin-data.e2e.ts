@@ -73,25 +73,34 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
 
   test('applies valid snapshot rows and reports duplicate, unknown and annual rows', async ({ data }) => {
     const { code, admin, quarter } = data;
-    applyClient(admin, { code, quarter, registry: true, date: dateInQuarter(quarter) });
+    const annualCode = newCode();
+    const annualSheet = `весь ${quarter.slice(0, 4)} год`;
     const headings = ['Код КЦР', 'Всего', 'Непередано', 'Исходный квартал'];
     const file = workbook(`${code}-snapshot.xlsx`, {
       [quarter]: [headings, [code, 100, 10, quarter], [code, 100, 8, quarter], [newCode(), 100, 4, quarter]],
-      [`весь ${quarter.slice(0, 4)} год`]: [headings, [code, 100, 99, quarter]],
+      [annualSheet]: [headings, [code, 100, 99, quarter], [annualCode, 100, 70, quarter]],
     });
     try {
+      const registryRow = { quarter, registry: true, date: dateInQuarter(quarter) };
+      applyClient(admin, { ...registryRow, code });
+      applyClient(admin, { ...registryRow, code: annualCode });
       const report = await submit(admin, file, quarter, 'SNAPSHOT', dateInQuarter(quarter, 2));
 
+      expect(report.total_rows).toBe(3);
       expect(report.success_count).toBe(1);
       expect(report.error_count).toBe(3);
-      expect(report.error_log.map((row: { reason: string }) => row.reason)).toEqual(expect.arrayContaining([
-        'Дубликат строки в листе',
-        'Код КЦР отсутствует в реестре',
-        'Годовой, составной или служебный лист пропущен',
+      expect(report.error_log).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sheet: quarter, reason: 'Дубликат строки в листе' }),
+        expect.objectContaining({ sheet: quarter, reason: expect.stringContaining('Код КЦР отсутствует в реестре') }),
+        expect.objectContaining({
+          sheet: annualSheet, row_number: 0, reason: 'Годовой, составной или служебный лист пропущен',
+        }),
       ]));
       expect((await card(admin, code)).snapshots).toMatchObject([{ quarter, unsubmitted_documents: 10 }]);
+      expect((await card(admin, annualCode)).snapshots).toEqual([]);
     } finally {
       file.remove();
+      cleanupClient(admin, annualCode);
     }
   });
 
