@@ -50,6 +50,6 @@ export const dynamics = { ALL_SUBMITTED: 'Все переданы', REDUCING: '�
 export const durations = { FIRST_TIME: 'Впервые', REPEATED: 'Повторно', LONG_DELAY_2Q: 'Длительная задержка' };
 export function businessDate() { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' }).format(new Date()); }
 export function currentQuarter() { const date = businessDate(); return `${date.slice(0, 4)}_Q${Math.ceil(Number(date.slice(5, 7)) / 3)}`; }
-export function QuarterInput({ value, onChange, required = false }: { value: string; onChange: (value: string) => void; required?: boolean }) {
-  return <input aria-label="Квартал" placeholder="2026_Q4" pattern="[0-9]{4}_Q[1-4]" required={required} value={value} onChange={e => onChange(e.target.value)} />;
+export function QuarterInput({ value, onChange, required = false, ariaLabel = 'Квартал' }: { value: string; onChange: (value: string) => void; required?: boolean; ariaLabel?: string }) {
+  return <input aria-label={ariaLabel} placeholder="2026_Q4" pattern="[0-9]{4}_Q[1-4]" required={required} value={value} onChange={e => onChange(e.target.value)} />;
 }

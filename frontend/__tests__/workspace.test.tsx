@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Workspace from '../components/workspace';
-import { ClientDetails } from '../components/clients';
+import { ClientDetails, Clients } from '../components/clients';
 import { Imports, Users } from '../components/management';
 import { readSession, saveSession } from '../lib/api';
 import type { User } from '../lib/contracts';
@@ -56,6 +56,44 @@ function clientFetch(input: string, init?: RequestInit) {
   if (init?.method === 'POST') return Promise.resolve(json({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }, 409));
   return Promise.resolve(json(input.includes('/events') || input.includes('/history') ? page : card));
 }
+const list = (codes: string[]) => ({
+  items: codes.map(code => ({ kcr_code: code, inn: null, organization_name: `Организация ${code}`, status: 'ACTIVE', tags: [], current_stage: 'POOL', assigned_operator_id: null, dynamics: null, latest_snapshot: null, dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: null, quarter_summary: null })),
+  page: 1, page_size: 20, total: codes.length,
+});
+it('publishes the selected registry clients for the chosen quarter', async () => {
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) =>
+    init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json(list(['E2E-1', 'E2E-2']))));
+  render(<Clients user={{ ...user, role: 'ADMIN' }} />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
+  await screen.findByText('Опубликовано клиентов: 1');
+  const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'PUT');
+  expect(call[0]).toBe('/api/v1/pool/publication?work_quarter=2026_Q4');
+  expect(JSON.parse(call[1].body)).toEqual({ codes: ['E2E-1'] });
+});
+it('requires a selection and a quarter before publishing the registry', async () => {
+  (fetch as jest.Mock).mockResolvedValue(json(list(['E2E-1'])));
+  render(<Clients user={{ ...user, role: 'ADMIN' }} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Опубликовать выбранных' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Выберите хотя бы одного клиента');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026-Q4' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Квартал обзвона должен быть в формате 2026_Q4');
+  expect((fetch as jest.Mock).mock.calls.some(([, init]) => init.method === 'PUT')).toBe(false);
+});
+it('publishes a single client from the card', async () => {
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) =>
+    init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : clientFetch(url, init));
+  render(<ClientDetails code="A/B" user={{ ...user, role: 'ADMIN' }} call={false} />);
+  fireEvent.change(await screen.findByLabelText('Квартал обзвона'), { target: { value: '2026_Q3' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать клиента' }));
+  await screen.findByText('Клиент опубликован');
+  const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'PUT');
+  expect(call[0]).toBe('/api/v1/clients/A%2FB/publication?work_quarter=2026_Q3');
+  expect(call[1].body).toBeUndefined();
+});
 it('allows reassignment and sends the real work quarter, then displays 409', async () => {
   (fetch as jest.Mock).mockImplementation(clientFetch);
   render(<ClientDetails code="A/B" user={user} call={false} />);

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Контур КЦР — Публичное API (внешний контур)
-  version: 1.8.0
+  version: 1.9.0
   summary: Единое внешнее API системы «Контур КЦР» через Gateway / Identity Service.
   description: 'Актуальные правила — spec.md 1.8 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
@@ -34,7 +34,12 @@ info:
     ADR-0006: rollback восстанавливает и данные, вручную удалённые после импорта. Локальные команды Clients не означают
     глобального завершения.
 
-    ADR-0007: числовые диапазоны применяются только к выбранному quarter.'
+    ADR-0007: числовые диапазоны применяются только к выбранному quarter.
+
+
+    Уточнение 17.11.2026: публикация пула обзвона доступна администратору через публичные маршруты
+    PUT /api/v1/pool/publication и PUT /api/v1/clients/{kcr_code}/publication; опубликованный пул читается
+    через GET /api/v1/pool (spec.md §3.3, «Публикация списка на обзвон»).'
 servers:
 - url: https://{host}
   description: Единая внешняя точка входа (nginx → Gateway / Identity).
@@ -486,6 +491,99 @@ paths:
           description: Запрос не найден или недоступен оператору.
         '409':
           description: Запрос уже завершён.
+  /api/v1/pool/publication:
+    put:
+      tags:
+      - OperatorWork
+      operationId: publishPool
+      summary: Опубликовать выбранных клиентов на обзвон
+      description: 'spec.md §3.3 «Публикация списка на обзвон»: публикация дополняет пул выбранного квартала.
+        Повтор не сбрасывает опубликованные циклы, назначения, сроки и ожидающие запросы. При ошибке у одного
+        клиента весь запрос откатывается. Повторяющиеся коды обрабатываются один раз.'
+      x-roles:
+      - ADMIN
+      parameters:
+      - $ref: '#/components/parameters/WorkQuarter'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PoolPublicationRequest'
+            example:
+              codes:
+              - 6671-0042
+      responses:
+        '204':
+          description: Все выбранные клиенты опубликованы.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Один из клиентов уже имеет более новый цикл; публикация откатилась.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректный список или квартал.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/pool:
+    get:
+      tags:
+      - OperatorWork
+      operationId: listPublishedClients
+      summary: Опубликованный пул выбранного квартала
+      description: Коды клиентов выбранного квартала обзвона и их актуальные ответственные.
+      x-roles:
+      - ADMIN
+      - OPERATOR
+      parameters:
+      - $ref: '#/components/parameters/WorkQuarter'
+      responses:
+        '200':
+          description: Опубликованные клиенты.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolResponse'
+        '422':
+          description: Некорректный квартал.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/clients/{kcr_code}/publication:
+    put:
+      tags:
+      - OperatorWork
+      operationId: publishClient
+      summary: Опубликовать клиента для операторов
+      description: Публикация одного клиента в выбранный квартал обзвона; правила совпадают со списком.
+      x-roles:
+      - ADMIN
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/WorkQuarter'
+      responses:
+        '204':
+          description: Клиент опубликован.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Нельзя опубликовать исторический цикл.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректный квартал.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/clients/{kcr_code}:
     get:
       tags:
@@ -2013,6 +2111,46 @@ components:
         operation_id:
           type: string
           format: uuid
+    PoolPublicationRequest:
+      type: object
+      description: Команда публикации списка клиентов на обзвон (`spec.md` §3.3).
+      required:
+      - codes
+      properties:
+        codes:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          description: Повторяющиеся коды обрабатываются один раз.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+    PoolClient:
+      type: object
+      description: Клиент опубликованного пула и его актуальный ответственный.
+      required:
+      - kcr_code
+      - assigned_operator_id
+      properties:
+        kcr_code:
+          type: string
+        assigned_operator_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Оператор, за которым закреплён клиент; `null` — клиент свободен.
+    PoolResponse:
+      type: object
+      description: Опубликованные клиенты выбранного квартала.
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolClient'
     QuarterSummary:
       type: object
       required:
