@@ -54,6 +54,7 @@ next-env.d.ts
 .coverage
 coverage.json
 node_modules/
+/e2e.config.ts
 .e2e/results/
 .e2e/cache/
 .e2e/sessions/
