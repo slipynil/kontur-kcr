@@ -8,7 +8,8 @@ import type { ClientCard, User } from '../lib/contracts';
 jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }));
 const user: User = { id: 'operator', login: 'operator', role: 'OPERATOR', is_active: true, created_at: '' };
 const assignmentId = '11111111-1111-4111-8111-111111111111';
-const card: ClientCard = {
+const card: ClientCard & { assigned_operator_id: string; stage: string } = {
+  assigned_operator_id: user.id, stage: 'IN_WORK',
   kcr_code: 'A', inn: null, organization_name: 'Компания', status: 'ACTIVE', tags: [],
   current_stage: 'IN_WORK', assignment_id: assignmentId, work_quarter: '2026_Q4',
   assignment: { operator_id: user.id, operator_name: user.login, assigned_at: '', work_quarter: '2026_Q4' },
@@ -73,7 +74,7 @@ it('does not expose event creation to an administrator', () => {
 });
 it('handles an accepted reassignment request without claiming ownership', async () => {
   (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => Promise.resolve(response(
-    init?.method === 'POST' ? { status: 'PENDING', expires_at: '2026-11-15T18:00:00Z' } : url.includes('/events') || url.includes('/history') ? page : { ...card, assignment: { ...card.assignment, operator_id: 'colleague' } },
+    init?.method === 'POST' ? { status: 'PENDING', expires_at: '2026-11-15T18:00:00Z' } : url.includes('/events') || url.includes('/history') ? page : { ...card, assigned_operator_id: 'colleague', assignment: { ...card.assignment, operator_id: 'colleague' } },
     init?.method === 'POST' ? 202 : 200,
   )));
   render(<ClientDetails code="A" user={user} call={false} />);

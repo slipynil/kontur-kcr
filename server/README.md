@@ -29,7 +29,7 @@
    editor /srv/kontur/server/.env   # по образцу .env.example из репозитория
    ```
 
-   Все `change-me` заменить: `JWT_SECRET`, `OPERATOR_WORK_SERVICE_TOKEN`,
+   Все `change-me` заменить: `JWT_SECRET`,
    пароли четырёх БД и RabbitMQ. Обязательно до первого деплоя: compose
    падает при отсутствующих обязательных переменных (`:?` в compose.yaml).
 
@@ -68,6 +68,36 @@ SQL-файлами из `services/gateway/migrations`, которые CI кла�
 `server/.env` и не меняет файл на сервере. Годятся SHA коммитов, после которых
 собрались **все** сервисы (например, большие мерджи); если у какого-то образа
 тега нет, `pull` упадёт с `manifest unknown` — это fail-fast, стек не тронут.
+
+## Первый администратор
+
+Пользователи живут в Identity DB (`identity-db`, таблица `users`), но создать
+админа через API нельзя — `POST /api/v1/users` требует роль `ADMIN`. Для этого
+в образ gateway запечён бинарь `seed-admin` (`services/gateway/cmd/seed`):
+
+```bash
+cd /srv/kontur
+docker compose --env-file server/.env -f server/compose.yaml run --rm \
+  -e ADMIN_LOGIN=admin -e ADMIN_PASSWORD='надёжный пароль' \
+  gateway /usr/local/bin/seed-admin
+```
+
+- `run` сам поднимет зависимости сервиса (identity-db + миграции) и подставит
+  `IDENTITY_DSN` из окружения gateway — больше ничего настраивать не нужно;
+- пароль: 8–72 символа, логин: до 64; повторный запуск с занятым логином
+  завершится понятной ошибкой — перезапуск безопасен;
+- чтобы пароль не остался в истории shell, вводите его без эха и передавайте
+  переменной (эндпоинта смены пароля в API пока нет):
+
+  ```bash
+  read -rs ADMIN_PASSWORD
+  docker compose --env-file server/.env -f server/compose.yaml run --rm \
+    -e ADMIN_LOGIN=admin -e ADMIN_PASSWORD \
+    gateway /usr/local/bin/seed-admin
+  unset ADMIN_PASSWORD
+  ```
+
+После этого остальные пользователи заводятся через API/UI под админом.
 
 ## Полезные команды (на сервере)
 
@@ -109,7 +139,7 @@ IMAGE_TAG=<full-commit-sha>
 - **Порты не статические:** фронтенд и gateway публикуются на хостовые порты из
   `server/.env` (`FRONTEND_HOST_PORT`, `GATEWAY_HOST_PORT`).
 - Frontend обращается к `/api/v1` текущего origin. Next.js проксирует запросы
-  в `http://gateway:8080` внутри compose. Для другого внутреннего адреса задайте
-  `GATEWAY_INTERNAL_URL` в `server/.env` и пересоздайте контейнер frontend.
+  в `http://gateway:8080` внутри compose. Для другого внутреннего адреса образ
+  собирается с `--build-arg GATEWAY_INTERNAL_URL=...`. Адрес сохраняется при сборке.
 - `server/.env` не коммитится (общий шаблон `.env` в корневом `.gitignore`);
   менять переменные можно прямо на сервере — следующий деплой их подхватит.

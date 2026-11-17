@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from secrets import compare_digest
 from threading import Event
 from typing import Annotated, Literal
 from uuid import UUID
@@ -11,7 +10,6 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,7 +29,6 @@ from operator_work.events import CallRequest, ClientEvents, HistoricalCommentReq
 from operator_work.wait_expiry import WaitExpiry
 
 logger = logging.getLogger(__name__)
-bearer = HTTPBearer(auto_error=False)
 Quarter = Annotated[str, Query(pattern=r"^[0-9]{4}_Q[1-4]$")]
 
 
@@ -61,12 +58,9 @@ class ApplySnapshotRequest(BaseModel):
     delivery: SnapshotDelivery | None = None
 
 
-def create_app(engine: Engine | None = None, token: str | None = None) -> FastAPI:
+def create_app(engine: Engine | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        service_token = token if token is not None else os.environ["OPERATOR_WORK_SERVICE_TOKEN"]
-        if not service_token:
-            raise ValueError("OPERATOR_WORK_SERVICE_TOKEN must not be empty")
         database = (
             engine
             if engine is not None
@@ -74,9 +68,13 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         )
         assignments = Assignments(database)
         app.state.assignments = assignments
-        app.state.events = ClientEvents(database)
+        clients_url = os.environ.get("OPERATOR_WORK_CLIENTS_URL")
+        # The events feed asks Clients whether an unknown-to-work code exists at all (events.list).
+        registry = (
+            httpx.Client(base_url=clients_url, timeout=3, trust_env=False) if clients_url else None
+        )
+        app.state.events = ClientEvents(database, registry)
         app.state.cleanup = Cleanup(database)
-        app.state.service_token = service_token
         stop = asyncio.Event()
 
         async def process_deadlines():
@@ -104,7 +102,6 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
                         pass
 
         stop_waits = Event()
-        clients_url = os.environ.get("OPERATOR_WORK_CLIENTS_URL")
         task = asyncio.create_task(process_deadlines())
         wait_task = asyncio.create_task(process_waits(clients_url)) if clients_url else None
         try:
@@ -115,6 +112,8 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
             await task
             if wait_task is not None:
                 await wait_task
+            if registry is not None:
+                registry.close()
             if engine is None:
                 database.dispose()
 
@@ -126,16 +125,10 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
             status_code=error.status, content={"code": error.code, "message": str(error)}
         )
 
-    def trusted_service(
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
-    ) -> None:
-        if credentials is None or not compare_digest(
-            credentials.credentials.encode(), app.state.service_token.encode()
-        ):
-            raise HTTPException(401, "Сервисная авторизация обязательна")
-
+    # Gateway проверяет JWT пользователя и передаёт личность и роль в заголовках
+    # X-User-Id и X-User-Role; сервисной токенной проверки между сервисами нет
+    # (ADR-0010). Внутренний контур изолируется на уровне сети.
     def actor(
-        _trusted: Annotated[None, Depends(trusted_service)],
         x_user_id: Annotated[UUID, Header()],
         x_user_role: Annotated[Literal["ADMIN", "OPERATOR"], Header()],
     ) -> tuple[UUID, str]:
@@ -195,7 +188,9 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         operation_id="readAssignment",
     )
     def assignment(
-        kcr_code: str, work_quarter: Quarter, _user: Annotated[tuple[UUID, str], Depends(actor)]
+        kcr_code: str,
+        _user: Annotated[tuple[UUID, str], Depends(actor)],
+        work_quarter: Annotated[str | None, Query(pattern=r"^[0-9]{4}_Q[1-4]$")] = None,
     ):
         return app.state.assignments.state(kcr_code, work_quarter)
 

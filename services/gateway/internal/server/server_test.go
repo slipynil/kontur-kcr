@@ -145,7 +145,6 @@ func newTestEnv(t *testing.T) *testEnv {
 	cfg := configs.GetConfig()
 	cfg.Service.ClientsEndpoint = clientsServer.URL
 	cfg.Service.OperatorWorkEndpoint = operatorServer.URL
-	cfg.Service.OperatorWorkToken = "test-operator-service-token"
 	cfg.Service.ImportAPIEndpoint = importServer.URL
 	cfg.Service.AssistantEndpoint = assistantServer.URL
 	cfg.Service.JWTSecret = testJWTSecret
@@ -340,6 +339,10 @@ func TestProxyRoutingTable(t *testing.T) {
 			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "POST /internal/v1/clients/6671-0042/take",
 		},
 		{
+			name: "assignment state", method: http.MethodGet, target: "/api/v1/clients/6671-0042/assignment",
+			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/clients/6671-0042/assignment",
+		},
+		{
 			name: "events feed", method: http.MethodGet, target: "/api/v1/clients/6671-0042/events",
 			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/clients/6671-0042/events",
 		},
@@ -430,21 +433,6 @@ func TestProxySendsIdentityHeaders(t *testing.T) {
 	}
 	if got := header.Get("X-User-Role"); got != "OPERATOR" {
 		t.Errorf("X-User-Role = %q, want OPERATOR", got)
-	}
-	if got := header.Get("Authorization"); got != "Bearer "+operator {
-		t.Error("client upstream did not receive the user's JWT")
-	}
-
-	w = env.do(http.MethodGet, "/api/v1/reassignment-notifications", operator)
-	if w.Code != http.StatusOK {
-		t.Fatalf("operator upstream status = %d", w.Code)
-	}
-	header = env.operator.lastHeader()
-	if header.Get("Authorization") != "Bearer test-operator-service-token" {
-		t.Error("operator upstream did not receive the service token")
-	}
-	if header.Get("X-User-Id") != ident.UserID.String() || header.Get("X-User-Role") != "OPERATOR" {
-		t.Error("operator upstream did not receive the authenticated user's identity")
 	}
 }
 

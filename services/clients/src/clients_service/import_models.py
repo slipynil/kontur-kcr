@@ -1,5 +1,6 @@
 """Validated normalized input from Import; no Excel parsing or operator state."""
 
+import re
 from datetime import date
 from enum import StrEnum
 from typing import Annotated, Any
@@ -8,6 +9,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 Quarter = Annotated[str, Field(pattern=r"^\d{4}_Q[1-4]$")]
+CalendarQuarter = Annotated[
+    str, Field(max_length=7, pattern=re.compile(r"^(?!0000)[0-9]{4}_Q[1-4]$"))
+]
 Counter = Annotated[StrictInt, Field(ge=0, le=2_147_483_647)]
 
 
@@ -55,7 +59,7 @@ class ClientInput(InputModel):
 
 
 class SnapshotInput(InputModel):
-    quarter: Quarter
+    quarter: CalendarQuarter
     total_documents: Counter | None = None
     unsubmitted_documents: Counter | None = None
     snapshot_date: date | None = None
@@ -69,7 +73,7 @@ class ImportItem(InputModel):
 class ImportEnvelope(InputModel):
     batch_id: UUID
     uploaded_by: UUID
-    selected_quarter: Quarter
+    selected_quarter: CalendarQuarter
     import_type: ImportType
     snapshot_date: date
     # Row validation belongs to the application layer so one bad row need not

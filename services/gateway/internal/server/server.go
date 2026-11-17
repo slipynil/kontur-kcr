@@ -41,7 +41,6 @@ func New(deps Deps) (http.Handler, error) {
 		cfg.ImportAPIEndpoint,
 		cfg.OperatorWorkEndpoint,
 		cfg.AssistantEndpoint,
-		cfg.OperatorWorkToken,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init upstreams: %w", err)
@@ -88,6 +87,7 @@ func New(deps Deps) (http.Handler, error) {
 				r.Get("/clients", upstreams.HandlerFunc(proxy.ServiceClients))
 				r.Get("/clients/{kcr_code}", upstreams.HandlerFunc(proxy.ServiceClients))
 				r.Get("/clients/{kcr_code}/snapshots/history", upstreams.HandlerFunc(proxy.ServiceClients))
+				r.Get("/clients/{kcr_code}/assignment", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Get("/clients/{kcr_code}/events", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Post("/clients/{kcr_code}/events", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Get("/assistant/summary/{kcr_code}", upstreams.HandlerFunc(proxy.ServiceAssistant))

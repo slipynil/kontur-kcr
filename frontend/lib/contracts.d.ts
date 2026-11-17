@@ -302,3 +302,14 @@ export type SavedHistoricalComment = ClientEvent & {
   event_type?: "HISTORICAL_COMMENT";
   historical_event_date: string;
 };
+
+export type AssignmentState = {
+  kcr_code: string;
+  work_quarter: string;
+  assignment_id: string | null;
+  assigned_operator_id: string | null;
+  assigned_at: string | null;
+  stage: Stage | null;
+  wait_until: string | null;
+  awaiting_balance: boolean;
+};

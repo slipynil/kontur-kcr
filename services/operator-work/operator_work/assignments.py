@@ -179,9 +179,9 @@ def _settle(db: Connection, request: RowMapping, now: datetime) -> RowMapping:
     return _resolve(db, request["id"], "TRANSFERRED", now)
 
 
-def _require_cycle(db: Connection, code: str, quarter: str) -> RowMapping:
+def _require_cycle(db: Connection, code: str, quarter: str | None) -> RowMapping:
     cycle = _current_cycle(db, code)
-    if cycle is not None and cycle["work_quarter"] != quarter:
+    if cycle is not None and quarter is not None and cycle["work_quarter"] != quarter:
         raise WorkError(409, "INVALID_STATE", "Цикл обзвона изменился")
     if cycle is None or cycle["published_at"] is None:
         raise WorkError(404, "CLIENT_NOT_PUBLISHED", "Клиент не опубликован в пуле")
@@ -448,10 +448,11 @@ class Assignments:
             ).mappings()
             return [dict(row) for row in rows]
 
-    def state(self, code: str, quarter: str) -> dict:
+    def state(self, code: str, quarter: str | None = None) -> dict:
         with self.engine.begin() as db:
             now = _lock(db, code)
             cycle = _require_cycle(db, code, quarter)
+            quarter = cycle["work_quarter"]
             _settle_overdue(db, code, quarter, now)
             assignment = _active_assignment(db, code, quarter)
             stage = db.scalar(

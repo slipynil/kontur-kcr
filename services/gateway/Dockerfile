@@ -5,12 +5,14 @@ RUN go mod download
 COPY cmd ./cmd
 COPY configs ./configs
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gateway ./cmd
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/seed-admin ./cmd/seed
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gateway ./cmd \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/seed-admin ./cmd/seed
 
 FROM alpine:3.21
 RUN adduser -D -H -u 10001 gateway
 COPY --from=build /out/gateway /usr/local/bin/gateway
+# seed-admin — первый администратор Identity DB на новом окружении;
+# разовый запуск поверх сервиса gateway — server/README.md.
 COPY --from=build /out/seed-admin /usr/local/bin/seed-admin
 USER gateway
 # Listen port, overridable at runtime; EXPOSE documents the default (docs/local-development.md).

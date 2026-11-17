@@ -1,11 +1,13 @@
 """Read-only, consistent PostgreSQL projections. No operator-owned data."""
 
 from contextlib import contextmanager
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from clients_service.read_models import ClientCard, ClientPage, HistoryPage
+from clients_service.import_application import ImportAlreadyRolledBack, ImportNotFound
+from clients_service.read_models import AffectedClientsPage, ClientCard, ClientPage, HistoryPage
 from clients_service.read_rules import comparison_quarters
 
 
@@ -268,3 +270,51 @@ def get_history(engine: Engine, code: str, *, quarter=None, limit=20, offset=0):
             .all()
         )
         return HistoryPage(items=rows, total=total, limit=limit, offset=offset)
+
+
+def get_affected_clients(
+    engine: Engine, batch_id: UUID, *, limit: int, offset: int
+) -> AffectedClientsPage:
+    parameters = {"batch_id": batch_id, "limit": limit, "offset": offset}
+    with read_transaction(engine) as connection:
+        rolled_back = connection.scalar(
+            text("SELECT rolled_back FROM clients_import_operations WHERE batch_id = :batch_id"),
+            parameters,
+        )
+        if rolled_back is None:
+            raise ImportNotFound
+        if rolled_back:
+            raise ImportAlreadyRolledBack
+        total = connection.scalar(
+            text("SELECT count(*) FROM clients_import_undo WHERE batch_id = :batch_id"), parameters
+        )
+        rows = connection.execute(
+            text("""
+                WITH page AS (
+                    SELECT kcr_code, created_history_ids FROM clients_import_undo
+                    WHERE batch_id = :batch_id
+                    ORDER BY kcr_code COLLATE "C" LIMIT :limit OFFSET :offset
+                )
+                SELECT page.kcr_code,
+                    (SELECT sum(unsubmitted_documents) FROM quarter_snapshots s
+                     WHERE s.kcr_code = page.kcr_code) AS outstanding_documents,
+                    ARRAY(
+                        SELECT DISTINCT source.quarter
+                        FROM jsonb_array_elements_text(page.created_history_ids) AS ids(history_id)
+                        CROSS JOIN LATERAL (
+                            SELECT quarter FROM quarter_snapshot_history h
+                            WHERE h.id = CAST(ids.history_id AS uuid)
+                            UNION ALL
+                            SELECT quarter FROM clients_deleted_history d
+                            WHERE d.kcr_code = page.kcr_code
+                              AND d.history_id = CAST(ids.history_id AS uuid)
+                        ) source
+                        ORDER BY source.quarter
+                    ) AS source_quarters
+                FROM page ORDER BY page.kcr_code COLLATE "C"
+            """),
+            parameters,
+        ).mappings()
+        return AffectedClientsPage(
+            batch_id=batch_id, items=list(rows), total=total, limit=limit, offset=offset
+        )

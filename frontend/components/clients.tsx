@@ -2,7 +2,8 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { newRequestId, queryString, request } from '@/lib/api';
-import type { ClientCard, ClientListResponse, EventListResponse, SnapshotHistoryResponse, TakeResponse, User, TakeRequest, ReassignmentRequest } from '@/lib/contracts';
+import type { AssignmentState, ClientCard, ClientListResponse, EventListResponse, SnapshotHistoryResponse, TakeResponse, User, TakeRequest, ReassignmentRequest } from '@/lib/contracts';
+import { StructuredDetails } from './structured-details';
 import { EventForm } from './event-form';
 import { businessDate, dynamics, durations, Feedback, Pager, QuarterInput, stages, useAction, useResource } from './api-ui';
 
@@ -26,14 +27,25 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
   const [quarter, setQuarter] = useState('');
   const [quarterDraft, setQuarterDraft] = useState('');
   const card = useResource<ClientCard>(base + queryString({ quarter }), revision);
+  const work = useResource<AssignmentState>(base + '/assignment', revision);
   const events = useResource<EventListResponse>(base + '/events' + queryString({ page: eventPage, page_size: 20 }), revision);
   const history = useResource<SnapshotHistoryResponse>(base + '/snapshots/history' + queryString({ page: historyPage, page_size: 20, offset: (historyPage - 1) * 20 }), revision);
   const action = useAction();
   const operations = useRef<Record<string, string>>({});
   const takeAttempt = useRef<{ key: string; body: TakeRequest } | null>(null);
   const c = card.data;
-  const workQuarter = c?.work_quarter || c?.assignment?.work_quarter;
-  const protectedWait = c?.current_stage === 'WAIT_DEADLINE' && !!c.wait_until && c.wait_until > businessDate() && c.assignment?.operator_id !== user.id;
+  const state = work.data;
+  const workQuarter = state?.work_quarter;
+  const workCard: ClientCard | undefined = c && {
+    ...c, work_quarter: workQuarter ?? null, assignment_id: state?.assignment_id ?? null,
+    current_stage: state?.stage ?? 'POOL', wait_until: state?.wait_until ?? null,
+    assignment: state?.assigned_operator_id ? {
+      work_quarter: state.work_quarter, operator_id: state.assigned_operator_id,
+      operator_name: state.assigned_operator_id === user.id ? user.login : state.assigned_operator_id,
+      assigned_at: state.assigned_at ?? '',
+    } : null,
+  };
+  const protectedWait = state?.stage === 'WAIT_DEADLINE' && !!state.wait_until && state.wait_until > businessDate() && state.assigned_operator_id !== user.id;
   async function remove(path: string, description: string) {
     if (!window.confirm(description)) return;
     await action.run(async () => {
@@ -43,11 +55,10 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
       if (path === base) router.push('/'); else { setRevision(revision + 1); action.setNotice('Данные квартала удалены'); }
     });
   }
-  return <><button className="back-link" onClick={() => router.push('/')}>← Клиенты</button><Feedback {...card} /><Feedback {...action} /><button className="text-link" onClick={() => setRevision(revision + 1)}>Обновить карточку</button>{c && <><h1>{c.kcr_code} · {c.organization_name ?? 'Нет названия'}</h1><p>ИНН: {c.inn ?? '—'} · КПП: {c.kpp ?? '—'} · {c.status} · {c.tags.join(', ')}</p><p>Менеджер: {c.manager_name ?? '—'}{c.is_blocked && ' · Заблокирован'}</p>{c.contacts && <pre>{JSON.stringify(c.contacts, null, 2)}</pre>}
-    <div className="stats-grid">{[['Всего непереданных', c.outstanding_documents ?? '—'], ['Этап', stages[c.current_stage]], ['Ответственный', c.assignment?.operator_name ?? 'Свободен'], ['Ожидание до', c.wait_until ?? '—']].map(([label, value]) => <div className="stat-card" key={label}><small>{label}</small><b>{value}</b></div>)}</div><form onSubmit={e => { e.preventDefault(); setQuarter(quarterDraft); }}><label>Квартал сравнения<QuarterInput value={quarterDraft} onChange={setQuarterDraft} /></label><button className="button secondary">Показать динамику</button></form><p>Динамика: {c.dynamics ? dynamics[c.dynamics] : 'Не определена'} · {c.dynamics_previous_quarter}: {c.dynamics_previous_documents ?? '—'} → {c.dynamics_quarter}: {c.dynamics_current_documents ?? '—'}</p><p>За выбранный квартал: {c.quarter_summary?.unsubmitted_documents ?? '—'} из {c.quarter_summary?.total_documents ?? '—'} ({c.quarter_summary?.unsubmitted_percent == null ? '—' : `${c.quarter_summary.unsubmitted_percent.toFixed(2)}%`})</p>{c.needs_review && <section><h2>Требует проверки</h2><pre>{JSON.stringify(c.inherited_fields, null, 2)}</pre></section>}
-    {user.role === 'OPERATOR' && <><button className="button primary" disabled={action.busy || protectedWait || !workQuarter} onClick={() => void action.run(async () => {
-      const expectedAssignment = c.assignment_id ?? null;
-      if (c.assignment && !c.assignment_id) throw new Error('Gateway не вернул ID текущего назначения. Обновите карточку.');
+  return <><button className="back-link" onClick={() => router.push('/')}>← Клиенты</button><Feedback {...card} /><Feedback {...work} /><Feedback {...action} /><button className="text-link" onClick={() => setRevision(revision + 1)}>Обновить карточку</button>{c && <><h1>{c.kcr_code} · {c.organization_name ?? 'Нет названия'}</h1><p>ИНН: {c.inn ?? '—'} · КПП: {c.kpp ?? '—'} · {c.status} · {c.tags.join(', ')}</p><p>Менеджер: {c.manager_name ?? '—'}{c.is_blocked && ' · Заблокирован'}</p>{c.contacts && <section aria-label="Контакты"><h2>Контакты</h2><StructuredDetails values={c.contacts} /></section>}
+    <div className="stats-grid">{[['Всего непереданных', c.outstanding_documents ?? '—'], ['Этап', state?.stage ? stages[state.stage] : '—'], ['Ответственный', workCard?.assignment?.operator_name ?? (state ? 'Свободен' : '—')], ['Ожидание до', state?.wait_until ?? '—']].map(([label, value]) => <div className="stat-card" key={label}><small>{label}</small><b>{value}</b></div>)}</div><form onSubmit={e => { e.preventDefault(); setQuarter(quarterDraft); }}><label>Квартал сравнения<QuarterInput value={quarterDraft} onChange={setQuarterDraft} /></label><button className="button secondary">Показать динамику</button></form><p>Динамика: {c.dynamics ? dynamics[c.dynamics] : 'Не определена'} · {c.dynamics_previous_quarter}: {c.dynamics_previous_documents ?? '—'} → {c.dynamics_quarter}: {c.dynamics_current_documents ?? '—'}</p><p>За выбранный квартал: {c.quarter_summary?.unsubmitted_documents ?? '—'} из {c.quarter_summary?.total_documents ?? '—'} ({c.quarter_summary?.unsubmitted_percent == null ? '—' : `${c.quarter_summary.unsubmitted_percent.toFixed(2)}%`})</p>{c.needs_review && <section><h2>Требует проверки</h2><StructuredDetails values={c.inherited_fields} /></section>}
+    {user.role === 'OPERATOR' && <><button className="button primary" disabled={action.busy || work.loading || protectedWait || !workQuarter} onClick={() => void action.run(async () => {
+      const expectedAssignment = state!.assignment_id;
       const key = JSON.stringify([workQuarter, expectedAssignment]);
       if (takeAttempt.current?.key !== key) takeAttempt.current = { key, body: { expected_assignment_id: expectedAssignment, request_id: newRequestId() } };
       const result = await request<TakeResponse | ReassignmentRequest>(base + '/take' + queryString({ work_quarter: workQuarter! }), { method: 'POST', body: JSON.stringify(takeAttempt.current.body) });
@@ -56,8 +67,8 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
         if (result.status !== 'PENDING') takeAttempt.current = null;
       } else { takeAttempt.current = null; action.setNotice('Клиент закреплён за вами'); }
       setRevision(revision + 1);
-    })}>{c.assignment && c.assignment.operator_id !== user.id ? 'Перезакрепить на себя' : 'Взять в работу'}</button>{protectedWait && <p>Ожидание защищает ответственного до {c.wait_until}.</p>}{!workQuarter && <p>Для клиента пока нет цикла обзвона.</p>}</>}
-    <EventForm base={base} card={c} user={user} call={call} onSaved={() => { setEventPage(1); setRevision(revision + 1); }} />
+    })}>{state?.assigned_operator_id && state.assigned_operator_id !== user.id ? 'Перезакрепить на себя' : 'Взять в работу'}</button>{protectedWait && <p>Ожидание защищает ответственного до {state?.wait_until}.</p>}{!work.loading && !work.error && !workQuarter && <p>Для клиента пока нет цикла обзвона.</p>}</>}
+    <EventForm base={base} card={workCard!} user={user} call={call} onSaved={() => { setEventPage(1); setRevision(revision + 1); }} />
     <h2>Срезы по исходным кварталам</h2>{!c.snapshots.length && <p>Срезов нет</p>}{c.snapshots.map(s => <div className="status-row" key={s.quarter}><span>{s.quarter} · {s.unsubmitted_documents} из {s.total_documents} · {s.snapshot_date}</span>{user.role === 'ADMIN' && <button className="button secondary" disabled={action.busy} onClick={() => void remove(`${base}/snapshots/${encodeURIComponent(s.quarter)}`, `Удалить данные квартала ${s.quarter} клиента ${code}? Общая история взаимодействия сохраняется.`)}>Удалить квартал</button>}</div>)}
     <h2>История наблюдений</h2><Feedback {...history} />{history.data && <>{history.data.items.map(s => <div className="status-row" key={s.id}>{s.snapshot_date} · {s.quarter} · Не передано: {s.unsubmitted_documents} · Пакет: {s.import_batch_id}</div>)}{!history.data.items.length && <p>Наблюдений нет</p>}<Pager page={historyPage} total={history.data.total} onChange={setHistoryPage} /></>}
     <h2>Лента событий</h2><Feedback {...events} />{events.data && <>{events.data.items.map(event => <div className="status-row" key={event.id}><span>{event.historical_event_date ?? event.created_at} · {event.event_type} · {event.author_id}<br />{event.comment_text}{event.document_quarters?.length ? ` · Документы: ${event.document_quarters.join(', ')}` : ''}{event.call_result && ` · ${event.call_result}`}{event.wait_until && ` · Ожидание до ${event.wait_until}`}</span></div>)}{!events.data.items.length && <p>Событий нет</p>}<Pager page={eventPage} total={events.data.total} onChange={setEventPage} /></>}

@@ -1,15 +1,29 @@
 from decimal import Decimal
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from clients_service.import_models import Quarter, Tag
-from clients_service.read_models import ClientCard, ClientPage, Duration, Dynamics, HistoryPage
-from clients_service.read_repository import get_card, get_history, list_clients
+from clients_service.import_models import CalendarQuarter, Tag
+from clients_service.read_models import (
+    AffectedClientsPage,
+    ClientCard,
+    ClientPage,
+    Duration,
+    Dynamics,
+    HistoryPage,
+)
+from clients_service.read_repository import (
+    get_affected_clients,
+    get_card,
+    get_history,
+    list_clients,
+)
 
 router = APIRouter(prefix="/internal/v1/clients", tags=["Registry"])
+import_read_router = APIRouter(prefix="/internal/v1/import", tags=["Import"])
 
 
 def validate_unique_parameters(request: Request) -> None:
@@ -23,14 +37,7 @@ def validate_unique_parameters(request: Request) -> None:
 
 class PeriodQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    quarter: Quarter | None = None
-
-    @field_validator("quarter")
-    @classmethod
-    def validate_year(cls, value):
-        if value is not None and int(value[:4]) == 0:
-            raise ValueError("Calendar quarters require a positive year")
-        return value
+    quarter: CalendarQuarter | None = None
 
 
 class ListQuery(PeriodQuery):
@@ -68,7 +75,29 @@ class CardQuery(PeriodQuery):
 
 
 class HistoryQuery(PeriodQuery):
-    limit: int = Field(default=20, ge=1, le=100)
+    limit: int | None = Field(default=None, ge=1, le=100)
+    offset: int | None = Field(default=None, ge=0, le=100_000_000)
+    page: int | None = Field(default=None, ge=1, le=1_000_000)
+    page_size: int | None = Field(default=None, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def normalize_pagination(self):
+        if self.limit is not None and self.page_size is not None and self.limit != self.page_size:
+            raise ValueError("limit and page_size must match")
+        self.limit = self.limit or self.page_size or 20
+        if self.page is not None:
+            page_offset = (self.page - 1) * self.limit
+            if self.offset is not None and self.offset != page_offset:
+                raise ValueError("offset must match page and page size")
+            self.offset = page_offset
+        else:
+            self.offset = self.offset or 0
+        return self
+
+
+class AffectedClientsQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int = Field(default=1000, ge=1, le=1000)
     offset: int = Field(default=0, ge=0, le=100_000_000)
 
 
@@ -93,4 +122,22 @@ def card(kcr_code: str, request: Request, query: Annotated[CardQuery, Query()]):
 )
 def history(kcr_code: str, request: Request, query: Annotated[HistoryQuery, Query()]):
     validate_unique_parameters(request)
-    return get_history(request.app.state.engine, kcr_code, **query.model_dump())
+    return get_history(
+        request.app.state.engine,
+        kcr_code,
+        quarter=query.quarter,
+        limit=query.limit,
+        offset=query.offset,
+    )
+
+
+@import_read_router.get(
+    "/{batch_id}/affected-clients",
+    response_model=AffectedClientsPage,
+    operation_id="listAffectedClients",
+)
+def affected_clients(
+    batch_id: UUID, request: Request, query: Annotated[AffectedClientsQuery, Query()]
+):
+    validate_unique_parameters(request)
+    return get_affected_clients(request.app.state.engine, batch_id, **query.model_dump())

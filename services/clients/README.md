@@ -9,8 +9,8 @@
 ```powershell
 docker compose up --build -d
 docker compose logs migrate clients
-Invoke-RestMethod http://localhost:8000/health/live
-Invoke-RestMethod http://localhost:8000/health/ready
+Invoke-RestMethod http://localhost:8001/health/live
+Invoke-RestMethod http://localhost:8001/health/ready
 ```
 
 Compose поднимает PostgreSQL, применяет миграции отдельным заданием и запускает HTTP-сервис. Порты привязаны к localhost. Демонстрационные пароли предназначены только для локальной разработки. БД сохраняется в volume при `docker compose down`.
@@ -49,8 +49,6 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 
 ## Применение пакета в изолированной разработке
 
-Бизнес-маршруты выключены по умолчанию. Переключатели `CLIENTS_ENABLE_*` предназначены для изолированной разработки. Для импорта задайте `CLIENTS_ENABLE_IMPORT_APPLY=true`.
-
 Пример JSON конверта REGISTRY:
 
 ```json
@@ -68,8 +66,6 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 
 ## Чтение в изолированной разработке
 
-Задайте `CLIENTS_ENABLE_REGISTRY_READ=true` перед запуском.
-
 ```powershell
 Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?search=123&tags=VIP,INTEGRATOR&page=1&page_size=20'
 Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&dynamics=REDUCING'
@@ -81,8 +77,6 @@ Invoke-RestMethod 'http://localhost:8000/internal/v1/clients/example-001/snapsho
 
 ## Откат и удаление в изолированной разработке
 
-После `poetry run alembic upgrade head` задайте `CLIENTS_ENABLE_DATA_RECOVERY=true` перед запуском.
-
 ```powershell
 $body = @{ operation_id = [guid]::NewGuid().ToString(); requested_by = '00000000-0000-0000-0000-000000000001' } | ConvertTo-Json
 Invoke-RestMethod -Method Post -ContentType 'application/json' -Body $body 'http://localhost:8000/internal/v1/import/00000000-0000-0000-0000-000000000101/rollback'
@@ -91,7 +85,7 @@ $body = @{ operation_id = [guid]::NewGuid().ToString(); requested_by = '00000000
 Invoke-RestMethod -Method Delete -ContentType 'application/json' -Body $body 'http://localhost:8000/internal/v1/clients/example-001/snapshots/2026_Q1'
 ```
 
-Для полного удаления передайте такое же тело в `DELETE /internal/v1/clients/{kcr_code}`. Для подключения других сервисов см. [порядок действий координатора](../../docs/clients-recovery-protocol.md).
+Для полного удаления передайте такое же тело в `DELETE /internal/v1/clients/{kcr_code}`. [Порядок действий координатора](../../docs/api/import-operator-work-contract.md#откат-и-выборочная-очистка).
 
 ## Числовые фильтры выбранного квартала
 
@@ -103,16 +97,14 @@ Invoke-RestMethod 'http://localhost:8000/internal/v1/clients?quarter=2026_Q3&min
 
 ## Подключение соседних сервисов
 
-[Заметка для Gateway и Import](../../docs/clients-integration-handoff.md) описывает вопросы интеграции.
+Маршруты Clients доступны при запуске. Серверный Compose оставляет HTTP-порт Clients во внутренней сети. Доступ пользователей проверяет Gateway. [Серверный Compose](../../server/compose.yaml), [ADR-0010](../../docs/adr/0010-no-interservice-token-auth.md).
+
+Clients проверяет срок хранения копий при запуске и затем каждый час. Время первого подтверждения записывает маршрут `PUT /internal/v1/import/{batch_id}/rollback-confirmation`. Import Worker вызывает его после завершения отката во всех затронутых сервисах. Через 90 дней Clients удаляет копии подтверждённо отменённого пакета и сохраняет результаты команд для повторов.
 
 ## Проверка отдельного HTTP-процесса
 
 ```powershell
-python scripts/check_http.py --base-url http://127.0.0.1:8000 --mode closed
-# Только отдельный тестовый сервер с тремя включёнными CLIENTS_ENABLE_* флагами:
-python scripts/check_http.py --base-url http://127.0.0.1:8000 --mode business
+python scripts/check_http.py --base-url http://127.0.0.1:8001
 ```
 
-Режим `business` создаёт синтетические записи. Запускайте его на loopback с отдельной тестовой БД и тремя включёнными флагами бизнес-маршрутов.
-
-Для проверки контейнера `compose.check.yaml` включает бизнес-маршруты в отдельном тестовом Compose-проекте.
+Скрипт создаёт синтетические записи. Запускайте его на loopback с отдельной тестовой БД. Для Python-запуска из примера выше подставьте порт `8000`.

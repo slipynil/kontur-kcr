@@ -165,3 +165,10 @@ CREATE TABLE clients_deleted_history (
     PRIMARY KEY (operation_id, history_id)
 );
 CREATE INDEX idx_deleted_history_client ON clients_deleted_history(kcr_code);
+
+ALTER TABLE clients_import_operations
+    ADD COLUMN rollback_confirmed_at TIMESTAMPTZ,
+    ADD CONSTRAINT clients_import_confirmed_rollback CHECK (rollback_confirmed_at IS NULL OR rolled_back);
+CREATE INDEX idx_import_rollback_confirmed ON clients_import_operations(rollback_confirmed_at)
+    WHERE rollback_confirmed_at IS NOT NULL;
+CREATE INDEX idx_deleted_history_batch ON clients_deleted_history((payload->>'import_batch_id'));

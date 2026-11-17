@@ -39,6 +39,10 @@ class ImportAlreadyRolledBack(Exception):
     pass
 
 
+class ImportNotFound(Exception):
+    pass
+
+
 def json_value(value: Any) -> Any:
     """Serialize undo without relying on an engine-specific JSON encoder."""
 

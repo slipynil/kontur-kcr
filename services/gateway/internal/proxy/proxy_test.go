@@ -45,7 +45,7 @@ func TestNewRejectsInvalidURLs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(slog.Default(), time.Second, tt.clients, "http://import:80", "http://op:80", "http://ai:80", "")
+			_, err := New(slog.Default(), time.Second, tt.clients, "http://import:80", "http://op:80", "http://ai:80")
 			if err == nil {
 				t.Fatal("New = nil error, want error")
 			}
@@ -92,7 +92,7 @@ func newRecordingUpstream(t *testing.T) (*httptest.Server, *upstreamRecord) {
 
 func newTestUpstreams(t *testing.T, clientsURL string) *Upstreams {
 	t.Helper()
-	upstreams, err := New(slog.Default(), 2*time.Second, clientsURL, "http://import.test", "http://op.test", "http://ai.test", "")
+	upstreams, err := New(slog.Default(), 2*time.Second, clientsURL, "http://import.test", "http://op.test", "http://ai.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestProxyUpstreamUnavailable(t *testing.T) {
 	url := upstream.URL
 	upstream.Close() // имитация недоступности сервиса
 
-	upstreams, err := New(slog.Default(), 500*time.Millisecond, url, "http://import.test", "http://op.test", "http://ai.test", "")
+	upstreams, err := New(slog.Default(), 500*time.Millisecond, url, "http://import.test", "http://op.test", "http://ai.test")
 	if err != nil {
 		t.Fatal(err)
 	}

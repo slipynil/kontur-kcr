@@ -10,7 +10,7 @@ const push = jest.fn(); const replace = jest.fn();
 jest.mock('next/navigation', () => ({ usePathname: () => pathname, useRouter: () => ({ push, replace }), useSearchParams: () => new URLSearchParams(search) }));
 const user: User = { id: 'operator-id', login: 'operator', role: 'OPERATOR', is_active: true, created_at: '2026-01-01' };
 const page = { items: [], total: 0, page: 1, page_size: 20 };
-const card = { assignment_id: '11111111-1111-4111-8111-111111111111', kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], status: 'ACTIVE', current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
+const card = { assigned_operator_id: 'another', stage: 'IN_WORK', assigned_at: null, awaiting_balance: false, assignment_id: '11111111-1111-4111-8111-111111111111', kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], status: 'ACTIVE', current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
 const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data });
 beforeEach(() => {
   localStorage.clear(); pathname = '/'; search = ''; jest.clearAllMocks();
@@ -28,6 +28,12 @@ it('logs in with contract field names and no demo credentials', async () => {
   await waitFor(() => expect(readSession()?.user.role).toBe('OPERATOR'));
   expect((fetch as jest.Mock).mock.calls[0][0]).toBe('/api/v1/auth/login');
   expect(JSON.parse((fetch as jest.Mock).mock.calls[0][1].body)).toEqual({ login: 'operator', password: 'secret' });
+});
+it('shows field validation on an empty login submit instead of calling the API', async () => {
+  render(<Workspace />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Войти' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите логин');
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => String(url).includes('/auth/login'))).toBe(false);
 });
 it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
@@ -59,12 +65,12 @@ it('allows reassignment and sends the real work quarter, then displays 409', asy
   expect(screen.queryByText('Снять с оператора')).not.toBeInTheDocument();
 });
 it('protects active waiting across quarters', async () => {
-  (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, current_stage: 'WAIT_DEADLINE', wait_until: '2099-01-01' })));
+  (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, current_stage: 'WAIT_DEADLINE', stage: 'WAIT_DEADLINE', wait_until: '2099-01-01' })));
   render(<ClientDetails code="A/B" user={user} call={false} />);
   expect(await screen.findByRole('button', { name: 'Перезакрепить на себя' })).toBeDisabled();
 });
 it('saves a call only after the API succeeds', async () => {
-  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event', wait_applied: true }, 201)) : Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, assignment: { ...card.assignment, operator_id: user.id } })));
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event', wait_applied: true }, 201)) : Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, assigned_operator_id: user.id, assignment: { ...card.assignment, operator_id: user.id } })));
   render(<ClientDetails code="A/B" user={user} call />);
   fireEvent.change(await screen.findByLabelText('Комментарий'), { target: { value: 'Обещали передать' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить событие' })); await screen.findByText('Событие сохранено');
@@ -83,6 +89,37 @@ it('uploads the file and all four required multipart fields', async () => {
   expect(body.get('file')).toBe(file); expect(body.get('selected_quarter')).toBe('2025_Q2'); expect(body.get('import_type')).toBe('REGISTRY'); expect(body.get('snapshot_date')).toBe('2025-06-01');
 });
 
+it('shows a visible quarter format error instead of silently blocking submit', async () => {
+  render(<Imports reportOnly={false} />);
+  fireEvent.change(screen.getByLabelText('Файл реестра .xlsx'), { target: { files: [new File(['xlsx'], 'clients.xlsx')] } });
+  fireEvent.change(screen.getByLabelText('Квартал'), { target: { value: '2025-Q2' } });
+  fireEvent.change(screen.getByLabelText('Дата среза'), { target: { value: '2025-06-01' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Загрузить' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Квартал загрузки должен быть в формате 2026_Q4');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('requires a package ID before opening the report', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите ID пакета');
+  expect(push).not.toHaveBeenCalled();
+});
+
+it('rejects a package ID that is not a UUID without leaving the form', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.change(screen.getByLabelText('ID пакета'), { target: { value: '1' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  expect(await screen.findByRole('alert')).toHaveTextContent('ID пакета должен быть UUID');
+  expect(push).not.toHaveBeenCalled();
+});
+
+it('opens the report for a UUID package ID', async () => {
+  render(<Imports reportOnly />);
+  fireEvent.change(screen.getByLabelText('ID пакета'), { target: { value: '3f2504e0-4f89-41d4-9a0c-0305e82c3301' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Открыть отчёт' }).closest('form')!);
+  await waitFor(() => expect(push).toHaveBeenCalledWith('/import-report?batch=3f2504e0-4f89-41d4-9a0c-0305e82c3301'));
+});
 
 it('reuses the deletion operation ID after a lost response and accepts bodyless 200', async () => {
   jest.spyOn(window, 'confirm').mockReturnValue(true);
@@ -115,6 +152,12 @@ it('creates a user using a direct User response and refreshes the list', async (
   expect(call[0]).toBe('/api/v1/users'); expect(JSON.parse(call[1].body)).toEqual({ login: 'new.user', password: 'secret', role: 'OPERATOR' });
   expect(screen.getByLabelText('Пароль')).toHaveValue('');
 });
+it('shows field validation on an empty user submit instead of calling the API', async () => {
+  render(<Users />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать пользователя' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Введите логин');
+  expect((fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+});
 it('rolls back a completed import with a recovery command', async () => {
   search = 'batch=batch-id'; jest.spyOn(window, 'confirm').mockReturnValue(true);
   const batch = { id: 'batch-id', filename: 'clients.xlsx', status: 'COMPLETED', selected_quarter: '2026_Q4', snapshot_date: '2026-11-10', total_rows: 10, success_count: 10, error_count: 0 };
@@ -124,4 +167,22 @@ it('rolls back a completed import with a recovery command', async () => {
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(call[0]).toBe('/api/v1/imports/batch-id/rollback'); expect(JSON.parse(call[1].body).operation_id).toMatch(/^[0-9a-f-]{36}$/);
   jest.restoreAllMocks();
+});
+it('takes the published cycle from Operator Work when the profile has no work fields', async () => {
+  let taken = false;
+  const state = { kcr_code: 'A/B', work_quarter: '2025_Q3', assignment_id: null as string | null, assigned_operator_id: null as string | null, assigned_at: null, stage: 'POOL', wait_until: null, awaiting_balance: false };
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { taken = true; return Promise.resolve(json({ assigned_operator_id: user.id, assignment_id: 'new-assignment' })); }
+    if (url.endsWith('/assignment')) return Promise.resolve(json(taken ? { ...state, assignment_id: 'new-assignment', assigned_operator_id: user.id, stage: 'IN_WORK' } : state));
+    return Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, work_quarter: undefined, assignment_id: undefined, assignment: null, current_stage: undefined }));
+  });
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  const button = await screen.findByRole('button', { name: 'Взять в работу' });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  await screen.findByText('Клиент закреплён за вами');
+  await screen.findByText(user.login, { exact: true });
+  const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
+  expect(call[0]).toBe('/api/v1/clients/A%2FB/take?work_quarter=2025_Q3');
+  expect(JSON.parse(call[1].body).expected_assignment_id).toBeNull();
 });

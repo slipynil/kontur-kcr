@@ -3,6 +3,9 @@
 
 [tools]
 go = "1.27.3"
+# Версии как в CI (gateway-pr-checks.yml: golangci-lint v2.15) и в server/compose.yaml (migrate v4.18.2).
+golangci-lint = "2.15"
+gomigrate = "4.18.2"
 
 [env]
 # DSN по умолчанию для локальной разработки (docker compose поднимает БД на 127.0.0.1:5432).

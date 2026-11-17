@@ -60,7 +60,6 @@ services:
       CLIENTS_ENDPOINT: http://clients:8000
       IMPORT_API_ENDPOINT: http://import-api:8000
       OPERATOR_WORK_ENDPOINT: http://operator-work:8000
-      OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?OPERATOR_WORK_SERVICE_TOKEN is required in server/.env}
       # Assistant Service пока не развёрнут: его маршруты ответят 502.
       ASSISTANT_ENDPOINT: http://assistant:8000
     ports:
@@ -202,7 +201,6 @@ services:
     environment:
       OPERATOR_WORK_DATABASE_URL: postgresql+psycopg://${OPERATOR_WORK_DB_USER:-operator_work}:${OPERATOR_WORK_DB_PASSWORD:?OPERATOR_WORK_DB_PASSWORD is required in server/.env}@operator-work-db:5432/${OPERATOR_WORK_DB_NAME:-operator_work}
       OPERATOR_WORK_CLIENTS_URL: ${OPERATOR_WORK_CLIENTS_URL:-http://clients:8000}
-      OPERATOR_WORK_SERVICE_TOKEN: ${OPERATOR_WORK_SERVICE_TOKEN:?OPERATOR_WORK_SERVICE_TOKEN is required in server/.env}
       OPERATOR_WORK_PORT: "8000"
     # $$ — экранирование compose: $OPERATOR_WORK_PORT раскрывается в контейнере.
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn operator_work.api:create_app --factory --host 0.0.0.0 --port $${OPERATOR_WORK_PORT}"]
