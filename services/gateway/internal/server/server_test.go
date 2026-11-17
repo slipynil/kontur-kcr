@@ -404,6 +404,18 @@ func TestProxyRoutingTable(t *testing.T) {
 			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/reassignment-notifications",
 		},
 		{
+			name: "publish pool", method: http.MethodPut, target: "/api/v1/pool/publication?work_quarter=2026_Q4",
+			token: admin, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "PUT /internal/v1/pool/publication",
+		},
+		{
+			name: "read published pool", method: http.MethodGet, target: "/api/v1/pool?work_quarter=2026_Q4",
+			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/pool",
+		},
+		{
+			name: "publish client", method: http.MethodPut, target: "/api/v1/clients/6671-0042/publication?work_quarter=2026_Q4",
+			token: admin, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "PUT /internal/v1/clients/6671-0042/publication",
+		},
+		{
 			name: "reject reassignment", method: http.MethodPost, target: "/api/v1/reassignment-notifications/11111111-1111-1111-1111-111111111111/reject",
 			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "POST /internal/v1/reassignment-notifications/11111111-1111-1111-1111-111111111111/reject",
 		},
@@ -448,6 +460,10 @@ func TestProxyRoleRestrictions(t *testing.T) {
 	}{
 		// Импорт доступен только админу.
 		{name: "operator cannot import", method: http.MethodPost, target: "/api/v1/imports", token: operator},
+		// Публикация пула — действие администратора.
+		{name: "operator cannot publish pool", method: http.MethodPut, target: "/api/v1/pool/publication", token: operator},
+		{name: "operator cannot publish client", method: http.MethodPut, target: "/api/v1/clients/6671-0042/publication", token: operator},
+		{name: "anonymous cannot read pool", method: http.MethodGet, target: "/api/v1/pool", token: ""},
 		// Взятие клиента — действие оператора.
 		{name: "admin cannot take client", method: http.MethodPost, target: "/api/v1/clients/6671-0042/take", token: admin},
 		{name: "anonymous cannot read clients", method: http.MethodGet, target: "/api/v1/clients", token: ""},

@@ -164,10 +164,10 @@ export function applyWork(admin: Actor, code: string, quarter: string, remaining
 }
 
 export const publishReply = (admin: Actor, codes: string[], quarter: string) =>
-  internal('operator-work', `/pool/publication?work_quarter=${quarter}`, admin, 'PUT', { codes });
+  api(`/pool/publication?work_quarter=${quarter}`, { actor: admin, method: 'PUT', body: { codes } });
 
-export function publish(admin: Actor, code: string, quarter: string) {
-  requireStatus(publishReply(admin, [code], quarter), 204, 'Publish test client');
+export async function publish(admin: Actor, code: string, quarter: string) {
+  requireStatus(await publishReply(admin, [code], quarter), 204, 'Publish test client');
 }
 
 export function assignment(actor: Actor, code: string, quarter: string) {

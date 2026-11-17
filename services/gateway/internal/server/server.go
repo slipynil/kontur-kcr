@@ -84,7 +84,7 @@ func New(deps Deps) (http.Handler, error) {
 		r.Group(func(r chi.Router) {
 			r.Use(middlewares.Authenticate(deps.Tokens))
 
-			// Управление пользователями, импортом и удалением данных — только ADMIN.
+			// Управление пользователями, импортом, публикацией и удалением данных — только ADMIN.
 			r.Group(func(r chi.Router) {
 				r.Use(middlewares.RequireRole(auth.RoleAdmin))
 				r.Get("/users", users.ListUsers)
@@ -92,6 +92,8 @@ func New(deps Deps) (http.Handler, error) {
 				r.Post("/imports", upstreams.HandlerFunc(proxy.ServiceImport))
 				r.Get("/imports/{batch_id}", upstreams.HandlerFunc(proxy.ServiceImport))
 				r.Post("/imports/{batch_id}/rollback", upstreams.HandlerFunc(proxy.ServiceImport))
+				r.Put("/pool/publication", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
+				r.Put("/clients/{kcr_code}/publication", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Delete("/clients/{kcr_code}", recoveryCoordinator.DeleteClient)
 				r.Delete("/clients/{kcr_code}/snapshots/{quarter}", recoveryCoordinator.DeleteQuarter)
 			})
@@ -102,6 +104,7 @@ func New(deps Deps) (http.Handler, error) {
 				r.Get("/clients", upstreams.HandlerFunc(proxy.ServiceClients))
 				r.Get("/clients/{kcr_code}", upstreams.HandlerFunc(proxy.ServiceClients))
 				r.Get("/clients/{kcr_code}/snapshots/history", upstreams.HandlerFunc(proxy.ServiceClients))
+				r.Get("/pool", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Get("/clients/{kcr_code}/events", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Post("/clients/{kcr_code}/events", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Get("/assistant/summary/{kcr_code}", upstreams.HandlerFunc(proxy.ServiceAssistant))

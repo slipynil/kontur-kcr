@@ -42,11 +42,11 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     expect(unpublished.status).toBe(404);
     expect(unpublished.body.code).toBe('CLIENT_NOT_PUBLISHED');
 
-    const denied = publishReply(first, [code], quarter);
+    const denied = await publishReply(first, [code], quarter);
     expect(denied.status).toBe(403);
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     const result = requireStatus(await take(first, code, quarter), 200, 'Take published client');
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
 
     expect(assignment(first, code, quarter)).toMatchObject({
       assignment_id: result.assignment_id, assigned_operator_id: first.user.id, stage: 'IN_WORK',
@@ -55,7 +55,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
   test('assigns a published client from the browser card', async ({ app, screen, work }) => {
     const { admin, first, code, quarter } = work;
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     await app.open(`/client/${code}`);
     const takeButton = screen.getByRole('button', 'Взять в работу');
     await expect(takeButton).toBeEnabled({ timeout: 5000 });
@@ -68,7 +68,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
   test('allows one winner when two operators take the same free client', async ({ work }) => {
     const { admin, first, second, code, quarter } = work;
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
 
     const results = await Promise.all([take(first, code, quarter), take(second, code, quarter)]);
 
@@ -80,7 +80,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
   test('allows the owner to veto reassignment from the notification', async ({ app, browser, screen, work }) => {
     const { admin, first, second, code, quarter } = work;
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
     const pending = requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
     expect(pending.status).toBe('PENDING');
@@ -99,7 +99,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
   test('transfers the client after the veto window and keeps an old-form call without its wait', { session: 'operator_b' },
     async ({ app, screen, work }) => {
       const { admin, first, second, code, quarter, today } = work;
-      publish(admin, code, quarter);
+      await publish(admin, code, quarter);
       const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
       requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
 
@@ -118,7 +118,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
   for (const result of ['AGREEMENT', 'REFUSAL', 'NO_ANSWER', 'WRONG_NUMBER']) {
     test(`records ${result} once when the same call request is resent`, async ({ app, screen, work }) => {
       const { admin, first, code, quarter, today } = work;
-      publish(admin, code, quarter);
+      await publish(admin, code, quarter);
       const original = requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
       const comment = `Фиксация ${result} ${code}`;
       const promised = result === 'AGREEMENT' ? addDays(today, 5) : null;
@@ -143,7 +143,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
   test('saves a backdated comment from the card and rejects a future date', async ({ app, screen, work }) => {
     const { admin, first, code, quarter, today } = work;
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     await app.open(`/client/${code}`);
     await screen.getByLabel('Дата комментария').fill(`${addDays(today, -2)}T12:00`);
     await screen.getByLabel('Комментарий', { exact: true }).fill('Тестовый комментарий за прошлую дату');
@@ -163,7 +163,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     const { admin, first, second, code, quarter, today } = work;
     const next = quarterAt(today, 1);
     const wait = addDays(dateInQuarter(next), 15);
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     const original = requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
     const saved = requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
       promised_date: addDays(wait, 2), wait_until: wait,
@@ -171,7 +171,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     expect(saved.wait_applied).toBe(true);
 
     applyWork(admin, code, next, 7);
-    publish(admin, code, next);
+    await publish(admin, code, next);
     const carried = assignment(first, code, next);
     const rejected = await take(second, code, next, carried.assignment_id);
 
@@ -183,7 +183,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
   for (const remaining of [7, 0]) {
     test(`checks the current balance at an expired deadline (${remaining} remaining)`, async ({ work }) => {
       const { admin, first, second, code, quarter, today } = work;
-      publish(admin, code, quarter);
+      await publish(admin, code, quarter);
       const original = requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
       requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
         wait_until: addDays(today, 2),
@@ -206,7 +206,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
   test('keeps the assignment when Clients cannot confirm the balance at the deadline', async ({ work }) => {
     const { admin, first, second, code, quarter, today } = work;
-    publish(admin, code, quarter);
+    await publish(admin, code, quarter);
     const original = requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
     requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
       wait_until: addDays(today, 2),

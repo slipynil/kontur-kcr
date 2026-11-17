@@ -149,7 +149,7 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
       const cycles = requireStatus(internal('operator-work', workPath, admin), 200, 'Read imported work cycle');
       expect(cycles.items).toMatchObject([{ work_quarter: quarter, source_import_batch_id: applied.id }]);
       const { first: operator } = await prepareOperators();
-      publish(admin, code, quarter);
+      await publish(admin, code, quarter);
       requireStatus(await take(operator, code, quarter), 200, 'Start operator work on the latest snapshot');
       await app.open(`/import-report?batch=${applied.id}`);
       await browser.onDialog('accept');
@@ -188,7 +188,7 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
       applyClient(admin, { code, quarter: previous, registry: true, date: dateInQuarter(previous) });
       applyClient(admin, { code, quarter: previous, remaining: 4, date: dateInQuarter(previous, 2) });
       applyClient(admin, { code, quarter, remaining: 7, date: dateInQuarter(quarter) });
-      publish(admin, code, quarter);
+      await publish(admin, code, quarter);
       requireStatus(await take(first, code, quarter), 200, 'Prepare operator assignment');
       const memo = 'Общий комментарий по двум кварталам';
       const removedMemo = 'Комментарий только по удаляемому кварталу';
