@@ -17,6 +17,7 @@ import (
 
 	"github.com/slipynil/kontur-kcr/services/identity/configs"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/auth"
+	"github.com/slipynil/kontur-kcr/services/identity/internal/card"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/httpx"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/identity"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/middlewares"
@@ -57,6 +58,19 @@ func New(deps Deps) (http.Handler, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init recovery coordinator: %w", err)
+	}
+
+	// Публичная карточка агрегирует Clients, Operator Work и Identity DB
+	// вместо прозрачного проксирования (spec.md §3.6, ADR-0012).
+	cardAggregator, err := card.New(
+		deps.Log,
+		cfg.UpstreamTimeout,
+		cfg.ClientsEndpoint,
+		cfg.OperatorWorkEndpoint,
+		deps.Store,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("init card aggregator: %w", err)
 	}
 
 	users := &identity.Handlers{Store: deps.Store, Tokens: deps.Tokens}
@@ -102,7 +116,7 @@ func New(deps Deps) (http.Handler, error) {
 			r.Group(func(r chi.Router) {
 				r.Use(middlewares.RequireRole(allRoles...))
 				r.Get("/clients", upstreams.HandlerFunc(proxy.ServiceClients))
-				r.Get("/clients/{kcr_code}", upstreams.HandlerFunc(proxy.ServiceClients))
+				r.Get("/clients/{kcr_code}", cardAggregator.Client)
 				r.Get("/clients/{kcr_code}/snapshots/history", upstreams.HandlerFunc(proxy.ServiceClients))
 				r.Get("/pool", upstreams.HandlerFunc(proxy.ServiceOperatorWork))
 				r.Get("/clients/{kcr_code}/events", upstreams.HandlerFunc(proxy.ServiceOperatorWork))

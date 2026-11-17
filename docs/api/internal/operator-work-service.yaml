@@ -298,6 +298,39 @@ paths:
         '409':
           description: Запрошен исторический цикл.
 
+  /clients/{kcr_code}/work-state:
+    get:
+      operationId: readClientWorkState
+      summary: Рабочее состояние клиента для публичной карточки (агрегация Gateway)
+      description: |-
+        Без work_quarter возвращает состояние текущего цикла (is_current). С
+        work_quarter — состояние указанного цикла (409, если он исторический).
+        Вызывается Gateway при сборке публичной карточки GET /api/v1/clients/{kcr_code};
+        404 трактуется Gateway как «рабочих полей нет», остальные ошибки — 502.
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - name: work_quarter
+        in: query
+        required: false
+        schema: { type: string, pattern: '^\d{4}_Q[1-4]$' }
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      responses:
+        '200':
+          description: Рабочее состояние цикла.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentState'
+        '404':
+          description: Действующий цикл не найден или клиент не опубликован.
+        '409':
+          description: Запрошен исторический цикл.
+
   /reassignment-notifications:
     get:
       operationId: listReassignmentNotifications
@@ -978,6 +1011,9 @@ components:
         assigned_at: { type: [string, 'null'], format: date-time }
         stage: { type: [string, 'null'] }
         wait_until: { type: [string, 'null'], format: date }
+        wait_source_work_quarter:
+          type: [string, 'null']
+          description: Исходный цикл защищённого ожидания (как в CycleInfo).
         awaiting_balance:
           type: boolean
           description: Срок истёк. Цикл остаётся вне пула до подтверждения положительного остатка.

@@ -21,6 +21,7 @@ const (
 	CodeLoginAlreadyExists = "LOGIN_ALREADY_EXISTS"
 	CodeInternalError      = "INTERNAL_ERROR"
 	CodeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	CodeBadGateway         = "BAD_GATEWAY"
 )
 
 // MaxRequestBodySize ограничивает размер JSON-тела запроса к самому gateway.
