@@ -6,7 +6,7 @@ import aio_pika
 from aio_pika.abc import AbstractRobustChannel
 from pamqp.commands import Basic
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from import_worker.database import ImportBatch
@@ -33,7 +33,10 @@ async def publish_one(
             .where(
                 ImportBatch.status == Status.PROCESSING,
                 ImportBatch.published_at.is_(None),
-                ImportBatch.file_sha256.is_not(None),
+                or_(
+                    ImportBatch.file_sha256.is_not(None),
+                    ImportBatch.clients_applied_at.is_not(None),
+                ),
             )
             .order_by(ImportBatch.created_at, ImportBatch.id)
             .limit(1)

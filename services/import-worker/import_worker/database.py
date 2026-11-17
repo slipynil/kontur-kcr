@@ -55,6 +55,19 @@ class ImportObservation(Base):
     )
 
 
+class OperatorDelivery(Base):
+    __tablename__ = "import_operator_deliveries"
+
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("import_batches.id", ondelete="CASCADE"), primary_key=True
+    )
+    part_number: Mapped[int] = mapped_column(primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_status: Mapped[int | None]
+    retry_count: Mapped[int] = mapped_column(server_default=text("0"))
+
+
 async def insert_batch(
     db: AsyncSession,
     batch_id: UUID,

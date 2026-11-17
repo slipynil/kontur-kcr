@@ -27,9 +27,20 @@ CREATE TABLE import_batches (
 );
 
 CREATE INDEX idx_import_batches_unpublished ON import_batches (created_at)
-    WHERE published_at IS NULL AND file_sha256 IS NOT NULL AND status = 'PROCESSING';
+    WHERE published_at IS NULL AND status = 'PROCESSING'
+      AND (file_sha256 IS NOT NULL OR clients_applied_at IS NOT NULL);
 CREATE UNIQUE INDEX uq_import_batches_active_apply ON import_batches ((TRUE))
-    WHERE apply_started_at IS NOT NULL AND apply_payload IS NOT NULL;
+    WHERE status = 'PROCESSING' AND apply_started_at IS NOT NULL;
+
+CREATE TABLE import_operator_deliveries (
+    batch_id UUID NOT NULL REFERENCES import_batches (id) ON DELETE CASCADE,
+    part_number INTEGER NOT NULL CHECK (part_number BETWEEN 1 AND 1000),
+    payload JSONB NOT NULL,
+    confirmed_at TIMESTAMPTZ,
+    rejected_status INTEGER,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (batch_id, part_number)
+);
 
 COMMENT ON TABLE import_batches IS 'Журнал импортов (spec.md §2.5). Статус: PROCESSING → COMPLETED | FAILED; ROLLED_BACK после отката.';
 COMMENT ON COLUMN import_batches.uploaded_by IS 'Логическая ссылка на users (Identity DB).';
