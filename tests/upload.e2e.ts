@@ -52,14 +52,12 @@ describe('upload', { session: 'admin' }, () => {
 
     await expect(browser).toHaveURL(/\/import-report\?batch=/, { timeout: 30_000 });
     await expect(screen.getByRole('heading', { name: 'Срез_20.10.26_Дубна.xlsx', level: 2 })).toBeVisible();
-    // Only the «3 кв 2026» sheet belongs to 2026_Q3; the yearly sheet and the
-    // other-quarter sheets stay in the file and are reported as row errors.
-    await expect(screen.getByText(/2026_Q3 · 2026-10-20 ·/)).toBeVisible({ timeout: 60_000 });
-    // 243 snapshot rows reference КЦР codes absent from the registry and are
-    // rejected by Clients Service («Код КЦР отсутствует в реестре»).
-    await expect(statCard(browser, 'Строк в файле')).toHaveText('6824', { timeout: 180_000 });
-    await expect(statCard(browser, 'Принято')).toHaveText('3160', { timeout: 180_000 });
-    await expect(statCard(browser, 'Ошибок')).toHaveText('3666', { timeout: 180_000 });
+    await expect(screen.getByText('2026_Q3 · 2026-10-20 · COMPLETED')).toBeVisible({ timeout: 180_000 });
+    // Only the «3 кв 2026» sheet contributes rows. The error counter includes
+    // 245 rejected rows and one notice for each of the three skipped sheets.
+    await expect(statCard(browser, 'Строк в файле')).toHaveText('3405');
+    await expect(statCard(browser, 'Принято')).toHaveText('3160');
+    await expect(statCard(browser, 'Ошибок')).toHaveText('248');
   });
 
   test('rejects a file that is not .xlsx without uploading it', async ({ app, screen, browser }) => {

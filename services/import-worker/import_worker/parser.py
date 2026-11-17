@@ -94,7 +94,7 @@ def sheet_skip_reason(title: str, selected_quarter: str) -> str | None:
         len(quarters) > 1
         or AGGREGATE_TITLE.search(title)
         or not quarters
-        and re.fullmatch(r"[0-9]{4}(?:\s*(?:г\.?|год))?", title)
+        and re.fullmatch(r"(?:весь\s+)?[0-9]{4}(?:\s*(?:г\.?|год))?", title)
     ):
         return "Годовой, составной или служебный лист пропущен"
     if quarters:

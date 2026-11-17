@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from import_worker.api import create_app
 from import_worker.config import Settings
-from import_worker.database import ImportError
+from import_worker.database import ImportBatch, ImportError
 from import_worker.error_report import XLSX_MEDIA_TYPE, errors_xlsx
 from import_worker.models import ImportErrorRow, Status
 
@@ -173,7 +173,7 @@ async def test_upload_report_download_and_rollback(
         assert (await client.get(url)).status_code == 404
         assert (await client.post(f"{url}/rollback")).status_code == 404
 
-        db.get.return_value = batch
+        db.get.side_effect = lambda model, _id: batch if model is ImportBatch else None
         batch.total_rows = batch.error_count = 1
         db.scalars.return_value = [ImportError(sheet="Срез", row_number=4, reason="Ошибка")]
         report = await client.get(url)

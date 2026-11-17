@@ -111,7 +111,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
         '400':
-          description: `batch_id` не является UUID.
+          description: '`batch_id` не является UUID.'
           content:
             application/json:
               schema:
@@ -174,7 +174,7 @@ paths:
       summary: Откатить импорт
       description: Отменить только последний применённый неотменённый пакет в системе. Созданные данные и связанная
         работа операторов удаляются; прежние значения обновлённых записей восстанавливаются. Другой пакет -> 409
-        IMPORT_NOT_LATEST. Начатая работа не блокирует откат. Завершение только после согласованной очистки сервисов.
+        IMPORT_NOT_LATEST. Повтор с исходным operation_id продолжает сохранённые шаги и возвращает итоговый отчёт.
       parameters:
       - name: batch_id
         in: path
@@ -182,6 +182,22 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: X-User-Id
+        in: header
+        required: true
+        description: Инициатор отката из проверенного контекста Gateway.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operation_id:
+                  type: string
+                  format: uuid
       responses:
         '200':
           description: Пакет откачен.
@@ -205,7 +221,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Пакет не последний или имеет недопустимый статус.
+          description: Пакет не последний, идентификатор операции занят либо цели очистки требуют сверки.
           content:
             application/json:
               schema:

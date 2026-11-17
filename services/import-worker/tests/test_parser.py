@@ -66,7 +66,10 @@ def test_historical_registry(tmp_path: Path, xlsx: WorkbookFactory) -> None:
     assert second.client.inn == first.client.inn
 
 
-def test_snapshot_mixed_rows_and_periods(tmp_path: Path, xlsx: WorkbookFactory) -> None:
+@pytest.mark.parametrize("annual_sheet", ["2026 год", "весь 2026 год", "Весь 2025 ГОД"])
+def test_snapshot_mixed_rows_and_periods(
+    tmp_path: Path, xlsx: WorkbookFactory, annual_sheet: str
+) -> None:
     path = tmp_path / "snapshot.xlsx"
     path.write_bytes(
         xlsx(
@@ -83,7 +86,7 @@ def test_snapshot_mixed_rows_and_periods(tmp_path: Path, xlsx: WorkbookFactory) 
                     ["005", None, None, 10, 3],
                     [None, None, None, "=SUM(D2:D9)", "=SUM(E2:E9)"],
                 ],
-                "2026 год": [["annual", None, None, 20, 10]],
+                annual_sheet: [["annual", None, None, 20, 10]],
                 "1–2 кв 2026": [["combined", None, None, 20, 10]],
                 "2026_Q1": [["wrong-quarter", None, None, 10, 5]],
             }
@@ -93,6 +96,8 @@ def test_snapshot_mixed_rows_and_periods(tmp_path: Path, xlsx: WorkbookFactory) 
     assert result.total_rows == 8
     assert [error.row_number for error in result.errors] == [4, 5, 6, 7, 8, 9, 0, 0, 0]
     assert result.errors[5].reason == "Некорректный исходный квартал документов"
+    assert result.errors[6].sheet == annual_sheet
+    assert result.errors[6].reason == "Годовой, составной или служебный лист пропущен"
     assert [row.item.snapshot.model_dump() for row in result.rows] == [
         {
             "quarter": "2026_Q1",

@@ -51,6 +51,8 @@ services:
     environment:
       <<: *import-environment
       IMPORT_API_PORT: ${IMPORT_API_PORT:-8000}
+      IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-}
+      IMPORT_OPERATOR_WORK_URL: ${IMPORT_OPERATOR_WORK_URL:-}
     ports:
       - "127.0.0.1:${IMPORT_API_HOST_PORT:-8002}:${IMPORT_API_PORT:-8000}"
     volumes:
@@ -67,6 +69,7 @@ services:
     environment:
       <<: *import-environment
       IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-}
+      IMPORT_OPERATOR_WORK_URL: ${IMPORT_OPERATOR_WORK_URL:-}
     volumes:
       - import-uploads:/var/lib/import-uploads
     depends_on:

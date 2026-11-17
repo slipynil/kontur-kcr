@@ -1,22 +1,25 @@
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import date
 from pathlib import PurePosixPath
 from typing import Annotated
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi import FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from import_worker.broker import publish_pending
 from import_worker.config import Settings
-from import_worker.database import ImportBatch, has_newer_clients_apply, insert_batch, report
+from import_worker.database import ImportBatch, insert_batch, report
 from import_worker.error_report import XLSX_MEDIA_TYPE, errors_xlsx
-from import_worker.models import QUARTER_PATTERN, Batch, ImportParameters, ImportType, Status
+from import_worker.models import QUARTER_PATTERN, Batch, ImportParameters, ImportType
+from import_worker.rollback import RollbackProblem, execute_rollback, prepare_rollback, unavailable
 from import_worker.storage import InvalidUpload, store_upload, upload_path
 
 
@@ -25,6 +28,10 @@ class APIError(Exception):
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+class RollbackRequest(BaseModel):
+    operation_id: UUID | None = None
 
 
 def error_response(error: APIError) -> JSONResponse:
@@ -150,22 +157,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/internal/v1/imports/{batch_id}/rollback", operation_id="rollbackImport")
-    async def rollback(batch_id: str) -> Batch:
+    async def rollback(
+        batch_id: str,
+        command: RollbackRequest | None = None,
+        user_id: Annotated[UUID | None, Header(alias="X-User-Id")] = None,
+    ) -> Batch:
         batch_id = batch_id_or_400(batch_id)
-        async with reports.begin() as db:
-            batch = await db.get(ImportBatch, batch_id)
-            if batch is None:
-                raise APIError(404, "IMPORT_NOT_FOUND", "Пакет не найден")
-            if (
-                batch.status in {Status.ROLLED_BACK, Status.FAILED}
-                or (batch.clients_applied_at is None and batch.apply_started_at is None)
-                or await has_newer_clients_apply(db, batch)
-            ):
-                raise APIError(
-                    409, "IMPORT_NOT_LATEST", "Можно отменить только последний применённый пакет"
-                )
-        raise APIError(
-            503, "IMPORT_ROLLBACK_UNAVAILABLE", "Координация отката между сервисами недоступна"
-        )
+        try:
+            async with AsyncExitStack() as stack:
+                clients = work = None
+                if config.clients_url:
+                    clients = await stack.enter_async_context(
+                        httpx.AsyncClient(base_url=config.clients_url, timeout=20)
+                    )
+                if config.operator_work_url:
+                    work = await stack.enter_async_context(
+                        httpx.AsyncClient(base_url=config.operator_work_url, timeout=20)
+                    )
+                async with sessions.begin() as db:
+                    result = await prepare_rollback(
+                        db,
+                        batch_id,
+                        user_id,
+                        command.operation_id if command else None,
+                        clients,
+                        work,
+                    )
+                if result is not None:
+                    return result
+                if clients is None:
+                    raise unavailable()
+                return await execute_rollback(sessions, batch_id, clients, work)
+        except RollbackProblem as exc:
+            raise APIError(exc.status, exc.code, str(exc)) from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            error = unavailable()
+            raise APIError(error.status, error.code, str(error)) from exc
 
     return app

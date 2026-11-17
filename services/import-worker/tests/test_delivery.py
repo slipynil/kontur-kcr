@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import UTC, date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import cast
@@ -13,13 +14,14 @@ from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
 from conftest import WorkbookFactory
 from openpyxl import load_workbook
 from pamqp.commands import Basic
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from import_worker import consumer
 from import_worker.api import create_app
 from import_worker.broker import QUEUE_ARGUMENTS, QUEUE_NAME, Job, publish_one
 from import_worker.config import Settings
-from import_worker.database import ImportBatch
+from import_worker.database import ImportBatch, OperatorDelivery
 from import_worker.error_report import XLSX_MEDIA_TYPE
 
 
@@ -108,9 +110,21 @@ async def test_postgres_upload_retry_and_report(
     sessions = async_sessionmaker(engine)
     app = create_app(settings)
     calls: list[dict] = []
+    work_calls: list[dict] = []
     kcr = f"test-{uuid4()}"
 
     def clients_reply(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "batch_id": request.url.path.split("/")[-2],
+                    "items": [{"kcr_code": kcr, "outstanding_documents": 0}],
+                    "total": 1,
+                    "limit": 1000,
+                    "offset": 0,
+                },
+            )
         assert request.url.path == "/internal/v1/import/apply"
         envelope = json.loads(request.content)
         calls.append(envelope)
@@ -140,6 +154,17 @@ async def test_postgres_upload_retry_and_report(
             },
         )
 
+    def work_reply(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        work_calls.append(body)
+        assert request.url.path == "/internal/v1/cycles/apply-snapshot"
+        assert request.url.params["work_quarter"] == "2026_Q2"
+        assert request.headers["x-user-role"] == "ADMIN"
+        assert body["clients"] == [{"kcr_code": kcr, "outstanding_documents": 0}]
+        if len(work_calls) == 1:
+            raise httpx.ReadTimeout("Подтверждение Operator Work потеряно")
+        return httpx.Response(204)
+
     exchange = AsyncMock()
     exchange.publish.return_value = Basic.Ack(delivery_tag=1)
     channel = cast(AbstractRobustChannel, AsyncMock(default_exchange=exchange))
@@ -151,6 +176,9 @@ async def test_postgres_upload_retry_and_report(
             httpx.AsyncClient(
                 transport=httpx.MockTransport(clients_reply), base_url="http://clients"
             ) as clients,
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(work_reply), base_url="http://operator-work"
+            ) as operator_work,
         ):
             registry = xlsx(
                 {
@@ -167,6 +195,9 @@ async def test_postgres_upload_retry_and_report(
             first = delivery(published.body)
             await consumer.process_delivery(first, sessions, settings, clients)
             first.ack.assert_awaited_once()
+            report = (await api.get(f"/internal/v1/imports/{registry_id}")).json()
+            assert report["status"] == "COMPLETED" and report["completed_at"]
+            assert not work_calls
 
             header = ["Код КЦР", None, None, None, None, "Исходный квартал"]
             valid = [kcr, None, None, None, 0, "2026_Q1"]
@@ -192,19 +223,26 @@ async def test_postgres_upload_retry_and_report(
 
             body = exchange.publish.await_args.args[0].body
             first = delivery(body)
-            await consumer.process_delivery(first, sessions, settings, clients)
+            await consumer.process_delivery(first, sessions, settings, clients, operator_work)
             first.reject.assert_awaited_once_with(requeue=True)
             first.ack.assert_not_awaited()
 
             second = delivery(body)
-            await consumer.process_delivery(second, sessions, settings, clients)
-            second.ack.assert_awaited_once()
+            await consumer.process_delivery(second, sessions, settings, clients, operator_work)
+            second.reject.assert_awaited_once_with(requeue=True)
             assert calls[1] == calls[2]
-            assert not list(tmp_path.iterdir())
 
             report = (await api.get(f"/internal/v1/imports/{snapshot_id}")).json()
             assert report["status"] == "PROCESSING"
             assert report["clients_applied_at"] and report["completed_at"] is None
+            third = delivery(body)
+            await consumer.process_delivery(third, sessions, settings, clients, operator_work)
+            third.ack.assert_awaited_once()
+            assert len(work_calls) == 2 and work_calls[0] == work_calls[1]
+            assert not list(tmp_path.iterdir())
+
+            report = (await api.get(f"/internal/v1/imports/{snapshot_id}")).json()
+            assert report["status"] == "COMPLETED" and report["completed_at"]
             assert (report["total_rows"], report["success_count"], report["error_count"]) == (
                 3,
                 1,
@@ -253,6 +291,105 @@ async def test_postgres_upload_retry_and_report(
         await engine.dispose()
 
 
+async def test_resumes_legacy_snapshot_and_only_resends_unconfirmed_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_url = os.getenv("IMPORT_TEST_DATABASE_URL")
+    if not db_url:
+        pytest.skip("Укажите Import DB с применёнными миграциями")
+    monkeypatch.setattr(consumer, "RETRY_DELAY", 0)
+    settings = Settings(db_url, "amqp://unused", tmp_path)
+    engine = create_async_engine(db_url)
+    sessions = async_sessionmaker(engine)
+    batch_id, admin_id = uuid4(), uuid4()
+    offsets = []
+    calls = []
+
+    def clients_reply(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        offset = int(request.url.params["offset"])
+        offsets.append(offset)
+        return httpx.Response(
+            200,
+            json={
+                "batch_id": str(batch_id),
+                "limit": 1000,
+                "offset": offset,
+                "total": 1002,
+                "items": [
+                    {"kcr_code": f"C{index:04}", "outstanding_documents": None if index == 0 else 7}
+                    for index in range(offset, min(offset + 1000, 1002))
+                ],
+            },
+        )
+
+    def work_reply(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-user-id"] == str(admin_id)
+        assert request.url.params["work_quarter"] == "2026_Q2"
+        calls.append(json.loads(request.content))
+        if len(calls) == 2:
+            return httpx.Response(503)
+        return httpx.Response(204)
+
+    try:
+        async with sessions.begin() as db:
+            db.add(
+                ImportBatch(
+                    id=batch_id,
+                    uploaded_by=admin_id,
+                    filename="missing.xlsx",
+                    selected_quarter="2026_Q2",
+                    import_type="SNAPSHOT",
+                    snapshot_date=date(2026, 4, 10),
+                    clients_applied_at=datetime.now(UTC),
+                )
+            )
+        exchange = AsyncMock()
+        exchange.publish.return_value = Basic.Ack(delivery_tag=1)
+        channel = cast(AbstractRobustChannel, AsyncMock(default_exchange=exchange))
+        assert await publish_one(sessions, channel)
+        body = exchange.publish.await_args.args[0].body
+        assert Job.model_validate_json(body).batch_id == batch_id
+        for attempt in range(2):
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.MockTransport(clients_reply), base_url="http://clients"
+                ) as clients,
+                httpx.AsyncClient(
+                    transport=httpx.MockTransport(work_reply), base_url="http://operator-work"
+                ) as operator_work,
+            ):
+                message = delivery(body)
+                await consumer.process_delivery(message, sessions, settings, clients, operator_work)
+            async with sessions() as db:
+                batch = await db.get(ImportBatch, batch_id)
+                parts = list(
+                    await db.scalars(
+                        select(OperatorDelivery)
+                        .where(OperatorDelivery.batch_id == batch_id)
+                        .order_by(OperatorDelivery.part_number)
+                    )
+                )
+                assert parts[0].confirmed_at is not None
+                assert parts[1].retry_count == 1
+                if attempt == 0:
+                    message.reject.assert_awaited_once_with(requeue=True)
+                    assert batch.status == "PROCESSING" and batch.completed_at is None
+                    assert parts[1].confirmed_at is None
+                else:
+                    message.ack.assert_awaited_once()
+                    assert batch.status == "COMPLETED" and batch.completed_at is not None
+                    assert parts[1].confirmed_at is not None
+        assert offsets == [0, 1000]
+        assert len(calls) == 3 and calls[1] == calls[2]
+        assert [len(call["clients"]) for call in calls] == [1000, 1, 1]
+        assert calls[0]["clients"][0]["kcr_code"] == "C0001"
+        assert calls[0]["delivery"]["part_count"] == 2
+        assert calls[0]["delivery"]["delivery_id"] != calls[1]["delivery"]["delivery_id"]
+    finally:
+        await engine.dispose()
+
+
 async def test_rabbitmq_redelivery() -> None:
     url = os.getenv("IMPORT_TEST_AMQP_URL")
     if not url:
@@ -284,8 +421,9 @@ async def test_rabbitmq_redelivery() -> None:
 async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactory) -> None:
     db_url = os.getenv("IMPORT_TEST_DATABASE_URL")
     clients_url = os.getenv("IMPORT_TEST_CLIENTS_URL")
-    if not db_url or not clients_url:
-        pytest.skip("Укажите изолированные Import DB и Clients Service")
+    work_url = os.getenv("IMPORT_TEST_OPERATOR_WORK_URL")
+    if not db_url or not clients_url or not work_url:
+        pytest.skip("Укажите изолированные Import DB, Clients Service и Operator Work")
     settings = Settings(db_url, "amqp://unused", tmp_path)
     engine = create_async_engine(db_url)
     sessions = async_sessionmaker(engine)
@@ -300,6 +438,7 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
                 transport=httpx.ASGITransport(app=app), base_url="http://import"
             ) as api,
             httpx.AsyncClient(base_url=clients_url) as clients,
+            httpx.AsyncClient(base_url=work_url) as operator_work,
         ):
 
             async def submit(content: bytes, kind: str, date: str, quarter: str) -> dict:
@@ -308,7 +447,7 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
                 body = exchange.publish.await_args.args[0].body
                 assert Job.model_validate_json(body).batch_id == batch_id
                 message = delivery(body)
-                await consumer.process_delivery(message, sessions, settings, clients)
+                await consumer.process_delivery(message, sessions, settings, clients, operator_work)
                 message.ack.assert_awaited_once()
                 response = await api.get(f"/internal/v1/imports/{batch_id}")
                 response.raise_for_status()
@@ -319,6 +458,11 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
             )
             result = await submit(registry, "REGISTRY", "2026-03-30", "2026_Q1")
             assert result["clients_applied_at"]
+            work_path = f"/internal/v1/clients/{kcr}"
+            admin = {"X-User-Id": str(uuid4()), "X-User-Role": "ADMIN"}
+            operator = {"X-User-Id": str(uuid4()), "X-User-Role": "OPERATOR"}
+            first_quarter = {"work_quarter": "2026_Q1"}
+            wait_until = "2036-11-21"
             header = ["Код КЦР", None, None, None, None, "Исходный квартал"]
             cases = [
                 ("2026_Q1", "2026-03-30", 111, 10),
@@ -331,8 +475,44 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
             for quarter, date, total, remainder in cases:
                 content = xlsx({"Срез": [header, [kcr, None, None, total, remainder, "2026_Q1"]]})
                 result = await submit(content, "SNAPSHOT", date, quarter)
+                assert result["status"] == "COMPLETED" and result["completed_at"]
                 assert result["success_count"] == 1 and not result["error_log"]
+                if date == "2026-03-30":
+                    published = await operator_work.put(
+                        f"{work_path}/publication", params=first_quarter, headers=admin
+                    )
+                    published.raise_for_status()
+                    assigned = await operator_work.post(
+                        f"{work_path}/take",
+                        params=first_quarter,
+                        headers=operator,
+                        json={"request_id": str(uuid4()), "expected_assignment_id": None},
+                    )
+                    assigned.raise_for_status()
+                    event = await operator_work.post(
+                        f"{work_path}/events",
+                        headers=operator,
+                        json={
+                            **first_quarter,
+                            "event_type": "CALL_RESULT",
+                            "request_id": str(uuid4()),
+                            "expected_assignment_id": assigned.json()["assignment_id"],
+                            "call_result": "AGREEMENT",
+                            "promised_date": wait_until,
+                            "wait_until": wait_until,
+                        },
+                    )
+                    event.raise_for_status()
             assert result["status"] == "COMPLETED" and result["clients_applied_at"] is None
+
+            response = await operator_work.get(f"{work_path}/cycles", headers=admin)
+            response.raise_for_status()
+            cycles = {item["work_quarter"]: item for item in response.json()["items"]}
+            assert set(cycles) == {"2026_Q1", "2026_Q2"}
+            current = cycles["2026_Q2"]
+            assert current["is_current"] and current["published_at"] is None
+            assert current["stage"] == "WAIT_DEADLINE" and current["wait_until"] == wait_until
+            assert current["assigned_operator_id"] == operator["X-User-Id"]
 
             card = await clients.get(f"/internal/v1/clients/{kcr}", params={"quarter": "2026_Q2"})
             card.raise_for_status()
