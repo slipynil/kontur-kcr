@@ -13,11 +13,11 @@ from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
 from conftest import WorkbookFactory
 from pamqp.commands import Basic
 
-from import_worker import broker, consumer
+from import_worker import broker, consumer, operator_work
 from import_worker.broker import Job
 from import_worker.clients import fingerprint
 from import_worker.config import Settings
-from import_worker.database import ImportBatch
+from import_worker.database import ImportBatch, ImportRollback, OperatorDelivery
 from import_worker.models import ImportParameters, ParsedImport, Status
 
 
@@ -225,3 +225,155 @@ async def test_broker_loops_reconnect_and_allow_cancellation(
     channel.declare_queue.assert_awaited_once_with(
         broker.QUEUE_NAME, durable=True, arguments=broker.QUEUE_ARGUMENTS
     )
+
+
+async def test_snapshot_resumes_only_the_unconfirmed_part_after_throttling(
+    settings: Settings,
+    batch: ImportBatch,
+    db: AsyncMock,
+    sessions: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(operator_work, "PART_SIZE", 1)
+    pause = AsyncMock()
+    monkeypatch.setattr(consumer.asyncio, "sleep", pause)
+    parts = []
+    calls = []
+
+    def persist(rows):
+        for row in rows:
+            if isinstance(row, OperatorDelivery):
+                row.retry_count = 0
+                parts.append(row)
+
+    db.add_all.side_effect = persist
+
+    async def scalar(query):
+        entity = query.column_descriptions[0]["entity"]
+        if entity is ImportRollback:
+            return None
+        if entity is ImportBatch:
+            return batch.id if batch.apply_started_at is not None else None
+        assert entity is OperatorDelivery
+        return next((part for part in parts if part.confirmed_at is None), None)
+
+    db.scalar.side_effect = scalar
+    balances = [
+        {"kcr_code": "001", "outstanding_documents": 2},
+        {"kcr_code": "002", "outstanding_documents": 0},
+    ]
+
+    def clients_reply(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            assert request.url.path == "/internal/v1/import/apply"
+            return httpx.Response(
+                200,
+                json={
+                    "batch_id": str(batch.id),
+                    "accepted_rows": 2,
+                    "rejected_rows": 0,
+                    "errors": [],
+                },
+            )
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "batch_id": str(batch.id),
+                "limit": 1,
+                "offset": offset,
+                "total": 2,
+                "items": balances[offset : offset + 1],
+            },
+        )
+
+    def work_reply(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if len(calls) == 2:
+            return httpx.Response(429, headers={"Retry-After": "45"})
+        return httpx.Response(204)
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(clients_reply), base_url="http://clients"
+        ) as clients,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(work_reply), base_url="http://work"
+        ) as work,
+    ):
+        first = delivery(batch)
+        await consumer.process_delivery(first, sessions, settings, clients, work)
+        first.reject.assert_awaited_once_with(requeue=True)
+        first.ack.assert_not_awaited()
+        pause.assert_awaited_once_with(45)
+        assert batch.status == Status.PROCESSING and batch.completed_at is None
+        assert batch.clients_applied_at is not None
+        assert parts[0].confirmed_at is not None and parts[1].confirmed_at is None
+        assert parts[1].retry_count == 1
+
+        replay = delivery(batch)
+        await consumer.process_delivery(replay, sessions, settings, clients, work)
+        replay.ack.assert_awaited_once()
+
+    assert [item["delivery"]["part_number"] for item in calls] == [1, 2, 2]
+    assert calls[1] == calls[2]
+    assert batch.status == Status.COMPLETED and batch.completed_at is not None
+    assert parts[1].confirmed_at is not None
+    assert not list(settings.upload_dir.iterdir())
+
+
+async def test_snapshot_persists_a_terminal_rejection_until_reconciliation(
+    batch: ImportBatch,
+    db: AsyncMock,
+    sessions: MagicMock,
+) -> None:
+    part = OperatorDelivery(
+        batch_id=batch.id,
+        part_number=1,
+        payload={"batch_id": str(batch.id), "clients": []},
+    )
+    db.scalar.return_value = part
+    calls = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(409)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(reply), base_url="http://work"
+    ) as work:
+        clients = AsyncMock(spec=httpx.AsyncClient)
+        assert not await consumer.complete_snapshot(sessions, batch.id, clients, work)
+        assert not await consumer.complete_snapshot(sessions, batch.id, clients, work)
+        clients.get.assert_not_awaited()
+
+    assert len(calls) == 1
+    assert part.rejected_status == 409 and part.confirmed_at is None
+    assert batch.status == Status.PROCESSING and batch.completed_at is None
+
+
+async def test_snapshot_without_remaining_clients_finishes_without_a_delivery(
+    batch: ImportBatch,
+    db: AsyncMock,
+    sessions: MagicMock,
+) -> None:
+    clients = AsyncMock(spec=httpx.AsyncClient)
+    clients.get.return_value = httpx.Response(
+        200,
+        request=httpx.Request("GET", "http://clients"),
+        json={"batch_id": str(batch.id), "limit": 1000, "offset": 0, "total": 0, "items": []},
+    )
+    assert await consumer.complete_snapshot(sessions, batch.id, clients, None)
+    assert batch.status == Status.COMPLETED and batch.completed_at is not None
+    db.add_all.assert_not_called()
+
+
+@pytest.mark.parametrize(("header", "delay"), [("90", 90), ("invalid", 0), ("", 0)])
+def test_retry_after_handles_limits_and_invalid_values(header: str, delay: int) -> None:
+    request = httpx.Request("PUT", "http://work")
+    response = httpx.Response(429, headers={"Retry-After": header}, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as failure:
+        response.raise_for_status()
+    assert consumer.retry_after(failure.value) == delay
+    assert consumer.retry_after(httpx.ReadTimeout("timed out")) == 0
