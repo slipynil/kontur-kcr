@@ -8,6 +8,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from import_worker.models import Batch, ImportErrorRow, ImportParameters, Status
 
+APPLY_LOCK = 0x494D504F5254
+
 
 class Base(DeclarativeBase):
     pass
@@ -66,6 +68,40 @@ class OperatorDelivery(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejected_status: Mapped[int | None]
     retry_count: Mapped[int] = mapped_column(server_default=text("0"))
+
+
+class ImportRollback(Base):
+    __tablename__ = "import_rollbacks"
+
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("import_batches.id", ondelete="CASCADE"), primary_key=True
+    )
+    operation_id: Mapped[UUID] = mapped_column(unique=True)
+    requested_by: Mapped[UUID]
+    clients_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_code: Mapped[str | None] = mapped_column(Text)
+
+
+class RollbackCleanup(Base):
+    __tablename__ = "import_rollback_cleanups"
+
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("import_rollbacks.batch_id", ondelete="CASCADE"), primary_key=True
+    )
+    kcr_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+async def lock_imports(db: AsyncSession) -> None:
+    await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": APPLY_LOCK})
+
+
+async def active_rollback(db: AsyncSession) -> UUID | None:
+    return await db.scalar(
+        select(ImportRollback.batch_id).where(ImportRollback.completed_at.is_(None))
+    )
 
 
 async def insert_batch(

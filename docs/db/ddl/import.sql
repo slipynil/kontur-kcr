@@ -42,6 +42,26 @@ CREATE TABLE import_operator_deliveries (
     PRIMARY KEY (batch_id, part_number)
 );
 
+CREATE TABLE import_rollbacks (
+    batch_id UUID PRIMARY KEY REFERENCES import_batches (id) ON DELETE CASCADE,
+    operation_id UUID NOT NULL UNIQUE,
+    requested_by UUID NOT NULL,
+    clients_confirmed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    rejected_code TEXT
+);
+
+CREATE UNIQUE INDEX uq_import_active_rollback ON import_rollbacks ((TRUE))
+    WHERE completed_at IS NULL;
+
+CREATE TABLE import_rollback_cleanups (
+    batch_id UUID NOT NULL REFERENCES import_rollbacks (batch_id) ON DELETE CASCADE,
+    kcr_code TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    confirmed_at TIMESTAMPTZ,
+    PRIMARY KEY (batch_id, kcr_code)
+);
+
 COMMENT ON TABLE import_batches IS 'Журнал импортов (spec.md §2.5). Статус: PROCESSING → COMPLETED | FAILED; ROLLED_BACK после отката.';
 COMMENT ON COLUMN import_batches.uploaded_by IS 'Логическая ссылка на users (Identity DB).';
 COMMENT ON COLUMN import_batches.error_count IS 'Дубликат counters — детальные строки в import_errors.';

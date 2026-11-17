@@ -12,6 +12,7 @@ MAX_PARTS = 1000
 class AffectedClient(BaseModel):
     kcr_code: str
     outstanding_documents: int | None = Field(ge=0)
+    source_quarters: list[str] = Field(default_factory=list)
 
 
 class AffectedClientsPage(BaseModel):
@@ -22,8 +23,8 @@ class AffectedClientsPage(BaseModel):
     offset: int = Field(ge=0)
 
 
-async def prepare_deliveries(client: httpx.AsyncClient, batch_id: UUID) -> list[OperatorDelivery]:
-    balances: dict[str, int] = {}
+async def affected_clients(client: httpx.AsyncClient, batch_id: UUID) -> list[AffectedClient]:
+    affected = []
     seen: set[str] = set()
     offset = 0
     total = None
@@ -45,16 +46,22 @@ async def prepare_deliveries(client: httpx.AsyncClient, batch_id: UUID) -> list[
         ):
             raise ValueError("Несогласованный список затронутых клиентов")
         seen.update(codes)
-        balances.update(
-            (item.kcr_code, item.outstanding_documents)
-            for item in page.items
-            if item.outstanding_documents is not None
-        )
+        affected.extend(page.items)
         offset += len(page.items)
         total = page.total
 
+    return affected
+
+
+def admin_headers(actor: UUID) -> dict[str, str]:
+    return {"X-User-Id": str(actor), "X-User-Role": "ADMIN"}
+
+
+async def prepare_deliveries(client: httpx.AsyncClient, batch_id: UUID) -> list[OperatorDelivery]:
     clients = [
-        {"kcr_code": code, "outstanding_documents": balance} for code, balance in balances.items()
+        {"kcr_code": item.kcr_code, "outstanding_documents": item.outstanding_documents}
+        for item in await affected_clients(client, batch_id)
+        if item.outstanding_documents is not None
     ]
     count = (len(clients) + PART_SIZE - 1) // PART_SIZE
     if count > MAX_PARTS:
@@ -78,7 +85,7 @@ async def send_delivery(
     response = await client.put(
         "/internal/v1/cycles/apply-snapshot",
         params={"work_quarter": quarter},
-        headers={"X-User-Id": str(uploaded_by), "X-User-Role": "ADMIN"},
+        headers=admin_headers(uploaded_by),
         json=payload,
     )
     if response.status_code == 204:

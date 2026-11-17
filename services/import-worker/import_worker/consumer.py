@@ -10,7 +10,7 @@ import aio_pika
 import httpx
 from aio_pika.abc import AbstractIncomingMessage
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from import_worker.broker import QUEUE_ARGUMENTS, QUEUE_NAME, RETRY_DELAY, Job
@@ -20,8 +20,10 @@ from import_worker.database import (
     ImportBatch,
     ImportObservation,
     OperatorDelivery,
+    active_rollback,
     add_errors,
     applied_fingerprints,
+    lock_imports,
 )
 from import_worker.models import ImportErrorRow, ImportParameters, ImportType, ParsedImport, Status
 from import_worker.operator_work import prepare_deliveries, send_delivery
@@ -29,7 +31,6 @@ from import_worker.parser import InvalidWorkbook, parse_workbook
 from import_worker.storage import upload_path
 
 logger = logging.getLogger(__name__)
-APPLY_LOCK = 0x494D504F5254
 CLIENT_ERRORS = {
     "UNKNOWN_KCR_CODE": "Код КЦР отсутствует в реестре",
     "MISSING_REQUIRED_VALUE": "Нет обязательного значения в файле и в предыдущих данных",
@@ -96,7 +97,9 @@ async def prepare(sessions: async_sessionmaker[AsyncSession], batch_id: UUID, pa
 
 async def claim_apply(sessions: async_sessionmaker[AsyncSession], batch_id: UUID) -> UUID | None:
     async with sessions.begin() as db:
-        await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": APPLY_LOCK})
+        await lock_imports(db)
+        if await active_rollback(db) is not None:
+            raise RuntimeError("Ожидается завершение отката пакета")
         current = await db.scalar(
             select(ImportBatch.id)
             .where(
@@ -139,7 +142,7 @@ async def apply_claimed(
     clients: httpx.AsyncClient,
 ) -> bool:
     async with sessions.begin() as db:
-        await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": APPLY_LOCK})
+        await lock_imports(db)
         batch = await db.get(ImportBatch, batch_id, with_for_update=True)
         if batch is None or batch.status != Status.PROCESSING:
             return False
@@ -194,7 +197,7 @@ async def complete_snapshot(
 ) -> bool:
     while True:
         async with sessions.begin() as db:
-            await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": APPLY_LOCK})
+            await lock_imports(db)
             batch = await db.get(ImportBatch, batch_id, with_for_update=True)
             if batch is None or batch.status != Status.PROCESSING:
                 return True

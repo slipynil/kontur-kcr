@@ -160,6 +160,12 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
       const { first: operator } = await prepareOperators();
       publish(admin, code, quarter);
       requireStatus(await take(operator, code, quarter), 200, 'Start operator work on the latest snapshot');
+      const historyNote = requireStatus(await api(`/clients/${code}/events`, {
+        actor: operator, method: 'POST', body: {
+          request_id: randomUUID(), event_type: 'HISTORICAL_COMMENT', comment_text: 'Общая история',
+          historical_event_date: `${businessDate()}T00:00:00+03:00`, document_quarters: [],
+        },
+      }), 201, 'Add a historical comment outside the imported cycle');
       await app.open(`/import-report?batch=${applied.id}`);
       await browser.onDialog('accept');
 
@@ -170,6 +176,8 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
       expect(restored.organization_name).toBe(`Синтетический реестр ${code}`);
       expect(restored.snapshots).toHaveLength(0);
       expect(requireStatus(internal('operator-work', workPath, admin), 200, 'Read work after rollback').items).toHaveLength(0);
+      const events = requireStatus(internal('operator-work', `/clients/${code}/events`, admin), 200, 'Read history after rollback');
+      expect(events.items.map((event: { id: string }) => event.id)).toEqual([historyNote.id]);
     } finally {
       last.remove();
       first.remove();

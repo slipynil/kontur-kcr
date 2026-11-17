@@ -185,7 +185,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт состояния.
+          description: OPERATION_ID_CONFLICT, OPERATION_PAYLOAD_CONFLICT, IMPORT_NOT_LATEST, IMPORT_ORDER_UNKNOWN или конфликт целей очистки.
           content:
             application/json:
               schema:
@@ -197,7 +197,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '503':
-          description: Локальная транзакция отменена; повторить тот же operation_id.
+          description: Координация временно недоступна. Повтор с тем же operation_id продолжает неподтверждённые шаги.
           content:
             application/json:
               schema:

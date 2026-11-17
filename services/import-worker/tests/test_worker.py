@@ -66,7 +66,7 @@ async def test_retries_same_batch_after_lost_clients_response(
     batch.import_type = "REGISTRY"
     batch.file_sha256 = hashlib.sha256(registry).hexdigest()
     (settings.upload_dir / f"{batch.id}.xlsx").write_bytes(registry)
-    db.scalar.side_effect = [None, batch.id]
+    db.scalar.side_effect = [None, None, None, batch.id]
     requests = []
 
     def reply(request: httpx.Request) -> httpx.Response:

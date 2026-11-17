@@ -156,6 +156,8 @@ services:
     environment:
       <<: *import-environment
       IMPORT_API_PORT: "8000"
+      IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-http://clients:8000}
+      IMPORT_OPERATOR_WORK_URL: ${IMPORT_OPERATOR_WORK_URL:-http://operator-work:8000}
     volumes:
       - import_uploads:/var/lib/import-uploads
     depends_on:
