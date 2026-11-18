@@ -19,6 +19,30 @@ beforeEach(() => {
   global.fetch = jest.fn(async () => json(page)) as jest.Mock;
 });
 function signIn(role: User['role'] = 'OPERATOR') { saveSession({ token: 'jwt', token_type: 'Bearer', expires_in: 3600, user: { ...user, role } }); }
+
+it('remembers an opened import report and shows its link on a later visit', async () => {
+  signIn('ADMIN');
+  const batch = {
+    id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301',
+    filename: 'clients.xlsx',
+    selected_quarter: '2026_Q4',
+    snapshot_date: '2026-11-18',
+    status: 'FAILED',
+    total_rows: 1,
+    success_count: 0,
+    error_count: 1,
+  };
+  search = `?batch=${batch.id}`;
+  (fetch as jest.Mock).mockResolvedValue(json(batch));
+  const view = render(<Imports reportOnly />);
+  await screen.findByRole('heading', { name: batch.filename });
+  view.unmount();
+
+  search = '';
+  render(<Imports reportOnly />);
+  expect(screen.getByRole('link', { name: batch.filename }))
+    .toHaveAttribute('href', `/import-report?batch=${batch.id}`);
+});
 it('logs in with contract field names and no demo credentials', async () => {
   (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.endsWith('/auth/login') ? { token: 'jwt', token_type: 'Bearer', expires_in: 3600, user } : page)));
   render(<Workspace />);
