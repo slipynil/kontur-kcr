@@ -68,3 +68,4 @@ node_modules/
 
 # e2e workbook fixtures: real КЦР exports must never be published
 data/
+.e2e/bugbash/

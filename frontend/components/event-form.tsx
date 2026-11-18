@@ -1,4 +1,5 @@
 'use client';
+import { DateField } from './date-field';
 import { useRef, useState } from 'react';
 import { ApiError, newRequestId, request } from '@/lib/api';
 import type { CallEventCreate, ClientCard, HistoricalCommentCreate, SavedCallEvent, SavedHistoricalComment, User } from '@/lib/contracts';
@@ -84,10 +85,10 @@ export function EventForm({ card, user, base, call, onSaved }: {
         <label>Результат звонка<select value={result} onChange={event => setResult(event.target.value as typeof result)}>
           {Object.entries({ AGREEMENT: 'Есть договорённость', REFUSAL: 'Отказ', NO_ANSWER: 'Недозвон', WRONG_NUMBER: 'Неверный номер' }).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <label>Обещанный срок<input type="date" value={promised} onChange={event => setPromised(event.target.value)} /></label>
-        <label>Ожидание до<input type="date" value={wait} onChange={event => setWait(event.target.value)} /></label>
+        <DateField label="Обещанный срок" value={promised} onChange={setPromised} />
+        <DateField label="Ожидание до" value={wait} onChange={setWait} />
       </>}
-      {kind === 'HISTORICAL_COMMENT' && <label>Дата комментария<input required type="datetime-local" value={historical} onChange={event => setHistorical(event.target.value)} /></label>}
+      {kind === 'HISTORICAL_COMMENT' && <DateField label="Дата комментария" value={historical} onChange={setHistorical} required withTime />}
       <label>Комментарий<textarea required={kind === 'HISTORICAL_COMMENT'} maxLength={4000} value={comment} onChange={event => setComment(event.target.value)} /></label>
       {card.snapshots.length > 0 && <fieldset><legend>Исходные кварталы документов</legend>
         {card.snapshots.map(snapshot => <label className="checkbox-line" key={snapshot.quarter}>

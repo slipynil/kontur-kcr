@@ -10,19 +10,44 @@ export function useResource<T>(path: string | null, revision = 0, poll = false, 
     if (!path) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let inFlight = false;
+    const scheduleRefresh = () => {
+      if (!controller.signal.aborted && document.visibilityState !== 'hidden') {
+        timer = setTimeout(load, refreshMs);
+      }
+    };
     const load = async () => {
+      if (inFlight || controller.signal.aborted) return;
+      inFlight = true;
       try {
         const data = await request<T>(path, { signal: controller.signal });
         if (!controller.signal.aborted) {
           setState({ key, path, data });
-          if (refreshMs || (poll && (data as { status?: string }).status === 'PROCESSING')) timer = setTimeout(load, refreshMs || 2000);
+          if (!refreshMs && poll && (data as { status?: string }).status === 'PROCESSING') timer = setTimeout(load, 2000);
         }
       } catch (error) {
-        if (!controller.signal.aborted) setState({ key, path, error: message(error) });
+        if (!controller.signal.aborted) {
+          setState(previous => ({
+            key, path, error: message(error),
+            data: refreshMs && previous.key === key ? previous.data : undefined,
+          }));
+        }
+      } finally {
+        inFlight = false;
+        if (refreshMs) scheduleRefresh();
       }
     };
+    const onVisibilityChange = () => {
+      clearTimeout(timer);
+      if (document.visibilityState !== 'hidden') void load();
+    };
+    if (refreshMs) document.addEventListener('visibilitychange', onVisibilityChange);
     void load();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      if (refreshMs) document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [path, key, poll, refreshMs]);
   return { data: state.path === path ? state.data : undefined, error: state.key === key ? state.error : undefined, loading: !!path && state.key !== key };
 }
@@ -43,7 +68,12 @@ export function Feedback({ error, loading, notice }: { error?: string; loading?:
   return <>{loading && <p role="status">Загрузка…</p>}{error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}</>;
 }
 export function Pager({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
-  return <div className="pagination"><button className="button secondary" disabled={page <= 1} onClick={() => onChange(page - 1)}>Назад</button><span>Страница {page} · Всего {total}</span><button className="button secondary" disabled={page * 20 >= total} onClick={() => onChange(page + 1)}>Далее</button></div>;
+  const lastPage = Math.max(1, Math.ceil(total / 20));
+  return <nav className="pagination" aria-label="Страницы результатов">
+    <button className="button secondary" disabled={page <= 1} onClick={() => onChange(page - 1)}>Назад</button>
+    <span>Страница {page} из {lastPage}<small className="pagination-total">Всего записей: {total.toLocaleString('ru-RU')}</small></span>
+    <button className="button secondary" disabled={page >= lastPage} onClick={() => onChange(page + 1)}>Далее</button>
+  </nav>;
 }
 export const stages = { POOL: 'Пул', IN_WORK: 'В работе', WAIT_DEADLINE: 'Ожидание срока', CLAIM: 'Претензия', CLOSED: 'Цикл завершён' };
 export const dynamics = { ALL_SUBMITTED: 'Все переданы', REDUCING: 'Уменьшается', NO_CHANGE: 'Без изменений', GROWING: 'Растёт' };

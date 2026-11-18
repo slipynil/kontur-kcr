@@ -19,6 +19,30 @@ beforeEach(() => {
   global.fetch = jest.fn(async () => json(page)) as jest.Mock;
 });
 function signIn(role: User['role'] = 'OPERATOR') { saveSession({ token: 'jwt', token_type: 'Bearer', expires_in: 3600, user: { ...user, role } }); }
+
+it('remembers an opened import report and shows its link on a later visit', async () => {
+  signIn('ADMIN');
+  const batch = {
+    id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301',
+    filename: 'clients.xlsx',
+    selected_quarter: '2026_Q4',
+    snapshot_date: '2026-11-18',
+    status: 'FAILED',
+    total_rows: 1,
+    success_count: 0,
+    error_count: 1,
+  };
+  search = `?batch=${batch.id}`;
+  (fetch as jest.Mock).mockResolvedValue(json(batch));
+  const view = render(<Imports reportOnly />);
+  await screen.findByRole('heading', { name: batch.filename });
+  view.unmount();
+
+  search = '';
+  render(<Imports reportOnly />);
+  expect(screen.getByRole('link', { name: batch.filename }))
+    .toHaveAttribute('href', `/import-report?batch=${batch.id}`);
+});
 it('logs in with contract field names and no demo credentials', async () => {
   (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.endsWith('/auth/login') ? { token: 'jwt', token_type: 'Bearer', expires_in: 3600, user } : page)));
   render(<Workspace />);
@@ -52,10 +76,67 @@ it('returns to login on an expired server session', async () => {
   signIn(); (fetch as jest.Mock).mockResolvedValue(json({ code: 'UNAUTHORIZED', message: 'Войдите снова' }, 401));
   render(<Workspace />); await screen.findByRole('button', { name: 'Войти' }); expect(readSession()).toBeNull();
 });
+it('searches while typing and removes a cleared numeric bound', async () => {
+  signIn(); render(<Workspace />); await screen.findByText('Клиенты не найдены');
+  const bound = screen.getByLabelText('Процент до');
+  const submit = screen.getByRole('button', { name: 'Применить' });
+  const lastQuery = () => new URL((fetch as jest.Mock).mock.calls.at(-1)[0], 'http://localhost').searchParams;
+  fireEvent.change(bound, { target: { value: '0' } });
+  fireEvent.click(submit);
+  await waitFor(() => expect(lastQuery().get('max_unsubmitted_percent')).toBe('0'));
+  fireEvent.change(screen.getByLabelText('Код КЦР или ИНН'), { target: { value: ' 6671 ' } });
+  await waitFor(() => expect(lastQuery().get('search')).toBe('6671'));
+  expect(lastQuery().get('max_unsubmitted_percent')).toBe('0');
+  fireEvent.change(bound, { target: { value: '' } });
+  fireEvent.click(submit);
+  await waitFor(() => expect(lastQuery().has('max_unsubmitted_percent')).toBe(false));
+});
 function clientFetch(input: string, init?: RequestInit) {
   if (init?.method === 'POST') return Promise.resolve(json({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }, 409));
   return Promise.resolve(json(input.includes('/events') || input.includes('/history') ? page : card));
 }
+it('takes a free client using the work cycle returned by Gateway', async () => {
+  const workQuarter = '2025_Q3';
+  const assignedAt = '2025-09-01T00:00:00Z';
+  const assignmentId = 'new-assignment';
+  const profile = { ...card, work_quarter: workQuarter, current_stage: 'POOL', assignment: null, assignment_id: null };
+  let assigned = false;
+
+  (fetch as jest.Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      assigned = true;
+      return json({ kcr_code: 'A/B', assignment_id: assignmentId, assigned_operator_id: user.id, work_quarter: workQuarter, assigned_at: assignedAt });
+    }
+    if (url.includes('/events') || url.includes('/history')) return json(page);
+    return json(assigned ? {
+      ...profile,
+      current_stage: 'IN_WORK',
+      assignment_id: assignmentId,
+      assignment: { operator_id: user.id, operator_name: user.login, work_quarter: workQuarter, assigned_at: assignedAt },
+    } : profile);
+  });
+
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  const button = await screen.findByRole('button', { name: 'Взять в работу' });
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
+  await screen.findByText(user.login, { exact: true });
+  const [url, init] = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
+  expect(url).toBe('/api/v1/clients/A%2FB/take?work_quarter=2025_Q3');
+  expect(JSON.parse(init.body).expected_assignment_id).toBeNull();
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/pool?'))).toBe(false);
+});
+
+it('disables taking when Gateway reports no published work cycle', async () => {
+  (fetch as jest.Mock).mockImplementation(async (url: string) =>
+    json(url.includes('/events') || url.includes('/history') ? page : {
+      ...card, work_quarter: null, assignment_id: null, assignment: null, current_stage: null,
+    }),
+  );
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  expect(await screen.findByRole('button', { name: 'Взять в работу' })).toBeDisabled();
+  expect(screen.getByText('Для клиента пока нет опубликованного цикла обзвона.')).toBeVisible();
+});
 const list = (codes: string[]) => ({
   items: codes.map(code => ({ kcr_code: code, inn: null, organization_name: `Организация ${code}`, status: 'ACTIVE', tags: [], current_stage: 'POOL', assigned_operator_id: null, dynamics: null, latest_snapshot: null, dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: null, quarter_summary: null })),
   page: 1, page_size: 20, total: codes.length,
@@ -71,6 +152,30 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'PUT');
   expect(call[0]).toBe('/api/v1/pool/publication?work_quarter=2026_Q4');
   expect(JSON.parse(call[1].body)).toEqual({ codes: ['E2E-1'] });
+});
+it('publishes the whole registry across pages and respects the API batch limit', async () => {
+  const codes = Array.from({ length: 1001 }, (_, index) => `CLIENT-${index}`);
+  const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+  try {
+    (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') return Promise.resolve(json(undefined, 204));
+      const params = new URL(url, 'http://localhost').searchParams;
+      const size = Number(params.get('page_size'));
+      const page = Number(params.get('page'));
+      return Promise.resolve(json({ ...list(codes.slice((page - 1) * size, page * size)), total: codes.length, page, page_size: size }));
+    });
+    render(<Clients user={{ ...user, role: 'ADMIN' }} />);
+    fireEvent.change(await screen.findByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Опубликовать всех' }));
+    await screen.findByText('Опубликовано клиентов: 1001');
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('2026_Q4'));
+    const batches = (fetch as jest.Mock).mock.calls.filter(([, init]) => init.method === 'PUT')
+      .map(([, init]) => JSON.parse(init.body).codes);
+    expect(batches.map(batch => batch.length)).toEqual([1000, 1]);
+    expect(batches.flat()).toEqual(codes);
+  } finally {
+    confirm.mockRestore();
+  }
 });
 it('requires a selection and a quarter before publishing the registry', async () => {
   (fetch as jest.Mock).mockResolvedValue(json(list(['E2E-1'])));
@@ -181,7 +286,7 @@ it('reuses the deletion operation ID after a lost response and accepts bodyless 
 });
 it('creates a user using a direct User response and refreshes the list', async () => {
   (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(json(init?.method === 'POST' ? user : page, init?.method === 'POST' ? 201 : 200)));
-  render(<Users />); await screen.findByText('Страница 1 · Всего 0');
+  render(<Users />); await screen.findByText('Всего записей: 0');
   fireEvent.change(screen.getByLabelText('Логин'), { target: { value: 'new.user' } });
   fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'secret' } });
   fireEvent.click(screen.getByRole('button', { name: 'Создать пользователя' }));
