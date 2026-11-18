@@ -95,31 +95,47 @@ function clientFetch(input: string, init?: RequestInit) {
   if (init?.method === 'POST') return Promise.resolve(json({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }, 409));
   return Promise.resolve(json(input.includes('/events') || input.includes('/history') ? page : card));
 }
-it('takes a free published client when the profile omits the work cycle', async () => {
+it('takes a free client using the work cycle returned by Gateway', async () => {
+  const workQuarter = '2025_Q3';
+  const assignedAt = '2025-09-01T00:00:00Z';
+  const assignmentId = 'new-assignment';
+  const profile = { ...card, work_quarter: workQuarter, current_stage: 'POOL', assignment: null, assignment_id: null };
   let assigned = false;
+
   (fetch as jest.Mock).mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') {
       assigned = true;
-      return json({
-        kcr_code: 'A/B', assignment_id: 'new-assignment', assigned_operator_id: user.id,
-        work_quarter: '2025_Q3', assigned_at: '2025-09-01T00:00:00Z',
-      });
+      return json({ kcr_code: 'A/B', assignment_id: assignmentId, assigned_operator_id: user.id, work_quarter: workQuarter, assigned_at: assignedAt });
     }
-    if (url.includes('/pool?')) return json({
-      items: url.includes('2025_Q3') ? [{ kcr_code: 'A/B', assigned_operator_id: assigned ? user.id : null }] : [],
-    });
     if (url.includes('/events') || url.includes('/history')) return json(page);
-    return json({ ...card, assignment: null, assignment_id: undefined, work_quarter: undefined });
+    return json(assigned ? {
+      ...profile,
+      current_stage: 'IN_WORK',
+      assignment_id: assignmentId,
+      assignment: { operator_id: user.id, operator_name: user.login, work_quarter: workQuarter, assigned_at: assignedAt },
+    } : profile);
   });
+
   render(<ClientDetails code="A/B" user={user} call={false} />);
-  fireEvent.change(await screen.findByLabelText('Квартал опубликованного пула'), { target: { value: '2025_Q3' } });
-  const button = screen.getByRole('button', { name: 'Взять в работу' });
-  await waitFor(() => expect(button).toBeEnabled());
+  const button = await screen.findByRole('button', { name: 'Взять в работу' });
+  expect(button).toBeEnabled();
   fireEvent.click(button);
   await screen.findByText(user.login, { exact: true });
   const [url, init] = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(url).toBe('/api/v1/clients/A%2FB/take?work_quarter=2025_Q3');
   expect(JSON.parse(init.body).expected_assignment_id).toBeNull();
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/pool?'))).toBe(false);
+});
+
+it('disables taking when Gateway reports no published work cycle', async () => {
+  (fetch as jest.Mock).mockImplementation(async (url: string) =>
+    json(url.includes('/events') || url.includes('/history') ? page : {
+      ...card, work_quarter: null, assignment_id: null, assignment: null, current_stage: null,
+    }),
+  );
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  expect(await screen.findByRole('button', { name: 'Взять в работу' })).toBeDisabled();
+  expect(screen.getByText('Для клиента пока нет опубликованного цикла обзвона.')).toBeVisible();
 });
 const list = (codes: string[]) => ({
   items: codes.map(code => ({ kcr_code: code, inn: null, organization_name: `Организация ${code}`, status: 'ACTIVE', tags: [], current_stage: 'POOL', assigned_operator_id: null, dynamics: null, latest_snapshot: null, dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: null, quarter_summary: null })),
