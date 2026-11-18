@@ -375,9 +375,9 @@ func TestCardPassesClientsErrorsThrough(t *testing.T) {
 
 func TestCardOperatorNameResolution(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		users *fakeUsers
-		want string
+		want  string
 	}{
 		{"found", &fakeUsers{user: identity.User{ID: uuid.MustParse(operatorID), Login: "op.login"}}, "op.login"},
 		{"deleted", &fakeUsers{err: identity.ErrNotFound}, ""},
@@ -433,5 +433,105 @@ func TestCardRejectsAnonymousRequest(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestNewRejectsInvalidUpstreamURLs(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tests := []struct {
+		name        string
+		clientsURL  string
+		operatorURL string
+	}{
+		{"malformed clients url", "http://[::1]:namedport", "http://127.0.0.1:8003"},
+		{"malformed operator-work url", "http://127.0.0.1:8001", "ht tp://bad"},
+		{"clients without host", "http://", "http://127.0.0.1:8003"},
+		{"operator-work without scheme", "127.0.0.1:8003", "http://127.0.0.1:8001"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := card.New(log, 0, test.clientsURL, test.operatorURL, &fakeUsers{}); err == nil {
+				t.Fatal("New must reject the url")
+			}
+		})
+	}
+}
+
+func TestCardFailsWhenClientsProfileIsNotJSON(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, `<html>boom</html>`
+	}}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, operatorState(nil) }}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+
+	w := e.get(t, "/api/v1/clients/"+operatorCode)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body %s", w.Code, w.Body.String())
+	}
+	var payload struct{ Code string }
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Code != "INTERNAL_ERROR" {
+		t.Errorf("body = %s, want INTERNAL_ERROR", w.Body.String())
+	}
+}
+
+func TestCardFailsWhenOperatorStateIsNotJSON(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, clientsCard }}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, `not-json`
+	}}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+
+	w := e.get(t, "/api/v1/clients/"+operatorCode)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body %s", w.Code, w.Body.String())
+	}
+	var payload struct{ Code string }
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Code != "BAD_GATEWAY" {
+		t.Errorf("body = %s, want BAD_GATEWAY", w.Body.String())
+	}
+}
+
+func TestCardRejectsMalformedOperatorID(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, clientsCard }}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) {
+		state := map[string]any{
+			"kcr_code": operatorCode, "work_quarter": "2026_Q4",
+			"assignment_id": assignmentID, "assigned_operator_id": "not-a-uuid",
+			"assigned_at": "2026-11-17T09:00:00Z", "stage": "IN_WORK",
+			"wait_until": nil, "wait_source_work_quarter": nil, "awaiting_balance": false,
+		}
+		payload, _ := json.Marshal(state)
+		return http.StatusOK, string(payload)
+	}}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+
+	w := e.get(t, "/api/v1/clients/"+operatorCode)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body %s", w.Code, w.Body.String())
+	}
+	var payload struct{ Code string }
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Code != "BAD_GATEWAY" {
+		t.Errorf("body = %s, want BAD_GATEWAY", w.Body.String())
+	}
+}
+
+func TestCardPassesClientsServerErrorsThrough(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusInternalServerError, `{"code":"INTERNAL_ERROR","message":"boom"}`
+	}}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, operatorState(nil) }}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+
+	w := e.get(t, "/api/v1/clients/"+operatorCode)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 passthrough; body %s", w.Code, w.Body.String())
+	}
+	var payload struct{ Code string }
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Code != "INTERNAL_ERROR" {
+		t.Errorf("body = %s, want INTERNAL_ERROR", w.Body.String())
 	}
 }

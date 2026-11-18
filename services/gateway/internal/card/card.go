@@ -149,7 +149,7 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 
 	var state *workState
 	switch {
-	case stateResult.failure != nil:
+	case stateResult.failure == nil:
 		var parsed workState
 		if err := json.Unmarshal(stateResult.body, &parsed); err != nil {
 			a.log.Error("operator work state is not a json object", "error", err)
@@ -158,15 +158,16 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		state = &parsed
-	case stateResult.failure.status != http.StatusNotFound &&
-		stateResult.failure.status != http.StatusConflict:
-		// Недоступность Operator Work срывает карточку целиком — решением
-		// зафиксирован полный 502, деградации нет.
-		a.respondBadGateway(w, stateResult.failure)
-		return
+	case stateResult.failure.status == http.StatusNotFound:
+		// Нет действующего цикла — карточка отдаётся с пустыми рабочими полями.
 	case stateResult.failure.status == http.StatusConflict:
 		// Исторический цикл запрошен явно: ответ Operator Work в едином формате.
 		a.respondUpstreamFailure(w, stateResult.failure, "operator-work")
+		return
+	default:
+		// Недоступность Operator Work срывает карточку целиком — решением
+		// зафиксирован полный 502, деградации нет.
+		a.respondBadGateway(w, stateResult.failure)
 		return
 	}
 
