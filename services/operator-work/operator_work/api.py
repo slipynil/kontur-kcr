@@ -192,6 +192,18 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     ):
         return app.state.assignments.state(kcr_code, work_quarter)
 
+    @app.get(
+        "/internal/v1/clients/{kcr_code}/work-state",
+        response_model=AssignmentState,
+        operation_id="readClientWorkState",
+    )
+    def work_state(
+        kcr_code: str,
+        _user: Annotated[tuple[UUID, str], Depends(actor)],
+        work_quarter: Annotated[str | None, Query(pattern=r"^[0-9]{4}_Q[1-4]$")] = None,
+    ):
+        return app.state.assignments.state_current(kcr_code, work_quarter)
+
     @app.post(
         "/internal/v1/clients/{kcr_code}/take", responses={202: {"description": "Запрос создан"}}
     )

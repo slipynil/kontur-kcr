@@ -32,7 +32,8 @@ def _lock(db: Connection, code: str) -> datetime:
 def _current_cycle(db: Connection, code: str) -> RowMapping | None:
     return _one(
         db,
-        """SELECT work_quarter, published_at, wait_until FROM client_work_cycles
+        """SELECT work_quarter, published_at, wait_until, wait_source_work_quarter
+           FROM client_work_cycles
            WHERE kcr_code = :code AND is_current""",
         code=code,
     )
@@ -192,6 +193,32 @@ def _settle_overdue(db: Connection, code: str, quarter: str, now: datetime) -> N
     pending = _pending(db, code, quarter)
     if pending and pending["expires_at"] <= now:
         _settle(db, pending, now)
+
+
+def _state(db: Connection, code: str, quarter: str, now: datetime) -> dict:
+    cycle = _require_cycle(db, code, quarter)
+    _settle_overdue(db, code, quarter, now)
+    assignment = _active_assignment(db, code, quarter)
+    stage = db.scalar(
+        text("""SELECT stage FROM client_stages
+                WHERE kcr_code = :code AND work_quarter = :quarter
+                ORDER BY changed_at DESC, id DESC LIMIT 1"""),
+        {"code": code, "quarter": quarter},
+    )
+    result = _assignment_result(
+        code,
+        quarter,
+        assignment["id"] if assignment else None,
+        assignment["operator_id"] if assignment else None,
+        assignment["assigned_at"] if assignment else None,
+    )
+    return {
+        **result,
+        "stage": stage,
+        "wait_until": cycle["wait_until"],
+        "wait_source_work_quarter": cycle["wait_source_work_quarter"],
+        "awaiting_balance": cycle["wait_until"] is not None and not _protected(cycle, now),
+    }
 
 
 def _record_snapshot_part(
@@ -451,28 +478,21 @@ class Assignments:
     def state(self, code: str, quarter: str) -> dict:
         with self.engine.begin() as db:
             now = _lock(db, code)
-            cycle = _require_cycle(db, code, quarter)
-            _settle_overdue(db, code, quarter, now)
-            assignment = _active_assignment(db, code, quarter)
-            stage = db.scalar(
-                text("""SELECT stage FROM client_stages
-                        WHERE kcr_code = :code AND work_quarter = :quarter
-                        ORDER BY changed_at DESC, id DESC LIMIT 1"""),
-                {"code": code, "quarter": quarter},
-            )
-            result = _assignment_result(
-                code,
-                quarter,
-                assignment["id"] if assignment else None,
-                assignment["operator_id"] if assignment else None,
-                assignment["assigned_at"] if assignment else None,
-            )
-            return {
-                **result,
-                "stage": stage,
-                "wait_until": cycle["wait_until"],
-                "awaiting_balance": cycle["wait_until"] is not None and not _protected(cycle, now),
-            }
+            return _state(db, code, quarter, now)
+
+    def state_current(self, code: str, quarter: str | None = None) -> dict:
+        """Work state for the public client card: the requested cycle or the
+        current one (docs/api/internal/operator-work-service.yaml readClientWorkState)."""
+        with self.engine.begin() as db:
+            now = _lock(db, code)
+            if quarter is None:
+                current = _current_cycle(db, code)
+                if current is None:
+                    raise WorkError(
+                        404, "WORK_CYCLE_NOT_FOUND", "Действующий цикл обзвона не найден"
+                    )
+                quarter = current["work_quarter"]
+            return _state(db, code, quarter, now)
 
     def take(
         self, code: str, quarter: str, operator: UUID, expected: UUID | None, request_id: UUID

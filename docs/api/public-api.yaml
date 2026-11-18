@@ -593,7 +593,11 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.
+        ADR-0012: Gateway агрегирует карточку — профиль и срезы даёт Clients, рабочие поля (work_quarter, assignment_id,
+        current_stage, assignment, wait_until, wait_source_work_quarter) — Operator Work для текущего цикла (или цикла
+        work_quarter), operator_name Gateway разрешает по Identity DB (логин). Нет действующего цикла — рабочие поля
+        null; недоступность Operator Work срывает ответ целиком со статусом 502, деградации нет.'
       x-roles:
       - ADMIN
       - OPERATOR
@@ -624,6 +628,19 @@ paths:
           $ref: '#/components/responses/NotFound'
         '400':
           description: Некорректные или неподдерживаемые параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 'INVALID_STATE: явный work_quarter указывает на исторический цикл (ответ Operator Work).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: 'BAD_GATEWAY: недоступен или некорректен Operator Work; карточка без рабочих полей не
+            отдаётся (ADR-0012).'
           content:
             application/json:
               schema:
@@ -1469,7 +1486,8 @@ components:
           format: date-time
     ClientCard:
       type: object
-      description: Карточка клиента с полной историей взаимодействия (`spec.md` §3.3, §4.4).
+      description: Карточка клиента с полной историей взаимодействия (`spec.md` §3.3, §4.4). Рабочие поля заполняет
+        Gateway агрегацией Clients + Operator Work + Identity DB (ADR-0012).
       required:
       - kcr_code
       - inn
@@ -1491,7 +1509,8 @@ components:
           - string
           - 'null'
           pattern: ^\d{4}_Q[1-4]$
-          description: Квартал цикла обзвона; может отличаться от кварталов документов.
+          description: Квартал цикла обзвона; может отличаться от кварталов документов. Заполняет Gateway из
+            Operator Work (ADR-0012); null, если действующего цикла нет.
         kcr_code:
           type: string
         inn:
@@ -1524,8 +1543,13 @@ components:
           items:
             $ref: '#/components/schemas/Tag'
         current_stage:
-          $ref: '#/components/schemas/Stage'
+          description: Этап работы по клиенту; null, если действующего цикла обзвона нет (ADR-0012).
+          oneOf:
+          - $ref: '#/components/schemas/Stage'
+          - type: 'null'
         assignment:
+          description: Активное закрепление или null (свободный клиент); Gateway разрешает operator_name по логину
+            Identity DB (ADR-0012).
           oneOf:
           - $ref: '#/components/schemas/ClientAssignmentInfo'
           - type: 'null'
