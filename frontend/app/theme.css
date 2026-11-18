@@ -1,0 +1,498 @@
+/* Shared visual treatment for the existing application layout. */
+:root {
+  color-scheme: light dark;
+  --picker-shadow: 0 8px 24px #0003;
+  --background: light-dark(#f8f9fb, #151517);
+  --foreground: light-dark(#20242d, #f4f4f5);
+  --card: light-dark(#fff, #202023);
+  --primary: light-dark(#18181b, #fafafa);
+  --primary-foreground: light-dark(#fff, #18181b);
+  --secondary: light-dark(#eef0f4, #2b2b30);
+  --secondary-foreground: light-dark(#28313f, #e4e4e7);
+  --accent: light-dark(#f0f0f2, #2c2c31);
+  --accent-foreground: light-dark(#27272a, #f4f4f5);
+  --muted-foreground: light-dark(#576172, #b5b5c0);
+  --border: light-dark(#dbe0e8, #414148);
+  --input: light-dark(#929cac, #62626d);
+  --ring: light-dark(#52525b, #c4c4cf);
+  --sidebar: light-dark(#fff, #202023);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --line: var(--border);
+  --surface-shadow: 0 2px 8px #20242d0a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.sidebar {
+  background: var(--sidebar);
+  border-color: var(--sidebar-border);
+}
+
+.brand b, .login-logo b, .content :is(h1, h2, h3) {
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+.brand small, .logout, .back-link, .login-hint,
+.content :is(small, dt), .login-field svg {
+  color: var(--muted-foreground);
+}
+
+.nav-item {
+  color: var(--secondary-foreground);
+  border-radius: var(--radius);
+}
+
+.nav-item:hover, .logout:hover, .button.secondary:hover:not(:disabled) {
+  background: var(--secondary);
+}
+
+.nav-item.selected {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.button, .login-submit {
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+.button.primary, .login-submit {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.button.primary:hover:not(:disabled), .login-submit:hover:not(:disabled),
+.login-submit:active:not(:disabled) {
+  opacity: .86;
+}
+
+.button.secondary {
+  background: var(--card);
+  color: var(--secondary-foreground);
+  border-color: var(--input);
+}
+
+.text-link {
+  color: var(--accent-foreground);
+  text-underline-offset: .2em;
+}
+
+.text-link:hover, .back-link:hover {
+  text-decoration: underline;
+}
+
+.login-page { background: var(--background); }
+.login-heading { border-bottom-color: var(--primary); color: var(--foreground); }
+
+.login-card, .call-form, .stat-card, .table-wrap {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--border), var(--surface-shadow);
+}
+
+.login-field, .content select,
+.content input:not([type=file]):not([type=checkbox]):not([type=radio]),
+.call-form textarea {
+  background: var(--card);
+  border-color: var(--input);
+  color: var(--foreground);
+  font-family: inherit;
+}
+
+.login-field input::placeholder { color: var(--muted-foreground); }
+.login-field:focus-within { border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); }
+.content input:where([type=checkbox], [type=radio]) { accent-color: var(--primary); }
+
+.content .upload-box {
+  background: var(--accent);
+  border-color: var(--input);
+  color: var(--accent-foreground);
+}
+
+.table-wrap th {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-weight: 650;
+}
+
+.table-wrap tr:hover td, .table-wrap tr:focus-within td {
+  background: var(--accent);
+}
+
+.table-wrap :is(th, td), .status-row, .structured-details > div {
+  border-color: var(--border);
+}
+
+.form-error {
+  background: light-dark(#fff0ef, #411f22);
+  color: light-dark(#922521, #fecaca);
+}
+
+.content :is(button, input, textarea, select, .table-wrap):focus-visible,
+.sidebar button:focus-visible, .login-submit:focus-visible,
+.upload-box:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-field, .login-submit, .button, .nav-item { transition: none; }
+}
+
+.content select {
+  min-block-size: 40px;
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+@supports (appearance: base-select) {
+  .content select, .content select::picker(select) { appearance: base-select; }
+  .content select { gap: .75rem; }
+  .content select::picker(select) {
+    margin-block: .375rem;
+    padding: .375rem;
+    border: 1px solid var(--border);
+    border-radius: .875rem;
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow: var(--picker-shadow);
+  }
+  .content option {
+    display: flex;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .625rem;
+    border-radius: .625rem;
+  }
+  .content option:is(:hover, :focus-visible) { background: var(--secondary); }
+  .content option:checked { background: var(--primary); color: var(--primary-foreground); }
+  .content option::checkmark { order: 1; }
+}
+
+.date-field { display: grid; gap: 6px; margin-block: 12px; }
+.date-field-control { display: flex; align-items: stretch; }
+.content .date-field-control input {
+  width: 100%;
+  margin: 0;
+}
+.date-field-control input::-webkit-calendar-picker-indicator { display: none; }
+.date-picker {
+  z-index: 70;
+  padding: .75rem;
+  max-width: var(--radix-popover-content-available-width);
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: .875rem;
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--picker-shadow);
+}
+.date-picker .rdp-root {
+  --rdp-accent-color: var(--foreground);
+  --rdp-day-width: clamp(30px, 10vw, 38px);
+  --rdp-day-height: var(--rdp-day-width);
+  --rdp-day_button-width: var(--rdp-day-width);
+  --rdp-day_button-height: var(--rdp-day-height);
+}
+.date-picker .rdp-day_button:hover { background: var(--secondary); }
+.date-picker .rdp-selected .rdp-day_button { background: var(--primary); color: var(--primary-foreground); }
+.date-picker button:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+.theme-to-light { display: none; }
+:root[data-theme="dark"] .theme-to-light { display: inline-flex; }
+:root[data-theme="dark"] .theme-to-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .theme-to-light { display: inline-flex; }
+  :root:not([data-theme]) .theme-to-dark { display: none; }
+}
+
+.sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; }
+.sidebar-footer .logout, .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.theme-toggle { min-inline-size: 40px; }
+.theme-toggle span:not(.sr-only) { align-items: center; }
+.theme-toggle:hover, .sidebar-footer .logout:hover { background: var(--secondary); color: var(--foreground); }
+
+.content p { color: var(--muted-foreground); }
+.content .form-error { color: light-dark(#922521, #fecaca); }
+.login-field input { color: var(--foreground); }
+.login-field input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 100px var(--card) inset;
+  -webkit-text-fill-color: var(--foreground);
+  caret-color: var(--foreground);
+}
+.content select, .content option, .table-wrap :is(th, td) { font-size: .875rem; }
+.content select::picker-icon { margin-inline-start: auto; }
+.content option:checked:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.table-wrap td { color: var(--foreground); }
+
+.date-picker .rdp-month_grid {
+  width: auto;
+  min-width: 0;
+  table-layout: fixed;
+}
+.date-picker :is(.rdp-day, .rdp-weekday) {
+  padding: 0;
+  border: 0;
+  text-align: center;
+}
+.date-picker .rdp-weekday { color: var(--muted-foreground); opacity: 1; }
+.date-field-control { align-items: stretch; }
+
+.date-picker .rdp-root {
+  --rdp-animation_duration: .16s;
+  --rdp-animation_timing: ease-out;
+}
+.date-picker .rdp-month_caption { padding-inline-end: 72px; }
+.date-picker .rdp-dropdown {
+  position: static;
+  opacity: 1;
+  appearance: auto;
+  width: auto;
+  padding: .375rem .5rem;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--foreground);
+  cursor: pointer;
+}
+.date-picker .rdp-dropdown_root .rdp-caption_label { display: none; }
+.date-picker .rdp-dropdown:focus-visible { outline: 2px solid var(--ring); }
+
+@supports (appearance: base-select) {
+  .date-picker .rdp-dropdown, .date-picker .rdp-dropdown::picker(select) { appearance: base-select; }
+  .date-picker .rdp-dropdown::picker(select) {
+    max-block-size: min(280px, 55vh);
+    margin-block: .25rem;
+    padding: .25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow: var(--picker-shadow);
+  }
+  .date-picker option { padding: .375rem .5rem; border-radius: .375rem; }
+  .date-picker option:is(:hover, :focus-visible) { background: var(--secondary); }
+  .date-picker option:checked { background: var(--primary); color: var(--primary-foreground); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .date-picker[data-state="open"] { animation: picker-in .15s ease-out both; }
+  @supports (appearance: base-select) {
+    :is(.content, .date-picker) select:open::picker(select) {
+      animation: picker-in .15s ease-out both;
+    }
+  }
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .23s; }
+}
+@keyframes picker-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .date-picker .rdp-root { --rdp-animation_duration: 0s; }
+}
+
+.content .call-form .workbook-upload {
+  min-block-size: 72px;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: .75rem;
+  padding: .75rem;
+  background: var(--card);
+}
+.workbook-upload:hover { border-color: var(--ring); }
+.workbook-upload-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: light-dark(#e4f5ea, #18372a);
+  color: light-dark(#166534, #a7f3c0);
+}
+.workbook-upload-copy { display: grid; min-width: 0; gap: .125rem; }
+.workbook-upload-copy strong { color: var(--foreground); font-size: .875rem; overflow-wrap: anywhere; }
+
+/* Keep the import labels and date control on the same rhythm as the selects. */
+.content .import-form > label:not(.upload-box),
+.content .import-form > .date-field {
+  margin-block: 14px;
+  gap: 6px;
+  font-size: .875rem !important;
+  font-weight: 500;
+  color: var(--foreground) !important;
+}
+.content .import-form > label input { margin-block-start: 0; }
+.content .import-form :is(select, .date-field-control) { min-block-size: 42px; }
+.date-field-control input::-webkit-datetime-edit { padding: 0; font-weight: 400; }
+.date-field-control input:not([value=""])::-webkit-datetime-edit { color: var(--foreground); }
+
+.numeric-filter { appearance: textfield; }
+.numeric-filter::-webkit-inner-spin-button,
+.numeric-filter::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
+/* Compact calendar caption with lightweight month and year controls. */
+.date-picker { padding: .875rem; }
+.date-picker .rdp-month_caption { padding-inline-end: 74px; }
+.date-picker .rdp-dropdowns { gap: .125rem; }
+.date-picker .rdp-dropdown {
+  border: 0;
+  border-radius: .5rem;
+  padding: .375rem .4rem;
+  background: transparent;
+  font-size: .875rem;
+  font-weight: 650;
+}
+.date-picker .rdp-dropdown:hover { background: var(--secondary); }
+.date-picker .rdp-dropdown::picker-icon { font-size: .65rem; color: var(--muted-foreground); }
+.date-picker :is(.rdp-button_previous, .rdp-button_next) { border-radius: .5rem; }
+.date-picker :is(.rdp-button_previous, .rdp-button_next):hover { background: var(--secondary); }
+.date-picker .rdp-weekday { font-size: .75rem; font-weight: 550; }
+.date-picker .rdp-day_button { border-radius: 50%; font-size: .875rem; }
+
+.pagination-total { display: block; margin-block-start: .125rem; color: var(--muted-foreground); }
+.content input[type="checkbox"] {
+  inline-size: 20px;
+  block-size: 20px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.content input[type="checkbox"]:disabled { cursor: not-allowed; }
+@media (pointer: coarse) {
+  .content input[type="checkbox"] { inline-size: 24px; block-size: 24px; }
+}
+
+body, .login-page {
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 15px;
+}
+.content :is(label, input, select, textarea, button, th, td),
+.sidebar :is(button, small) { font-size: 14px; }
+.content .call-form :is(input:not([type=file]), textarea) { font-size: 14px; }
+.content .import-form > label:not(.upload-box),
+.content .import-form > .date-field { font-size: 14px !important; }
+
+.content :is(input:not([type=checkbox]):not([type=file]), select, textarea):focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.client-row { cursor: pointer; }
+.content input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  margin: 0;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--primary-foreground);
+}
+.content input[type="checkbox"]:hover:not(:disabled) { border-color: var(--ring); }
+.content input[type="checkbox"]:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.content input[type="checkbox"]:checked::before {
+  content: "";
+  inline-size: .6rem;
+  block-size: .35rem;
+  border-inline-start: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.content input[type="checkbox"]:disabled { opacity: .55; }
+@media (forced-colors: active) {
+  .content input[type="checkbox"] { appearance: auto; }
+  .content input[type="checkbox"]::before { display: none; }
+}
+
+.date-picker-time {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: .5rem;
+  margin-block-start: .75rem;
+  padding-block-start: .75rem;
+  border-block-start: 1px solid var(--border);
+}
+.date-picker-time label { grid-column: 1 / -1; font-size: .875rem; }
+.date-picker-time input {
+  min-width: 0;
+  padding: .375rem .625rem;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+}
+.date-picker-time input:disabled { opacity: .55; }
+.date-picker-time input:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+.import-history { padding: 0; list-style: none; }
+.import-history li { gap: 12px; flex-wrap: wrap; }
+.import-history a { overflow-wrap: anywhere; }
+
+.import-history-section, .import-report-result {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  margin-block-start: 24px;
+  padding-block-start: 20px;
+  border-block-start: 1px solid var(--border);
+}
+.content :is(.import-history-section, .import-report-result) > :is(h2, p, ul, .stats-grid) { margin: 0; }
+.import-history-section ul, .import-report-result .stats-grid { width: 100%; }
+.content .import-report-lookup .form-error { margin-block-end: 0; }
+
+.content .import-form > label:not(.upload-box),
+.content .import-form > .date-field {
+  margin-block: 14px;
+  gap: 6px;
+  line-height: 20px;
+}
+.content .import-form > label:not(.upload-box) > :is(input, select),
+.content .import-form .date-field-control > input {
+  box-sizing: border-box;
+  block-size: 42px;
+  min-block-size: 42px;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 400;
+}
+
+@supports (appearance: base-select) {
+  .content .import-form select {
+    display: flex;
+    align-items: center;
+  }
+}
