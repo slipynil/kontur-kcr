@@ -8,6 +8,7 @@
 - WAIT_DEADLINE действует до wait_until и сохраняет ответственного через смену квартала. До срока отказ другому оператору — CLIENT_WAIT_DEADLINE_ACTIVE; по сроку при остатке клиент доступен.
 - В ответах клиента есть needs_review, inherited_fields, wait_until и квартальный контекст. Остатки учитываются по исходным периодам без двойного счёта.
 - Rollback только последнего пакета (IMPORT_NOT_LATEST для другого); удаление клиента ADMIN очищает его работу; квартальное удаление сохраняет остальные кварталы и общую историю. Обычное сохранение истории имеет эти исключения.
+- Карточка клиента собирается Gateway из Clients + Operator Work + Identity DB ([ADR-0012](../adr/0012-card-aggregation-on-gateway.md)): новый внутренний `GET /internal/v1/clients/{kcr_code}/work-state` (readClientWorkState) отдаёт рабочие поля текущего цикла; нет цикла — поля null; недоступен Operator Work — публичный ответ 502 BAD_GATEWAY.
 - UC-08/10/11 исключены, API очереди дня нет. Переход по сроку — часть модели ожидания.
 - ИИ — облачный API; summary/filter-query/chat помечены proposal-pending-ai-scope, конкретный набор ещё не утверждён.
 

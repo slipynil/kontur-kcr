@@ -123,7 +123,7 @@ export type ClientCard = {
   manager_name?: string | null;
   contacts?: Record<string, unknown> | null;
   tags: (Tag)[];
-  current_stage: Stage;
+  current_stage: Stage | null;
   assignment: ClientAssignmentInfo | null;
   snapshots: (QuarterSnapshot)[];
   dynamics?: NullableDynamics;

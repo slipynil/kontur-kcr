@@ -1114,6 +1114,7 @@ def test_gateway_read_contract_and_trusted_actor(api, operators):
     for path, operation, schema in (
         ("/pool", "listPublishedClients", "PoolResponse"),
         ("/clients/{kcr_code}/assignment", "readAssignment", "AssignmentState"),
+        ("/clients/{kcr_code}/work-state", "readClientWorkState", "AssignmentState"),
         ("/clients/{kcr_code}/events", "listClientEvents", "EventListResponse"),
     ):
         entry = contract["paths"][BASE + path]["get"]
@@ -1121,6 +1122,34 @@ def test_gateway_read_contract_and_trusted_actor(api, operators):
         assert entry["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
             "/" + schema
         )
+
+
+def test_work_state_follows_the_current_cycle_lifecycle(api, operators):
+    a, _, _ = operators
+    missing = api.get(f"{CLIENT}/work-state", headers=a)
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "WORK_CYCLE_NOT_FOUND"
+
+    assert apply_snapshot(api, [(CODE, 7)]).status_code == 204
+    unpublished = api.get(f"{CLIENT}/work-state", headers=a)
+    assert unpublished.status_code == 404
+    assert unpublished.json()["code"] == "CLIENT_NOT_PUBLISHED"
+
+    publish(api)
+    free = api.get(f"{CLIENT}/work-state", headers=a)
+    assert free.status_code == 200
+    assert free.json()["work_quarter"] == QUARTER
+    assert free.json()["assigned_operator_id"] is None
+
+    taken = take(api, a)
+    assert taken.status_code == 200
+    assigned = api.get(f"{CLIENT}/work-state", headers=a).json()
+    assert assigned["assigned_operator_id"] == a["X-User-Id"]
+    assert assigned["assignment_id"] == taken.json()["assignment_id"]
+
+    explicit = api.get(f"{CLIENT}/work-state", params=CYCLE, headers=a)
+    assert explicit.status_code == 200
+    assert explicit.json() == assigned
 
 
 def test_event_only_cleanup_does_not_change_surviving_cycle(api, operators, database):

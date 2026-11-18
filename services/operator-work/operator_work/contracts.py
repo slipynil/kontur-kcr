@@ -104,6 +104,7 @@ class AssignmentState(PoolItem):
     assigned_at: datetime | None
     stage: Stage | None
     wait_until: date | None
+    wait_source_work_quarter: QuarterValue | None
     awaiting_balance: bool
 
 
