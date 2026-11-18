@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Workspace from '../components/workspace';
-import { ClientDetails, Clients } from '../components/clients';
+import { Clients } from '../components/clients';
+import { ClientDetails } from '../components/client-details';
 import { Imports, Users } from '../components/management';
 import { readSession, saveSession } from '../lib/api';
 import type { User } from '../lib/contracts';
@@ -146,6 +147,7 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
     init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json(list(['E2E-1', 'E2E-2']))));
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
   fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
   await screen.findByText('Опубликовано клиентов: 1');
@@ -155,34 +157,37 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
 });
 it('publishes the whole registry across pages and respects the API batch limit', async () => {
   const codes = Array.from({ length: 1001 }, (_, index) => `CLIENT-${index}`);
-  const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
-  try {
-    (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
-      if (init?.method === 'PUT') return Promise.resolve(json(undefined, 204));
-      const params = new URL(url, 'http://localhost').searchParams;
-      const size = Number(params.get('page_size'));
-      const page = Number(params.get('page'));
-      return Promise.resolve(json({ ...list(codes.slice((page - 1) * size, page * size)), total: codes.length, page, page_size: size }));
-    });
-    render(<Clients user={{ ...user, role: 'ADMIN' }} />);
-    fireEvent.change(await screen.findByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Опубликовать всех' }));
-    await screen.findByText('Опубликовано клиентов: 1001');
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('2026_Q4'));
-    const batches = (fetch as jest.Mock).mock.calls.filter(([, init]) => init.method === 'PUT')
-      .map(([, init]) => JSON.parse(init.body).codes);
-    expect(batches.map(batch => batch.length)).toEqual([1000, 1]);
-    expect(batches.flat()).toEqual(codes);
-  } finally {
-    confirm.mockRestore();
-  }
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') return Promise.resolve(json(undefined, 204));
+    const params = new URL(url, 'http://localhost').searchParams;
+    const size = Number(params.get('page_size'));
+    const page = Number(params.get('page'));
+    return Promise.resolve(json({ ...list(codes.slice((page - 1) * size, page * size)), total: codes.length, page, page_size: size }));
+  });
+  render(<Clients user={{ ...user, role: 'ADMIN' }} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Публикация на обзвон' }));
+  fireEvent.change(await screen.findByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать весь реестр' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Опубликовать весь реестр?' });
+  expect(dialog).toHaveTextContent('IV квартал 2026');
+  expect((fetch as jest.Mock).mock.calls.some(([, init]) => init.method === 'PUT')).toBe(false);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Опубликовать всех' }));
+  await screen.findByText('Опубликовано клиентов: 1001');
+  const batches = (fetch as jest.Mock).mock.calls.filter(([, init]) => init.method === 'PUT')
+    .map(([, init]) => JSON.parse(init.body).codes);
+  expect(batches.map(batch => batch.length)).toEqual([1000, 1]);
+  expect(batches.flat()).toEqual(codes);
 });
 it('requires a selection and a quarter before publishing the registry', async () => {
   (fetch as jest.Mock).mockResolvedValue(json(list(['E2E-1'])));
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Опубликовать выбранных' }));
+  await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' });
+  fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Выберите хотя бы одного клиента');
+  fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
   fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026-Q4' } });
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Квартал обзвона должен быть в формате 2026_Q4');
@@ -192,6 +197,7 @@ it('publishes a single client from the card', async () => {
   (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) =>
     init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : clientFetch(url, init));
   render(<ClientDetails code="A/B" user={{ ...user, role: 'ADMIN' }} call={false} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'На обзвон' }));
   fireEvent.change(await screen.findByLabelText('Квартал обзвона'), { target: { value: '2026_Q3' } });
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать клиента' }));
   await screen.findByText('Клиент опубликован');
@@ -265,7 +271,6 @@ it('opens the report for a UUID package ID', async () => {
 });
 
 it('reuses the deletion operation ID after a lost response and accepts bodyless 200', async () => {
-  jest.spyOn(window, 'confirm').mockReturnValue(true);
   let deletes = 0;
   (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
     if (init?.method === 'DELETE') {
@@ -276,8 +281,10 @@ it('reuses the deletion operation ID after a lost response and accepts bodyless 
   });
   render(<ClientDetails code="A/B" user={{ ...user, role: 'ADMIN' }} call={false} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Удалить клиента' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Удалить клиента?' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить клиента' }));
   await screen.findByText('Соединение потеряно');
-  fireEvent.click(screen.getByRole('button', { name: 'Удалить клиента' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить клиента' }));
   await waitFor(() => expect(push).toHaveBeenCalledWith('/'));
   const calls = (fetch as jest.Mock).mock.calls.filter(([, init]) => init.method === 'DELETE');
   expect(calls).toHaveLength(2); expect(calls[0][1].body).toBe(calls[1][1].body);
@@ -286,26 +293,31 @@ it('reuses the deletion operation ID after a lost response and accepts bodyless 
 });
 it('creates a user using a direct User response and refreshes the list', async () => {
   (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(json(init?.method === 'POST' ? user : page, init?.method === 'POST' ? 201 : 200)));
-  render(<Users />); await screen.findByText('Всего записей: 0');
+  render(<Users />); await screen.findByText('Пользователи не найдены');
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить пользователя' }));
   fireEvent.change(screen.getByLabelText('Логин'), { target: { value: 'new.user' } });
   fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'secret' } });
   fireEvent.click(screen.getByRole('button', { name: 'Создать пользователя' }));
   await screen.findByText('Пользователь создан');
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(call[0]).toBe('/api/v1/users'); expect(JSON.parse(call[1].body)).toEqual({ login: 'new.user', password: 'secret', role: 'OPERATOR' });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить пользователя' }));
   expect(screen.getByLabelText('Пароль')).toHaveValue('');
 });
 it('shows field validation on an empty user submit instead of calling the API', async () => {
   render(<Users />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Создать пользователя' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить пользователя' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Создать пользователя' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Введите логин');
   expect((fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
 });
 it('rolls back a completed import with a recovery command', async () => {
-  search = 'batch=batch-id'; jest.spyOn(window, 'confirm').mockReturnValue(true);
+  search = 'batch=batch-id';
   const batch = { id: 'batch-id', filename: 'clients.xlsx', status: 'COMPLETED', selected_quarter: '2026_Q4', snapshot_date: '2026-11-10', total_rows: 10, success_count: 10, error_count: 0 };
   (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(json(init?.method === 'POST' ? { ...batch, status: 'ROLLED_BACK' } : batch)));
   render(<Imports reportOnly />); fireEvent.click(await screen.findByRole('button', { name: 'Откатить пакет' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Откатить пакет?' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Откатить пакет' }));
   await screen.findByText('Пакет откачен');
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(call[0]).toBe('/api/v1/imports/batch-id/rollback'); expect(JSON.parse(call[1].body).operation_id).toMatch(/^[0-9a-f-]{36}$/);

@@ -48,6 +48,7 @@ describe('role-based access', () => {
       const password = 'kontur-e2e-new-user-123';
       await app.open('/users');
 
+      await screen.getByRole('button', 'Добавить пользователя').tap();
       await screen.getByLabel('Логин').fill(login);
       await screen.getByLabel('Пароль').fill(password);
       await screen.getByLabel('Роль').selectOption({ label });
@@ -60,6 +61,7 @@ describe('role-based access', () => {
 
   test('shows an error when creating a duplicate login', { session: 'admin' }, async ({ app, screen }) => {
     await app.open('/users');
+    await screen.getByRole('button', 'Добавить пользователя').tap();
     await screen.getByLabel('Логин').fill(accounts.admin.login);
     await screen.getByLabel('Пароль').fill('kontur-e2e-new-user-123');
 

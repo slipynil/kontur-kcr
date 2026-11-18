@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { EventForm } from '../components/event-form';
-import { ClientDetails } from '../components/clients';
+import { ClientDetails } from '../components/client-details';
 import { ReassignmentNotifications } from '../components/reassignment-notifications';
 import { newRequestId } from '../lib/api';
 import type { ClientCard, User } from '../lib/contracts';

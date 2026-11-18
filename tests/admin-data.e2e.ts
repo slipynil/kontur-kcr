@@ -57,13 +57,13 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     try {
       await app.open('/upload');
       await screen.getByLabel('Файл реестра .xlsx').setInputFiles(file.path);
-      await screen.getByRole('textbox', 'Квартал').fill(quarter);
+      await screen.getByLabel('Квартал', { exact: true }).fill(quarter);
       await screen.getByLabel('Дата среза').fill(date);
 
       await screen.getByRole('button', 'Загрузить').tap();
 
       await expect(browser).toHaveURL(/\/import-report\?batch=/);
-      await expect(screen.getByText(`${quarter} · ${date} · COMPLETED`, { exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 30_000 });
       await expect(browser.locator('.stat-card').filter({ hasText: 'Принято' })).toContainText('1');
       expect((await card(admin, code)).organization_name).toBe(`Синтетический реестр ${code}`);
     } finally {
@@ -116,7 +116,13 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     applyClient(admin, newer);
     await app.open(`/client/${code}`);
 
-    await expect(screen.getByText(`${quarter} · 7 из 100 · ${newer.date}`, { exact: true })).toBeVisible();
+    await screen.getByRole('tab', 'Документы').tap();
+    const snapshot = screen.getByRole('row').filter({ hasText: /\d+ квартал|\b[IV]+ квартал/ });
+    await expect(snapshot).toContainText('7');
+    await expect(snapshot).toContainText('100');
+    await expect(snapshot).toContainText(new Date(newer.date).toLocaleDateString('ru-RU', {
+      day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Moscow',
+    }));
     expect((await history(admin, code)).items.map((item: { unsubmitted_documents: number }) => item.unsubmitted_documents))
       .toEqual([7, 12, 14]);
   });
@@ -140,7 +146,7 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     expect(Object.keys(current.inherited_fields ?? {})).not.toContain('contacts');
   });
 
-  test('rejects the earlier rollback and removes work created by the latest snapshot', async ({ app, browser, screen, data }) => {
+  test('rejects the earlier rollback and removes work created by the latest snapshot', async ({ app, screen, data }) => {
     const { code, admin, quarter } = data;
     const first = registry(code);
     const last = workbook(`${code}-rollback.xlsx`, {
@@ -167,9 +173,8 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
         },
       }), 201, 'Add a historical comment outside the imported cycle');
       await app.open(`/import-report?batch=${applied.id}`);
-      await browser.onDialog('accept');
-
       await screen.getByRole('button', 'Откатить пакет').tap();
+      await screen.getByRole('dialog', 'Откатить пакет?').getByRole('button', 'Откатить пакет').tap();
 
       await expect.poll(async () => (await batchReport(admin, applied.id)).status, { timeout: 20_000 }).toBe('ROLLED_BACK');
       const restored = await card(admin, code);
@@ -184,15 +189,15 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     }
   });
 
-  test('leaves a client and both quarters intact when deletion is cancelled', async ({ app, browser, screen, data }) => {
+  test('leaves a client and both quarters intact when deletion is cancelled', async ({ app, screen, data }) => {
     const { code, admin, quarter, previous } = data;
     applyClient(admin, { code, quarter: previous, registry: true, date: dateInQuarter(previous) });
     applyClient(admin, { code, quarter: previous, remaining: 4, date: dateInQuarter(previous, 2) });
     applyClient(admin, { code, quarter, remaining: 7, date: dateInQuarter(quarter) });
     await app.open(`/client/${code}`);
-    await browser.onDialog('dismiss');
-
     await screen.getByRole('button', 'Удалить клиента').tap();
+    await screen.getByRole('dialog', 'Удалить клиента?').getByRole('button', 'Отмена').tap();
+    await screen.getByRole('tab', 'Документы').tap();
 
     expect((await card(admin, code)).snapshots).toHaveLength(2);
     await expect(screen.getByRole('button', 'Удалить квартал')).toHaveCount(2);
@@ -216,19 +221,21 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
         } }), 201, 'Prepare operator history');
       }
       await app.open(`/client/${code}`);
-      await browser.onDialog('accept');
-
       if (scope === 'quarter') {
-        await browser.locator('.status-row').filter({ hasText: new RegExp(`^${previous} ·`) })
-          .getByRole('button', 'Удалить квартал').tap();
+        await screen.getByRole('tab', 'Документы').tap();
+        const previousLabel = `${['I', 'II', 'III', 'IV'][Number(previous.at(-1)) - 1]} квартал ${previous.slice(0, 4)}`;
+        await screen.getByRole('row').filter({ hasText: previousLabel }).getByRole('button', 'Удалить квартал').tap();
+        await screen.getByRole('dialog', 'Удалить данные квартала?').getByRole('button', 'Удалить квартал').tap();
         await expect(screen.getByText('Данные квартала удалены', { exact: true })).toBeVisible();
         expect((await card(admin, code)).snapshots.map((s: { quarter: string }) => s.quarter)).toEqual([quarter]);
+        await screen.getByRole('tab', 'Лента событий').tap();
         await expect(screen.getByText(new RegExp(memo))).toBeVisible();
         await expect(screen.getByText(new RegExp(removedMemo))).toHaveCount(0);
         const work = requireStatus(internal('operator-work', `/clients/${code}/cycles`, admin), 200, 'Verify retained current cycle');
         expect(work.items).toMatchObject([{ work_quarter: quarter, assigned_operator_id: first.user.id }]);
       } else {
         await screen.getByRole('button', 'Удалить клиента').tap();
+        await screen.getByRole('dialog', 'Удалить клиента?').getByRole('button', 'Удалить клиента').tap();
         await expect(browser).toHaveURL('/');
         expect((await api(`/clients/${code}`, { actor: admin })).status).toBe(404);
         const work = requireStatus(internal('operator-work', `/clients/${code}/cycles`, admin), 200, 'Verify deletion of working cycles');

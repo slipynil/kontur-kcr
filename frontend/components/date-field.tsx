@@ -1,5 +1,6 @@
 'use client';
 
+import { CalendarDays } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { Popover } from 'radix-ui';
 import { DayPicker } from 'react-day-picker';
@@ -42,6 +43,7 @@ export function DateField({ label, value, onChange, required, withTime }: {
             }
           }}
           onChange={event => { onChange(event.target.value); setOpen(false); }} />
+        <CalendarDays size={16} aria-hidden="true" />
       </div>
       </Popover.Anchor>
         <Popover.Portal>

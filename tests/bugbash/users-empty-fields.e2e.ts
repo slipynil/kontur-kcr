@@ -10,6 +10,7 @@ describe('users', { tags: ['bugbash'], session: 'admin' }, () => {
   test('creating a user with empty fields shows a visible validation message', async ({ app, screen }) => {
     await app.open('/users');
 
+    await screen.getByRole('button', 'Добавить пользователя').tap();
     await screen.getByRole('button', 'Создать пользователя').tap();
 
     const formError = screen.getByRole('alert').filter({ hasText: /\S/ });

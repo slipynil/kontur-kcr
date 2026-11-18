@@ -1,20 +1,27 @@
 'use client';
-import { DateField } from './date-field';
+
 import { useRef, useState } from 'react';
 import { ApiError, newRequestId, request } from '@/lib/api';
 import type { CallEventCreate, ClientCard, HistoricalCommentCreate, SavedCallEvent, SavedHistoricalComment, User } from '@/lib/contracts';
-import { businessDate, Feedback, useAction } from './api-ui';
+import { businessDate, Feedback, quarterName, useAction } from './api-ui';
+import { DateField } from './date-field';
+import { Modal, Tabs } from './presentation';
 
 type EventBody = CallEventCreate | HistoricalCommentCreate;
 
-export function EventForm({ card, user, base, call, onSaved }: {
+export const callResults = {
+  AGREEMENT: 'Есть договорённость', REFUSAL: 'Отказ', NO_ANSWER: 'Недозвон', WRONG_NUMBER: 'Неверный номер',
+};
+
+export function EventForm({ card, user, base, call, onSaved, dialog }: {
   card: ClientCard;
   user: User;
   base: string;
   call: boolean;
-  onSaved: () => void;
+  onSaved: (notice: string) => void;
+  dialog?: { open: boolean; onClose: () => void; onPendingChange: (pending: boolean) => void };
 }) {
-  const [kind, setKind] = useState<'CALL_RESULT' | 'HISTORICAL_COMMENT'>(call ? 'CALL_RESULT' : 'HISTORICAL_COMMENT');
+  const [kind, setKind] = useState<EventBody['event_type']>(call ? 'CALL_RESULT' : 'HISTORICAL_COMMENT');
   const [assignment, setAssignment] = useState(() => card.assignment?.operator_id === user.id ? card.assignment_id : null);
   const [workQuarter, setWorkQuarter] = useState(card.work_quarter ?? card.assignment?.work_quarter);
   const [result, setResult] = useState<CallEventCreate['call_result']>('AGREEMENT');
@@ -28,11 +35,27 @@ export function EventForm({ card, user, base, call, onSaved }: {
   const action = useAction();
 
   if (user.role !== 'OPERATOR') return null;
+  const isCall = kind === 'CALL_RESULT';
+
+  function markPending(value: boolean) {
+    setPending(value);
+    dialog?.onPendingChange(value);
+  }
+
+  function changeKind(next: string) {
+    if (pending || action.busy) return;
+    setKind(next as EventBody['event_type']);
+    action.reset();
+    if (next === 'CALL_RESULT') {
+      setAssignment(card.assignment?.operator_id === user.id ? card.assignment_id : null);
+      setWorkQuarter(card.work_quarter ?? card.assignment?.work_quarter);
+    }
+  }
 
   async function save() {
     if (!attempt.current) {
       const shared = { request_id: newRequestId(), comment_text: comment.trim(), document_quarters: quarters };
-      if (kind === 'CALL_RESULT') {
+      if (isCall) {
         if (!assignment || !workQuarter) throw new Error('Для звонка сначала возьмите клиента в работу и откройте форму заново.');
         if (wait && wait <= businessDate()) throw new Error('Дата ожидания должна быть позже сегодняшней даты по Москве.');
         attempt.current = {
@@ -50,55 +73,72 @@ export function EventForm({ card, user, base, call, onSaved }: {
         };
       }
     }
-    setPending(true);
+    markPending(true);
     const body = attempt.current;
     let event: SavedCallEvent | SavedHistoricalComment;
     try {
       event = await request(base + '/events', { method: 'POST', body: JSON.stringify(body) });
     } catch (error) {
       if (error instanceof ApiError && [400, 403, 404, 409, 422].includes(error.status)) {
-        attempt.current = null; setPending(false);
+        attempt.current = null; markPending(false);
       }
       throw error;
     }
-    attempt.current = null; setPending(false);
+    attempt.current = null; markPending(false);
     setComment(''); setPromised(''); setWait(''); setHistorical(''); setQuarters([]);
     const waitNotApplied = body.event_type === 'CALL_RESULT' && body.wait_until && 'wait_applied' in event && !event.wait_applied;
-    action.setNotice(waitNotApplied ? 'Звонок сохранён. Срок ожидания не применён, поскольку назначение изменилось.' : 'Событие сохранено');
-    onSaved();
+    const notice = waitNotApplied
+      ? 'Звонок сохранён. Срок ожидания не применён, поскольку назначение изменилось.'
+      : 'Событие сохранено';
+    action.setNotice(notice);
+    onSaved(notice);
   }
 
-  return <form className="call-form" onSubmit={event => { event.preventDefault(); void action.run(save); }}>
-    <h2>Добавить событие</h2>
+  const form = <form className="stack event-form" noValidate onSubmit={event => { event.preventDefault(); void action.run(save); }}>
+    <Tabs.Root value={kind} onValueChange={changeKind}>
+      <Tabs.List className="tab-strip" aria-label="Тип события">
+        <Tabs.Trigger className="button" value="CALL_RESULT" disabled={action.busy || pending}>Результат звонка</Tabs.Trigger>
+        <Tabs.Trigger className="button" value="HISTORICAL_COMMENT" disabled={action.busy || pending}>Комментарий прошлой даты</Tabs.Trigger>
+      </Tabs.List>
+      <Tabs.Content value="CALL_RESULT" className="event-fields">
+        <fieldset disabled={action.busy || pending}>
+          <label>Результат звонка<select value={result} onChange={event => setResult(event.target.value as typeof result)}>
+            {Object.entries(callResults).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></label>
+          <div className="form-grid">
+            <DateField label="Обещанный срок" value={promised} onChange={setPromised} />
+            <DateField label="Ожидание до" value={wait} onChange={setWait} />
+          </div>
+        </fieldset>
+      </Tabs.Content>
+      <Tabs.Content value="HISTORICAL_COMMENT" className="event-fields">
+        <fieldset disabled={action.busy || pending}>
+          <DateField label="Дата комментария" value={historical} onChange={setHistorical} required withTime />
+        </fieldset>
+      </Tabs.Content>
+    </Tabs.Root>
     <fieldset disabled={action.busy || pending}>
-      <label>Тип события<select value={kind} onChange={event => {
-        setKind(event.target.value as typeof kind);
-        if (event.target.value === 'CALL_RESULT') {
-          setAssignment(card.assignment?.operator_id === user.id ? card.assignment_id : null);
-          setWorkQuarter(card.work_quarter ?? card.assignment?.work_quarter);
-        }
-      }}>
-        <option value="HISTORICAL_COMMENT">Комментарий прошлой даты</option>
-        <option value="CALL_RESULT">Результат звонка</option>
-      </select></label>
-      {kind === 'CALL_RESULT' && <>
-        <label>Результат звонка<select value={result} onChange={event => setResult(event.target.value as typeof result)}>
-          {Object.entries({ AGREEMENT: 'Есть договорённость', REFUSAL: 'Отказ', NO_ANSWER: 'Недозвон', WRONG_NUMBER: 'Неверный номер' }).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select></label>
-        <DateField label="Обещанный срок" value={promised} onChange={setPromised} />
-        <DateField label="Ожидание до" value={wait} onChange={setWait} />
-      </>}
-      {kind === 'HISTORICAL_COMMENT' && <DateField label="Дата комментария" value={historical} onChange={setHistorical} required withTime />}
-      <label>Комментарий<textarea required={kind === 'HISTORICAL_COMMENT'} maxLength={4000} value={comment} onChange={event => setComment(event.target.value)} /></label>
-      {card.snapshots.length > 0 && <fieldset><legend>Исходные кварталы документов</legend>
+      <label>Комментарий<textarea required={!isCall} maxLength={4000} value={comment} onChange={event => setComment(event.target.value)} /></label>
+      {card.snapshots.length > 0 && <fieldset className="quarter-checks">
+        <legend>Исходные кварталы документов</legend>
         {card.snapshots.map(snapshot => <label className="checkbox-line" key={snapshot.quarter}>
-          <input type="checkbox" checked={quarters.includes(snapshot.quarter)} disabled={quarters.length >= 100 && !quarters.includes(snapshot.quarter)} onChange={event => setQuarters(current => event.target.checked ? [...current, snapshot.quarter] : current.filter(quarter => quarter !== snapshot.quarter))} /> {snapshot.quarter}
+          <input type="checkbox" aria-label={snapshot.quarter} checked={quarters.includes(snapshot.quarter)}
+            disabled={quarters.length >= 100 && !quarters.includes(snapshot.quarter)} onChange={event => {
+              const checked = event.target.checked;
+              setQuarters(current => checked ? [...current, snapshot.quarter] : current.filter(quarter => quarter !== snapshot.quarter));
+            }} /> {quarterName(snapshot.quarter)}
         </label>)}
       </fieldset>}
     </fieldset>
-    {pending && action.error && <p>Повторная отправка сохранит ранее отправленные данные с тем же ID запроса.</p>}
-    {kind === 'CALL_RESULT' && !assignment && <p>Для записи звонка нужно своё назначение. После взятия клиента выберите результат звонка в форме.</p>}
+    {pending && action.error && <p className="help-text">Повторная отправка сохранит ранее отправленные данные с тем же ID запроса.</p>}
+    {isCall && !assignment && <p className="feedback feedback-info">Для записи звонка нужно своё назначение.</p>}
     <Feedback {...action} />
-    <button className="button primary" disabled={action.busy || (kind === 'CALL_RESULT' && !assignment)}>Сохранить событие</button>
+    <div className="modal-actions">
+      {dialog && <button type="button" className="button secondary" disabled={action.busy} onClick={dialog.onClose}>Отмена</button>}
+      <button className="button primary" disabled={action.busy || (isCall && !assignment)}>Сохранить событие</button>
+    </div>
   </form>;
+  return dialog ? <Modal open={dialog.open} onClose={dialog.onClose} busy={action.busy}
+    title={isCall ? 'Результат звонка' : 'Комментарий прошлой даты'}
+    description={`${card.kcr_code} · ${card.organization_name ?? 'Нет названия'}`}>{form}</Modal> : form;
 }
