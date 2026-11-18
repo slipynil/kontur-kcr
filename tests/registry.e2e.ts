@@ -31,8 +31,10 @@ describe('client registry', { session: 'admin' }, () => {
     await screen.getByRole('button', client.code).tap();
 
     await expect(screen.getByRole('heading', { name: new RegExp(client.code) })).toBeVisible();
-    await expect(screen.getByText(new RegExp(`ИНН: ${client.inn}`))).toBeVisible();
+    await expect(screen.getByText(client.inn, { exact: true })).toBeVisible();
+    await screen.getByRole('tab', 'История наблюдений').tap();
     await expect(screen.getByRole('heading', 'История наблюдений')).toBeVisible();
+    await screen.getByRole('tab', 'Лента событий').tap();
     await expect(screen.getByRole('heading', 'Лента событий')).toBeVisible();
   });
 
@@ -84,13 +86,17 @@ describe('client registry', { session: 'admin' }, () => {
     ['unchanged', 10, 'Без изменений'],
     ['all submitted', 0, 'Все переданы'],
   ] as const) {
-    test(`shows ${name} dynamics against the preceding quarter`, async ({ app, screen, client }) => {
+    test(`shows ${name} dynamics against the preceding quarter`, async ({ app, browser, client }) => {
       const { admin, code, quarter, previous } = client;
       applyClient(admin, { code, quarter: previous, remaining: 10, date: dateInQuarter(previous, 2) });
       applyClient(admin, { code, quarter, remaining: current, date: dateInQuarter(quarter) });
       await app.open(`/client/${code}`);
 
-      await expect(screen.getByText(`Динамика: ${label} · ${previous}: 10 → ${quarter}: ${current}`, { exact: true })).toBeVisible();
+      const comparison = browser.locator('.comparison-line');
+      const name = (value: string) => `${['I', 'II', 'III', 'IV'][Number(value.at(-1)) - 1]} квартал ${value.slice(0, 4)}`;
+      await expect(comparison).toContainText(`${name(previous)} 10`);
+      await expect(comparison).toContainText(`${name(quarter)} ${current}`);
+      await expect(comparison).toContainText(label);
     });
   }
 
@@ -99,7 +105,7 @@ describe('client registry', { session: 'admin' }, () => {
     applyClient(admin, { code, quarter, remaining: 5, date: dateInQuarter(quarter) });
     await app.open(`/client/${code}`);
 
-    await expect(screen.getByText(/Динамика: Не определена/)).toBeVisible();
+    await expect(screen.getByText('Не определена', { exact: true })).toBeVisible();
   });
 
   test('filters counts and percentages using the selected quarter balance', async ({ app, screen, client }) => {
@@ -108,7 +114,7 @@ describe('client registry', { session: 'admin' }, () => {
     applyClient(admin, { code, quarter, remaining: 5, date: dateInQuarter(quarter) });
     await app.open('/');
     await screen.getByLabel('Код КЦР или ИНН').fill(code);
-    await screen.getByRole('textbox', 'Квартал').fill(quarter);
+    await screen.getByLabel('Квартал', { exact: true }).fill(quarter);
     await screen.getByLabel('Не передано до').fill('5');
     await screen.getByLabel('Процент до').fill('5');
     await screen.getByLabel('Признак').selectOption('VIP');

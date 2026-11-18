@@ -5,8 +5,8 @@ describe('login', () => {
   test('submitting the login form reaches the API instead of a 404 page', async ({ app, screen }) => {
     await app.open('/');
 
-    await screen.getByPlaceholder('Логин').fill('e2e-probe');
-    await screen.getByPlaceholder('Пароль').fill('definitely-wrong-password');
+    await screen.getByLabel('Логин', { exact: true }).fill('e2e-probe');
+    await screen.getByLabel('Пароль', { exact: true }).fill('definitely-wrong-password');
     await screen.getByRole('button', 'Войти').tap();
 
     // The message comes from the Gateway JSON response. Before the proxy fix

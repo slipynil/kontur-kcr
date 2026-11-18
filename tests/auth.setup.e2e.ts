@@ -6,8 +6,8 @@ test.setup('sign in as admin', { sessions: ['admin'] }, async ({ app, screen, se
   const admin = credentials.user('admin');
 
   await app.open('/');
-  await screen.getByPlaceholder('Логин').fill(admin.username);
-  await screen.getByPlaceholder('Пароль').fill(admin.password);
+  await screen.getByLabel('Логин', { exact: true }).fill(admin.username);
+  await screen.getByLabel('Пароль', { exact: true }).fill(admin.password);
   await screen.getByRole('button', 'Войти').tap();
   await expect(screen.getByRole('button', 'Загрузка реестра')).toBeVisible();
   await session.save('admin');
@@ -18,10 +18,10 @@ test.setup('sign in as both operators', { sessions: ['operator_a', 'operator_b']
   for (const name of ['operator_a', 'operator_b']) {
     const operator = credentials.user(name);
     await app.open('/');
-    await screen.getByPlaceholder('Логин').fill(operator.username);
-    await screen.getByPlaceholder('Пароль').fill(operator.password);
+    await screen.getByLabel('Логин', { exact: true }).fill(operator.username);
+    await screen.getByLabel('Пароль', { exact: true }).fill(operator.password);
     await screen.getByRole('button', 'Войти').tap();
-    await expect(screen.getByText(`${operator.username} · Оператор`, { exact: true })).toBeVisible();
+    await expect(screen.getByRole('button', 'Запросы')).toBeVisible();
     await session.save(name);
     await screen.getByRole('button', 'Выйти').tap();
     await expect(screen.getByRole('button', 'Войти')).toBeVisible();

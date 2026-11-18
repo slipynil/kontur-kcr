@@ -87,7 +87,8 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
     expect(Date.parse(pending.expires_at) - Date.parse(pending.created_at)).toBe(3_600_000);
     await app.open('/');
-    const notification = browser.locator('section[aria-label="Запросы на перезакрепление"] .status-row').filter({ hasText: code });
+    await screen.getByRole('button', 'Запросы').tap();
+    const notification = browser.locator('[role="dialog"] .notification-list li').filter({ hasText: code });
 
     await notification.getByRole('button', 'Отклонить запрос').tap();
 
@@ -112,6 +113,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
       expect(recorded.wait_applied).toBe(false);
       expect(assignment(second, code, quarter)).toMatchObject({ assigned_operator_id: second.user.id, wait_until: null });
+      await screen.getByRole('tab', 'Лента событий').tap();
       await expect(screen.getByText(/Тестовая договорённость/)).toBeVisible();
     });
 
@@ -137,6 +139,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
       expect(history.items.find((event: { id: string }) => event.id === firstSave.id)).toMatchObject({
         call_result: result, promised_date: promised, document_quarters: [quarter],
       });
+      await screen.getByRole('tab', 'Лента событий').tap();
       await expect(screen.getByText(new RegExp(comment))).toBeVisible();
     });
   }
@@ -145,6 +148,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     const { admin, first, code, quarter, today } = work;
     await publish(admin, code, quarter);
     await app.open(`/client/${code}`);
+    await screen.getByRole('button', 'Добавить событие').tap();
     await screen.getByLabel('Дата комментария').fill(`${addDays(today, -2)}T12:00`);
     await screen.getByLabel('Комментарий', { exact: true }).fill('Тестовый комментарий за прошлую дату');
     await screen.getByRole('checkbox', quarter).check();
@@ -157,6 +161,25 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
 
     await expect(screen.getByText(/Тестовый комментарий за прошлую дату/)).toBeVisible();
     expect(future.status).toBe(422);
+  });
+
+  test('records a call and a deadline through the operator dialog', async ({ app, screen, work }) => {
+    const { admin, first, code, quarter, today } = work;
+    await publish(admin, code, quarter);
+    requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
+    await app.open(`/client/${code}`);
+    await screen.getByRole('button', 'Записать звонок').tap();
+    const dialog = screen.getByRole('dialog', 'Результат звонка');
+    const waitUntil = addDays(today, 4);
+    await dialog.getByLabel('Обещанный срок').fill(waitUntil);
+    await dialog.getByLabel('Ожидание до').fill(waitUntil);
+    await dialog.getByLabel('Комментарий', { exact: true }).fill('Позвонить после согласованного срока');
+    await dialog.getByRole('checkbox', quarter).check();
+    await dialog.getByRole('button', 'Сохранить событие').tap();
+
+    await expect(screen.getByText('Событие сохранено', { exact: true })).toBeVisible();
+    await expect(screen.getByText('Позвонить после согласованного срока', { exact: true })).toBeVisible();
+    expect(assignment(first, code, quarter)).toMatchObject({ wait_until: waitUntil });
   });
 
   test('carries a live wait across quarters and blocks another operator', async ({ work }) => {
