@@ -154,8 +154,6 @@ h1, h2, h3 { color: var(--ink); }
 .range-pair { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
 .filter-actions { display: flex; gap: 6px; align-items: center; padding-top: 24px; margin-top: auto; }
 .filter-heading:focus { outline: none; }
-.filter-actions .primary { background: var(--blue); color: var(--canvas); }
-:root[data-theme="dark"] .filter-actions .primary { color: #171c2a; }
 .metrics { display: grid; grid-template-columns: repeat(var(--metrics-columns, 4), minmax(0,1fr)); border-bottom: 1px solid var(--line); padding-block: 22px; margin-block: 7px 23px; }
 .metrics:has(> :nth-child(3):last-child) { --metrics-columns: 3; }
 .stat-card { padding-inline: 24px 10px; overflow-wrap: anywhere; }
@@ -169,7 +167,8 @@ h1, h2, h3 { color: var(--ink); }
 .registry-layout .metrics { padding-block: 19px; margin-bottom: 18px; }
 .registry-layout .section-header { margin-block: 20px 14px; }
 .registry-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-block: 16px 18px; }
-.registry-search { width: min(342px, 100%); }
+.registry-query { min-width: 0; }
+.registry-search { width: 342px; max-width: 100%; }
 .input-icon { display: flex; min-width: 0; position: relative; align-items: center; }
 .input-icon > svg { position: absolute; right: 12px; pointer-events: none; color: var(--muted); }
 .input-icon > input { width: 100%; padding-inline-end: 39px; }
@@ -186,7 +185,73 @@ input[aria-invalid="true"] { border-color: var(--bad-ink); }
 input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px; flex: none; }
 input:disabled, select:disabled, textarea:disabled { opacity: .63; }
 select { padding-inline-end: 28px; }
+@supports (appearance: base-select) and selector(::picker(select)) {
+  select, select::picker(select) { appearance: base-select; }
+  select {
+    border-radius: 9px;
+    padding-inline-end: 12px;
+    gap: 8px;
+  }
+  select:not(:disabled) { cursor: pointer; }
+  select::picker-icon { color: var(--muted); font-size: 12px; }
+  select:open::picker-icon { rotate: 180deg; }
+  select::picker(select) {
+    margin-block: 4px;
+    padding: 5px;
+    border: 1px solid var(--edge);
+    border-radius: 13px;
+    background: var(--canvas);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    font: 400 13px/1.4 var(--font-inter), Inter, system-ui, sans-serif;
+  }
+  select option {
+    min-block-size: 36px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  select option:checked { background: var(--accent); color: var(--ink); font-weight: 600; }
+  select option:is(:hover, :focus-visible) { background: var(--field); }
+  select option:checked:is(:hover, :focus-visible) { background: var(--accent); }
+  select option:not(:disabled) { cursor: pointer; }
+  select option::checkmark { order: 1; color: var(--blue); }
+}
 textarea { resize: vertical; min-height: 86px; }
+.quarter-field { display: grid; gap: 6px; min-width: 0; }
+.quarter-control { display: grid; grid-template-columns: minmax(0, 1fr) 36px; }
+.quarter-control input { min-width: 0; border-start-end-radius: 0; border-end-end-radius: 0; }
+.quarter-control button {
+  display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 0 6px 6px 0;
+  background: var(--field); color: var(--muted); cursor: pointer;
+}
+.quarter-control input:focus-visible { z-index: 1; }
+.quarter-control input[aria-expanded="true"] + button svg { rotate: 180deg; }
+.quarter-options {
+  z-index: 40;
+  inline-size: var(--radix-popover-trigger-width);
+  max-inline-size: var(--radix-popover-content-available-width);
+  max-block-size: min(280px, var(--radix-popover-content-available-height));
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--edge);
+  border-radius: 13px;
+  background: var(--canvas);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+.quarter-options [role="option"] {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-block-size: 36px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+}
+.quarter-options [aria-selected="true"] { background: var(--accent); font-weight: 600; }
+.quarter-options [role="option"]:hover,
+.quarter-options [data-active="true"] { background: var(--field); }
+.quarter-options svg { flex: none; color: var(--blue); }
 .stack { display: grid; gap: 18px; }
 .form-grid { display: grid; gap: 18px; grid-template-columns: repeat(2,minmax(0,1fr)); }
 .table-wrap { overflow-x: auto; max-width: 100%; border-radius: 5px; }
@@ -288,11 +353,65 @@ textarea { resize: vertical; min-height: 86px; }
 .date-field { display: grid; gap: 6px; min-width: 0; }
 .date-field-control { position: relative; }
 .date-field-control input { width: 100%; }
-.date-picker { z-index: 40; border: 1px solid var(--edge); border-radius: 9px; padding: 12px; background: var(--canvas); color: var(--ink); box-shadow: var(--shadow); max-width: calc(100vw - 16px); }
+.date-picker {
+  z-index: 40; border: 1px solid var(--edge); border-radius: 9px; padding: 12px;
+  background: var(--canvas); color: var(--ink); box-shadow: var(--shadow);
+  max-width: calc(100vw - 16px);
+  max-block-size: var(--radix-popover-content-available-height);
+  overflow: auto;
+}
 .date-picker .rdp-root { --rdp-accent-color: var(--primary); --rdp-accent-background-color: var(--accent); --rdp-day-width: 36px; --rdp-day-height: 34px; --rdp-day_button-width: 34px; --rdp-day_button-height: 32px; font-size: 13px; }
 .date-picker .rdp-selected .rdp-day_button { background: var(--primary); color: var(--on-primary); border-radius: 5px; }
-.date-picker-time { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; border-top: 1px solid var(--line); padding-top: 10px; }
-.date-picker-time label { grid-column: 1/-1; }
+.date-picker .rdp-months { margin-inline: auto; }
+.date-picker .rdp-dropdowns { --rdp-dropdown-gap: 4px; }
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .date-picker .rdp-dropdown {
+    position: static;
+    opacity: 1;
+    appearance: base-select;
+    min-block-size: 32px;
+    padding: 4px 6px;
+    border: 1px solid var(--edge);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    align-items: center;
+    gap: 4px;
+  }
+  .date-picker .rdp-dropdown > button {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: start;
+  }
+  .date-picker .rdp-dropdown selectedcontent {
+    display: block;
+    line-height: 1.2;
+    text-box: trim-both cap alphabetic;
+  }
+  .date-picker .rdp-dropdown::picker-icon {
+    content: "";
+    box-sizing: border-box;
+    flex: none;
+    inline-size: 7px;
+    block-size: 7px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    rotate: 45deg;
+    translate: 0 -2px;
+  }
+  .date-picker .rdp-dropdown:open::picker-icon {
+    rotate: 225deg;
+    translate: 0 2px;
+  }
+  .date-picker .rdp-months_dropdown { inline-size: 95px; }
+  .date-picker .rdp-years_dropdown { inline-size: 62px; }
+  .date-picker .rdp-dropdown + .rdp-caption_label { display: none; }
+}
 .panel-form { width: min(755px,100%); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
 .workbook-upload { position: relative; display: flex; gap: 13px; align-items: center; background: var(--table-head); border: 1px solid var(--edge); padding: 18px; min-height: 95px; border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; }
 .workbook-upload:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
@@ -340,7 +459,6 @@ textarea { resize: vertical; min-height: 86px; }
 .date-field-control input::-webkit-calendar-picker-indicator { position: absolute; right: 9px; opacity: 0; pointer-events: none; }
 .date-field-control svg { pointer-events: none; position: absolute; top: 12px; right: 12px; color: var(--muted); }
 .event-fields:not([hidden]) { padding-top: 16px; }
-.selection-label { margin-bottom: 8px; }
 .subtable { margin-top: 20px; }
 .event-header { margin-top: 0; }
 .event-header form { margin-block: 0; }

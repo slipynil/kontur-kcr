@@ -58,12 +58,12 @@ it('retries the identical call after a lost response', async () => {
 it('sends a historical comment with timezone and no call-only properties', async () => {
   render(<EventForm card={card} user={user} base="/clients/A" call={false} onSaved={onSaved} />);
   fireEvent.change(screen.getByLabelText('Комментарий'), { target: { value: 'История' } });
-  fireEvent.change(screen.getByLabelText('Дата комментария'), { target: { value: '2020-01-01T12:00' } });
+  fireEvent.change(screen.getByLabelText('Дата комментария'), { target: { value: '2020-01-01' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить событие' }));
   await screen.findByText('Событие сохранено');
   const body = JSON.parse((fetch as jest.Mock).mock.calls[0][1].body);
   expect(body).toMatchObject({ event_type: 'HISTORICAL_COMMENT', comment_text: 'История', document_quarters: [] });
-  expect(body.historical_event_date).toMatch(/Z$/);
+  expect(body.historical_event_date).toBe('2019-12-31T21:00:00.000Z');
   expect(body).not.toHaveProperty('expected_assignment_id'); expect(body).not.toHaveProperty('stage');
   expect(screen.queryByRole('option', { name: 'Изменение этапа' })).not.toBeInTheDocument();
 });

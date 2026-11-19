@@ -2,6 +2,7 @@
 
 import { Bell, FileText, LayoutGrid, LogOut, Upload, UserRound, UsersRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { AUTH_CHANGED, readSession, setToken } from '@/lib/api';
 import type { User } from '@/lib/contracts';
@@ -58,9 +59,10 @@ export default function Workspace() {
   const restricted = !admin && adminLinks.some(link => link.href === pathname);
   const links = [{ href: '/', label: 'Клиенты', Icon: LayoutGrid }, ...(admin ? adminLinks : [])];
   const navigation = <nav aria-label="Главное меню">
-    {links.map(({ href, label, Icon }) => <button key={href} type="button" className="nav-item"
-      aria-current={(href === '/' ? registry || !!code : pathname === href) ? 'page' : undefined}
-      onClick={() => router.push(href)}><Icon aria-hidden="true" />{label}</button>)}
+    {links.map(({ href, label, Icon }) => <Link key={href} href={href} className="nav-item"
+      aria-current={(href === '/' ? registry || !!code : pathname === href) ? 'page' : undefined}>
+      <Icon aria-hidden="true" />{label}
+    </Link>)}
     {!admin && <button type="button" className="nav-item" aria-haspopup="dialog" onClick={() => setNotificationsOpen(true)}><Bell aria-hidden="true" />Запросы</button>}
   </nav>;
   const sessionActions = <>

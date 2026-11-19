@@ -1,25 +1,30 @@
 'use client';
 
 import { CalendarDays } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { createElement, useId, useRef, useState, type ComponentProps } from 'react';
 import { Popover } from 'radix-ui';
 import { DayPicker } from 'react-day-picker';
 import { ru } from 'react-day-picker/locale';
 
-export function DateField({ label, value, onChange, required, withTime }: {
+function CalendarSelect({ children, ...props }: ComponentProps<'select'>) {
+  return <select {...props}>
+    <button type="button">{createElement('selectedcontent')}</button>
+    {children}
+  </select>;
+}
+
+export function DateField({ label, value, onChange, required }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
-  withTime?: boolean;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const control = useRef<HTMLDivElement>(null);
   const keyboardOpen = useRef(false);
-  const selected = value ? new Date(value.slice(0, 10) + 'T00:00:00') : undefined;
-  const time = value.slice(11, 16);
+  const selected = value ? new Date(value + 'T00:00:00') : undefined;
 
   function closePicker() {
     input.current?.focus();
@@ -31,7 +36,7 @@ export function DateField({ label, value, onChange, required, withTime }: {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Anchor asChild>
       <div className="date-field-control" ref={control}>
-        <input ref={input} id={id} type={withTime ? 'datetime-local' : 'date'} value={value} required={required}
+        <input ref={input} id={id} type="date" value={value} required={required}
           aria-haspopup="dialog"
           onClick={() => { keyboardOpen.current = false; setOpen(true); }}
           onKeyDown={event => {
@@ -52,23 +57,16 @@ export function DateField({ label, value, onChange, required, withTime }: {
             onCloseAutoFocus={event => event.preventDefault()}
             onEscapeKeyDown={() => input.current?.focus()}
             onInteractOutside={event => { if (control.current?.contains(event.target as Node)) event.preventDefault(); }}>
-            <DayPicker mode="single" locale={ru} captionLayout="dropdown" navLayout="after"
+            <DayPicker mode="single" locale={ru} captionLayout="dropdown" navLayout="around"
+              components={{ Select: CalendarSelect }}
               startMonth={new Date(1900, 0)} endMonth={new Date(2100, 11)}
-              animate selected={selected} defaultMonth={selected} onSelect={day => {
+              selected={selected} defaultMonth={selected} onSelect={day => {
               if (!day) return;
               const date = [day.getFullYear(), day.getMonth() + 1, day.getDate()]
                 .map((part, index) => String(part).padStart(index === 0 ? 4 : 2, '0')).join('-');
-              onChange(withTime ? date + 'T' + (time || '00:00') : date);
-              if (!withTime) closePicker();
+              onChange(date);
+              closePicker();
             }} />
-            {withTime && <div className="date-picker-time">
-              <label htmlFor={`${id}-time`}>Время комментария</label>
-              <input id={`${id}-time`} type="time" value={time} disabled={!selected}
-                onChange={event => {
-                  if (event.target.value) onChange(value.slice(0, 10) + 'T' + event.target.value);
-                }} />
-              <button className="button primary" type="button" onClick={closePicker}>Готово</button>
-            </div>}
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
