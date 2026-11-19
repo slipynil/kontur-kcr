@@ -1,5 +1,6 @@
 'use client';
-import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
+import { Popover } from 'radix-ui';
 import { useEffect, useId, useRef, useState } from 'react';
 import { request } from '@/lib/api';
 
@@ -118,14 +119,81 @@ export function businessTime(value: string) {
     day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow',
   }) : '—';
 }
-export function QuarterInput({ value, onChange, required = false, ariaLabel = 'Квартал' }: {
-  value: string; onChange: (value: string) => void; required?: boolean; ariaLabel?: string;
+export function QuarterInput({ label, value, onChange, required = false, ariaLabel = 'Квартал' }: {
+  label: string; value: string; onChange: (value: string) => void; required?: boolean; ariaLabel?: string;
 }) {
   const id = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const anchor = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const listId = `${id}-quarters`;
+  const activeId = open && active >= 0 ? `${listId}-${active}` : undefined;
   const now = currentQuarter();
-  return <><input aria-label={ariaLabel} placeholder={now} pattern="[0-9]{4}_Q[1-4]" list={id}
-    required={required} value={value} onChange={event => onChange(event.target.value)} />
-    <datalist id={id}>{Array.from({ length: 13 }, (_, index) => quarterOffset(now, 4 - index)).map(quarter =>
-      <option key={quarter} value={quarter}>{quarterName(quarter)}</option>,
-    )}</datalist></>;
+  const quarters = Array.from({ length: 13 }, (_, index) => quarterOffset(now, 4 - index));
+  if (quarterPattern.test(value) && !quarters.includes(value)) quarters.unshift(value);
+
+  useEffect(() => {
+    if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeId]);
+
+  function changeOpen(next: boolean) {
+    setOpen(next);
+    setActive(-1);
+  }
+
+  function choose(quarter: string) {
+    onChange(quarter);
+    changeOpen(false);
+    input.current?.focus();
+  }
+
+  return <div className="quarter-field">
+    <label htmlFor={id}>{label}</label>
+    <Popover.Root open={open} onOpenChange={changeOpen}>
+      <Popover.Anchor asChild>
+        <div ref={anchor} className="quarter-control">
+          <input ref={input} id={id} name="quarter" role="combobox" aria-label={ariaLabel} aria-expanded={open}
+            aria-controls={open ? listId : undefined} aria-activedescendant={activeId} aria-autocomplete="none"
+            autoComplete="off" autoCapitalize="off" spellCheck={false}
+            placeholder={now} pattern="[0-9]{4}_Q[1-4]" required={required} value={value}
+            onClick={() => changeOpen(true)}
+            onChange={event => { onChange(event.target.value); changeOpen(false); }}
+            onKeyDown={event => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                setOpen(true);
+                const step = event.key === 'ArrowDown' ? 1 : -1;
+                const start = active < 0 && step < 0 ? quarters.length : active;
+                setActive(Math.max(0, Math.min(quarters.length - 1, start + step)));
+              } else if (open && event.key === 'Enter' && active >= 0) {
+                event.preventDefault();
+                choose(quarters[active]);
+              } else if (open && event.key === 'Tab') {
+                changeOpen(false);
+              }
+            }} />
+          <button type="button" tabIndex={-1} aria-label={`${label}: выбрать из списка`}
+            onClick={() => { input.current?.focus(); changeOpen(!open); }}>
+            <ChevronDown size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </Popover.Anchor>
+      <Popover.Portal>
+        <Popover.Content id={listId} role="listbox" aria-label={label} className="quarter-options"
+          align="start" sideOffset={4} collisionPadding={8}
+          onOpenAutoFocus={event => event.preventDefault()}
+          onCloseAutoFocus={event => event.preventDefault()}
+          onInteractOutside={event => { if (anchor.current?.contains(event.target as Node)) event.preventDefault(); }}>
+          {quarters.map((quarter, index) => <div id={`${listId}-${index}`} key={quarter} role="option"
+            aria-selected={quarter === value} data-active={index === active}
+            onMouseDown={event => event.preventDefault()} onClick={() => choose(quarter)}>
+            {quarter}
+            {quarter === value && <Check size={14} aria-hidden="true" />}
+          </div>)}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  </div>;
 }
