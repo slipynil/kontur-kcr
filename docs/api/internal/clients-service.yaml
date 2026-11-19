@@ -56,7 +56,7 @@ paths:
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
         кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
-      parameters:
+      parameters: &registryParams
       - name: search
         in: query
         description: Буквальное вхождение в КЦР или ИНН, без учёта регистра. Символы % и _ не являются шаблонами.
@@ -139,7 +139,7 @@ paths:
           type: number
           minimum: 0
           maximum: 100
-      responses:
+      responses: &registryResponses
         '200':
           description: Страница реестра.
           content:
@@ -158,6 +158,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /clients/operator-registry:
+    post:
+      tags: [Registry]
+      operationId: listOperatorClients
+      summary: Реестр незаблокированных клиентов в опубликованной области доступа
+      parameters: *registryParams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses: *registryResponses
+  /clients/unblocked-codes:
+    post:
+      operationId: filterUnblockedClientCodes
+      summary: Оставить незаблокированные коды из переданной области доступа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses:
+        '200':
+          description: Незаблокированные коды
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientVisibilityScope'
+
   /clients/{kcr_code}:
     get:
       tags:
@@ -626,6 +657,13 @@ components:
         type: string
       example: 6671-0042
   schemas:
+    ClientVisibilityScope:
+      type: object
+      required: [codes]
+      properties:
+        codes:
+          type: array
+          items: {type: string}
     AffectedClientsPage:
       type: object
       required: [batch_id, items, total, limit, offset]

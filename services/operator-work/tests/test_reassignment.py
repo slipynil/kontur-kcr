@@ -110,6 +110,24 @@ def set_due(database, request_id):
         )
 
 
+def test_scoped_pool_and_reassignment_operations(api, operators):
+    owner, requester, _ = operators
+    assert api.get(f"{BASE}/pool/published-codes", headers=owner).json() == {"codes": []}
+    _, request = request_transfer(api, owner, requester)
+    assert api.get(f"{BASE}/pool/published-codes", headers=owner).json() == {"codes": [CODE]}
+
+    hidden, visible = {"codes": []}, {"codes": [CODE]}
+    assert api.post(f"{BASE}/pool", params=CYCLE, headers=owner, json=hidden).json() == {
+        "items": []
+    }
+    assert api.post(NOTIFICATIONS, headers=owner, json=hidden).json() == {"items": []}
+    notifications = api.post(NOTIFICATIONS, headers=owner, json=visible)
+    assert [item["id"] for item in notifications.json()["items"]] == [request["id"]]
+    reject = f"{NOTIFICATIONS}/{request['id']}/reject"
+    assert api.post(reject, headers=owner, json=hidden).status_code == 404
+    assert api.post(reject, headers=owner, json=visible).json()["status"] == "REJECTED"
+
+
 def test_publish_and_concurrent_take(api, operators, database):
     a, b, _ = operators
     assert take(api, a).status_code == 404

@@ -40,7 +40,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     const { admin, first, code, quarter } = work;
     const unpublished = await take(first, code, quarter);
     expect(unpublished.status).toBe(404);
-    expect(unpublished.body.code).toBe('CLIENT_NOT_PUBLISHED');
+    expect(unpublished.body.code).toBe('NOT_FOUND');
 
     const denied = await publishReply(first, [code], quarter);
     expect(denied.status).toBe(403);

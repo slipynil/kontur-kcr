@@ -82,10 +82,14 @@ type env struct {
 }
 
 func (e *env) get(t *testing.T, target string) *httptest.ResponseRecorder {
+	return e.getAs(t, target, auth.RoleOperator)
+}
+
+func (e *env) getAs(t *testing.T, target string, role auth.Role) *httptest.ResponseRecorder {
 	t.Helper()
 	id := auth.Identity{
 		UserID: uuid.MustParse(operatorID),
-		Role:   auth.RoleOperator,
+		Role:   role,
 	}
 	request := httptest.NewRequest(http.MethodGet, target, http.NoBody)
 	request = request.WithContext(auth.WithIdentity(request.Context(), id))
@@ -121,7 +125,7 @@ func newAggregator(t *testing.T, clients, operator *upstreamStub, users card.Use
 // clientsCard — минимальный профиль Clients: рабочих полей в нём нет, их
 // добавляет агрегатор (ClientCard в Clients их не отдаёт).
 const clientsCard = `{"kcr_code":"` + operatorCode + `","inn":"7701000012","organization_name":"ООО Ромашка",` +
-	`"status":"ACTIVE","tags":[],"snapshots":[],"quarter_summary":null}`
+	`"is_blocked":false,"tags":[],"snapshots":[],"quarter_summary":null}`
 
 // operatorState — ответ Operator Work; nil означает свободного клиента.
 func operatorState(operator any) string {
@@ -242,7 +246,10 @@ func TestCardTreatsMissingCycleAsEmptyWorkState(t *testing.T) {
 	}}
 	e := newAggregator(t, clients, operator, &fakeUsers{})
 
-	w := e.get(t, "/api/v1/clients/"+operatorCode)
+	if w := e.get(t, "/api/v1/clients/"+operatorCode); w.Code != http.StatusNotFound {
+		t.Fatalf("operator status = %d; body %s", w.Code, w.Body.String())
+	}
+	w := e.getAs(t, "/api/v1/clients/"+operatorCode, auth.RoleAdmin)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
@@ -252,6 +259,23 @@ func TestCardTreatsMissingCycleAsEmptyWorkState(t *testing.T) {
 		if value, present := cardBody[field]; value != nil || !present {
 			t.Errorf("card[%q] = %v (present %t), want null", field, value, present)
 		}
+	}
+}
+
+func TestBlockedPublishedCardIsHiddenFromOperator(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, `{"is_blocked":true}`
+	}}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, operatorState(nil)
+	}}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+	target := "/api/v1/clients/" + operatorCode
+	if w := e.get(t, target); w.Code != http.StatusNotFound {
+		t.Fatalf("operator status = %d; body %s", w.Code, w.Body.String())
+	}
+	if w := e.getAs(t, target, auth.RoleAdmin); w.Code != http.StatusOK {
+		t.Fatalf("admin status = %d; body %s", w.Code, w.Body.String())
 	}
 }
 
@@ -318,6 +342,9 @@ func TestCardFailsWith502WhenOperatorWorkUnreachable(t *testing.T) {
 func TestCardPassesHistoricalCycleConflictThrough(t *testing.T) {
 	clients := &upstreamStub{router: func(recordedCall) (int, string) { return http.StatusOK, clientsCard }}
 	operator := &upstreamStub{router: func(call recordedCall) (int, string) {
+		if call.path == "/internal/v1/pool/published-codes" {
+			return http.StatusOK, `{"codes":["` + operatorCode + `"]}`
+		}
 		if call.query != "work_quarter=2026_Q3" {
 			t.Errorf("operator query = %q, want explicit quarter", call.query)
 		}
@@ -362,7 +389,7 @@ func TestCardPassesClientsErrorsThrough(t *testing.T) {
 	}}
 	e := newAggregator(t, clients, operator, &fakeUsers{})
 
-	w := e.get(t, "/api/v1/clients/UNKNOWN0001")
+	w := e.getAs(t, "/api/v1/clients/UNKNOWN0001", auth.RoleAdmin)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body %s", w.Code, w.Body.String())

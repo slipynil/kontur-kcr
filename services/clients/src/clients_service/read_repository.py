@@ -83,6 +83,8 @@ CANDIDATES_SQL = """
     candidates AS (
         SELECT c.* FROM clients c
         WHERE (CAST(:code AS text) IS NULL OR c.kcr_code = :code)
+          AND (CAST(:visible_codes AS text[]) IS NULL OR
+               (NOT c.is_blocked AND c.kcr_code = ANY(CAST(:visible_codes AS text[]))))
           AND (CAST(:search AS text) IS NULL
             OR strpos(lower(c.kcr_code), lower(:search)) > 0
             OR strpos(lower(coalesce(c.inn, '')), lower(:search)) > 0)
@@ -157,6 +159,7 @@ def _parameters(*, quarter=None, code=None, search=None, tags=()):
         "quarter": quarter,
         "previous_quarter": previous,
         "code": code,
+        "visible_codes": None,
         "search": search,
         "tags": tags,
         "tag_count": len(tags),
@@ -177,9 +180,11 @@ def list_clients(
     max_unsubmitted_documents=None,
     min_unsubmitted_percent=None,
     max_unsubmitted_percent=None,
+    visible_codes=None,
 ):
     parameters = _parameters(quarter=quarter, search=search, tags=tags)
     parameters.update(
+        visible_codes=visible_codes,
         dynamics=dynamics,
         duration=duration,
         limit=page_size,
@@ -213,6 +218,19 @@ def list_clients(
             .all()
         )
         return ClientPage(items=rows, total=total, page=page, page_size=page_size)
+
+
+def unblocked_codes(engine: Engine, codes: list[str]) -> list[str]:
+    with read_transaction(engine) as connection:
+        return list(
+            connection.execute(
+                text(
+                    "SELECT kcr_code FROM clients WHERE NOT is_blocked "
+                    "AND kcr_code = ANY(CAST(:codes AS text[]))"
+                ),
+                {"codes": codes},
+            ).scalars()
+        )
 
 
 def get_card(engine: Engine, code: str, *, quarter: str | None = None, snapshots_limit: int = 8):

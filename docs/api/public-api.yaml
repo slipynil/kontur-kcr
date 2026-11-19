@@ -62,6 +62,7 @@ tags:
   description: Облачный ИИ; операции являются предложениями до согласования функций.
 security:
 - bearerAuth: []
+# Область видимости клиентских операций для OPERATOR — ADR-0014 и ADR-0015.
 paths:
   /api/v1/auth/login:
     post:
@@ -218,6 +219,7 @@ paths:
       tags:
       - Clients
       operationId: listClients
+      x-operator-visibility: unblocked-current-published
       summary: Реестр клиентов
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
@@ -335,6 +337,7 @@ paths:
       tags:
       - Clients
       operationId: listSnapshotHistory
+      x-operator-visibility: unblocked-current-published
       summary: Журнал изменения статуса передачи документов
       description: >-
         Свежие даты и исправления возвращаются первыми. Передайте limit и offset либо page и page_size.
@@ -405,6 +408,7 @@ paths:
       tags:
       - OperatorWork
       operationId: takeClient
+      x-operator-visibility: unblocked-current-published
       summary: Взять или перезакрепить клиента на себя
       description: |
         Свободный опубликованный клиент закрепляется сразу.
@@ -448,6 +452,7 @@ paths:
   /api/v1/reassignment-notifications:
     get:
       operationId: listReassignmentNotifications
+      x-operator-visibility: unblocked-current-published
       summary: Получить входящие и отправленные запросы
       x-roles: [OPERATOR]
       parameters:
@@ -473,6 +478,7 @@ paths:
   /api/v1/reassignment-notifications/{request_id}/reject:
     post:
       operationId: rejectReassignment
+      x-operator-visibility: unblocked-current-published
       summary: Отказать в перезакреплении до истечения часа
       x-roles: [OPERATOR]
       parameters:
@@ -535,6 +541,7 @@ paths:
       tags:
       - OperatorWork
       operationId: listPublishedClients
+      x-operator-visibility: unblocked-current-published
       summary: Опубликованный пул выбранного квартала
       description: Коды клиентов выбранного квартала обзвона и их актуальные ответственные.
       x-roles:
@@ -589,6 +596,7 @@ paths:
       tags:
       - Clients
       operationId: getClientCard
+      x-operator-visibility: unblocked-current-published
       summary: Карточка клиента
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
@@ -699,6 +707,7 @@ paths:
       tags:
       - OperatorWork
       operationId: listClientEvents
+      x-operator-visibility: unblocked-current-published
       summary: Лента событий клиента
       description: 'История взаимодействия (звонки, комментарии, письма, смены этапов,
 
@@ -737,6 +746,7 @@ paths:
       tags:
       - OperatorWork
       operationId: createClientEvent
+      x-operator-visibility: unblocked-current-published
       summary: Добавить звонок или прошлый комментарий
       description: |
         Сохранить звонок по назначению из формы. После перезакрепления автор может
@@ -800,6 +810,7 @@ paths:
       tags:
       - Assistant
       operationId: getAssistantSummary
+      x-operator-visibility: unblocked-current-published
       summary: Сводка «Контекст перед звонком» [Функции не согласованы]
       description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
         Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
@@ -828,7 +839,6 @@ paths:
         Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
       x-roles:
       - ADMIN
-      - OPERATOR
       requestBody:
         required: true
         content:
@@ -864,7 +874,6 @@ paths:
         Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
       x-roles:
       - ADMIN
-      - OPERATOR
       requestBody:
         required: true
         content:
