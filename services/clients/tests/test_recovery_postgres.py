@@ -42,13 +42,15 @@ def setup(database):
     migration.upgrade(config, "head")
 
     def apply(items, *, kind="SNAPSHOT", day="2026-04-10"):
+        metadata = (
+            {"selected_quarter": "2026_Q2", "snapshot_date": day} if kind == "SNAPSHOT" else {}
+        )
         envelope = ImportEnvelope(
             batch_id=uuid4(),
             uploaded_by=uuid4(),
-            selected_quarter="2026_Q2",
             import_type=kind,
-            snapshot_date=day,
             items=items,
+            **metadata,
         )
         result = apply_import(engine, envelope)
         assert result["rejected_rows"] == 0, result

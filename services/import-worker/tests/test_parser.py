@@ -12,6 +12,8 @@ from import_worker.validation import InvalidRow, counter
 
 
 def params(import_type: ImportType = ImportType.SNAPSHOT) -> ImportParameters:
+    if import_type is ImportType.REGISTRY:
+        return ImportParameters(import_type=import_type)
     return ImportParameters(
         selected_quarter="2026_Q2",
         snapshot_date=date(2026, 4, 10),
@@ -42,7 +44,7 @@ def test_historical_registry(tmp_path: Path, xlsx: WorkbookFactory) -> None:
                         None,
                     ],
                 ],
-                "Продолжение": [
+                "1 кв 2024": [
                     ["0013", None, "Другой клиент", None, None, None, None, "001234"],
                 ],
             }

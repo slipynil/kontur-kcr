@@ -26,13 +26,16 @@ from import_worker.error_report import XLSX_MEDIA_TYPE
 
 
 async def upload(
-    client: httpx.AsyncClient, content: bytes, kind: str, date: str, quarter: str = "2026_Q2"
+    client: httpx.AsyncClient, content: bytes, kind: str, date: str = "", quarter: str = "2026_Q2"
 ) -> UUID:
+    data = {"import_type": kind}
+    if kind == "SNAPSHOT":
+        data.update(selected_quarter=quarter, snapshot_date=date)
     response = await client.post(
         "/internal/v1/imports",
         headers={"X-User-Id": str(uuid4())},
         files={"file": ("test.xlsx", content)},
-        data={"selected_quarter": quarter, "import_type": kind, "snapshot_date": date},
+        data=data,
     )
     assert response.status_code == 202, response.text
     assert response.json()["status"] == "PROCESSING"
@@ -129,6 +132,7 @@ async def test_postgres_upload_retry_and_report(
         envelope = json.loads(request.content)
         calls.append(envelope)
         if envelope["import_type"] == "REGISTRY":
+            assert {"selected_quarter", "snapshot_date"}.isdisjoint(envelope)
             assert envelope["items"][0]["client"]["is_blocked"] is False
             assert envelope["items"][0]["client"]["manager_name"] is None
             assert "snapshot" not in envelope["items"][0]
@@ -187,7 +191,7 @@ async def test_postgres_upload_retry_and_report(
                     ]
                 }
             )
-            registry_id = await upload(api, registry, "REGISTRY", "2026-04-01")
+            registry_id = await upload(api, registry, "REGISTRY")
             assert await publish_one(sessions, channel)
             published = exchange.publish.await_args.args[0]
             assert Job.model_validate_json(published.body).batch_id == registry_id
@@ -197,6 +201,10 @@ async def test_postgres_upload_retry_and_report(
             first.ack.assert_awaited_once()
             report = (await api.get(f"/internal/v1/imports/{registry_id}")).json()
             assert report["status"] == "COMPLETED" and report["completed_at"]
+            assert {"selected_quarter", "snapshot_date"}.isdisjoint(report)
+            async with sessions() as db:
+                batch = await db.get(ImportBatch, registry_id)
+                assert batch.selected_quarter is None and batch.snapshot_date is None
             assert not work_calls
 
             header = ["Код КЦР", None, None, None, None, "Исходный квартал"]

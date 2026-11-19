@@ -88,12 +88,14 @@ function ImportHistory({ userId, batch }: { userId: string; batch?: ImportBatch 
     <div className="section-header"><div><h2>История отчётов</h2>
       <p>Отчёты, открытые в этом браузере.</p></div></div>
     {entries.length ? <div className="table-wrap" role="region" aria-label="Открытые отчёты" tabIndex={0}>
-      <table><thead><tr><th scope="col">Файл</th><th scope="col">Квартал загрузки</th><th scope="col">Дата среза</th></tr></thead>
+      <table><thead><tr><th scope="col">Файл</th><th scope="col">Импорт</th></tr></thead>
         <tbody>{entries.map(entry => <tr key={entry.id}>
           <td><Link className="text-link report-link" href={`/import-report?batch=${encodeURIComponent(entry.id)}`}>
             {entry.filename}<ChevronRight size={14} aria-hidden="true" />
           </Link></td>
-          <td>{quarterName(entry.selected_quarter)}</td><td>{displayDate(entry.snapshot_date)}</td>
+          <td>{entry.import_type ? importTypes[entry.import_type] : '—'}
+            {entry.import_type === 'SNAPSHOT' && <> · {quarterName(entry.selected_quarter)} · {displayDate(entry.snapshot_date)}</>}
+          </td>
         </tr>)}</tbody>
       </table>
     </div> : <EmptyState title="Открытых отчётов пока нет" description="Новые загрузки и открытые отчёты появятся здесь." />}
@@ -110,15 +112,20 @@ function UploadForm() {
   const action = useAction();
   return <>
     <PageHeader title="Загрузка реестра" description="Импортируйте реестр клиентов или квартальный срез из Excel." />
-    <div className="section-header"><div><h2>Новый импорт</h2><p>Укажите квартал, к которому относятся данные файла.</p></div></div>
+    <div className="section-header"><h2>Новый импорт</h2></div>
     <form className="panel-form stack" noValidate onSubmit={event => {
       event.preventDefault();
       void action.run(async () => {
         if (!file || !file.name.toLowerCase().endsWith('.xlsx')) throw new Error('Выберите файл .xlsx');
-        if (!quarterPattern.test(quarter)) throw new Error('Квартал загрузки должен быть в формате 2026_Q4');
-        if (!date) throw new Error('Укажите дату среза');
         const data = new FormData();
-        data.set('file', file); data.set('selected_quarter', quarter); data.set('import_type', type); data.set('snapshot_date', date);
+        data.set('file', file);
+        data.set('import_type', type);
+        if (type === 'SNAPSHOT') {
+          if (!quarterPattern.test(quarter)) throw new Error('Квартал загрузки должен быть в формате 2026_Q4');
+          if (!date) throw new Error('Укажите дату среза');
+          data.set('selected_quarter', quarter);
+          data.set('snapshot_date', date);
+        }
         const batch = await request<ImportBatch>('/imports', { method: 'POST', body: data });
         const userId = readSession()?.user.id;
         if (userId) rememberImport(userId, batch);
@@ -142,11 +149,16 @@ function UploadForm() {
         </div>
       </div>
       <div className="form-grid">
-        <label>Квартал загрузки<QuarterInput required value={quarter} onChange={setQuarter} /></label>
-        <DateField label="Дата среза" value={date} onChange={setDate} required />
-        <label>Тип импорта<select value={type} onChange={event => setType(event.target.value as ImportBatch['import_type'])}>
+        <label>Тип импорта<select value={type} disabled={action.busy} onChange={event => {
+          action.reset();
+          setType(event.target.value as ImportBatch['import_type']);
+        }}>
           <option value="REGISTRY">Реестр</option><option value="SNAPSHOT">Срез</option>
         </select></label>
+        {type === 'SNAPSHOT' && <>
+          <label>Квартал загрузки<QuarterInput required value={quarter} onChange={setQuarter} /></label>
+          <DateField label="Дата среза" value={date} onChange={setDate} required />
+        </>}
       </div>
       <p className="help-text">Реестр — сведения о клиентах. Срез — состояние документов по кварталам.</p>
       <Feedback error={action.error} loading={action.busy} />
@@ -208,7 +220,9 @@ function ImportReports() {
     {batchId && <section className="report-result" aria-label="Данные отчёта">
       <div className="section-header">
         <div>{batch && <><h2>{batch.filename}</h2>
-          <p>{importTypes[batch.import_type]} · {quarterName(batch.selected_quarter)} · {displayDate(batch.snapshot_date)}</p>
+          <p>{importTypes[batch.import_type]}
+            {batch.import_type === 'SNAPSHOT' && <> · {quarterName(batch.selected_quarter)} · {displayDate(batch.snapshot_date)}</>}
+          </p>
         </>}</div>
         <button type="button" className="button secondary" onClick={refresh}><RefreshCw aria-hidden="true" />Обновить отчёт</button>
       </div>
@@ -230,7 +244,10 @@ function ImportReports() {
         </div>}
         <Modal open={showRollback} title="Откатить пакет?" description="Система проверит, что это последний применённый пакет."
           busy={action.busy} onClose={() => { setRollbackId(null); action.reset(); }}>
-          <dl className="dialog-details"><dt>Файл</dt><dd>{batch.filename}</dd><dt>Квартал загрузки</dt><dd>{quarterName(batch.selected_quarter)}</dd></dl>
+          <dl className="dialog-details">
+            <dt>Файл</dt><dd>{batch.filename}</dd>
+            {batch.import_type === 'SNAPSHOT' && <><dt>Квартал загрузки</dt><dd>{quarterName(batch.selected_quarter)}</dd></>}
+          </dl>
           <Feedback error={action.error} />
           <ConfirmActions label="Откатить пакет" onConfirm={rollback} onClose={() => { setRollbackId(null); action.reset(); }}
             busy={action.busy} danger />

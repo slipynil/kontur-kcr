@@ -25,10 +25,13 @@ def numeric_data(database):
             ImportEnvelope(
                 batch_id=uuid4(),
                 uploaded_by=uuid4(),
-                selected_quarter=quarter,
                 import_type=kind,
-                snapshot_date="2026-08-01",
                 items=items,
+                **(
+                    {"selected_quarter": quarter, "snapshot_date": "2026-08-01"}
+                    if kind == "SNAPSHOT"
+                    else {}
+                ),
             ),
         )
         assert result["rejected_rows"] == 0

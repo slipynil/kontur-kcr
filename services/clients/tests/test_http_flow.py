@@ -38,10 +38,13 @@ def test_affected_clients_lists_accepted_codes_and_preserves_quarter_after_delet
                 json={
                     "batch_id": batch_id,
                     "uploaded_by": actor,
-                    "selected_quarter": "2026_Q2",
                     "import_type": kind,
-                    "snapshot_date": "2026-04-10",
                     "items": items,
+                    **(
+                        {"selected_quarter": "2026_Q2", "snapshot_date": "2026-04-10"}
+                        if kind == "SNAPSHOT"
+                        else {}
+                    ),
                 },
             )
             assert result.status_code == 200, result.text
@@ -142,11 +145,11 @@ def test_import_read_delete_rollback_over_http(database):
             payload = {
                 "batch_id": str(uuid4()),
                 "uploaded_by": actor,
-                "selected_quarter": "2026_Q2",
                 "import_type": kind,
-                "snapshot_date": day,
                 "items": items,
             }
+            if kind == "SNAPSHOT":
+                payload.update(selected_quarter="2026_Q2", snapshot_date=day)
             response = client.post("/internal/v1/import/apply", json=payload)
             assert response.status_code == 200, response.text
             assert response.json()["rejected_rows"] == 0

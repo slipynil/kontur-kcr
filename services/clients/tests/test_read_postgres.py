@@ -33,13 +33,13 @@ def data(database):
     command.upgrade(config, "head")
 
     def add(items, *, quarter="2026_Q1", day="2026-01-10", kind="SNAPSHOT"):
+        metadata = {"selected_quarter": quarter, "snapshot_date": day} if kind == "SNAPSHOT" else {}
         envelope = ImportEnvelope(
             batch_id=uuid4(),
             uploaded_by=uuid4(),
             import_type=kind,
-            selected_quarter=quarter,
-            snapshot_date=day,
             items=items,
+            **metadata,
         )
         result = apply_import(engine, envelope)
         assert result["rejected_rows"] == 0, result

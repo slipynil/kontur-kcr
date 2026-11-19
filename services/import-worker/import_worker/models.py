@@ -1,9 +1,15 @@
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 QUARTER_PATTERN = r"^[0-9]{4}_Q[1-4]$"
@@ -24,9 +30,26 @@ class Status(StrEnum):
 
 
 class ImportParameters(BaseModel):
-    selected_quarter: Quarter
     import_type: ImportType
-    snapshot_date: date
+    selected_quarter: Quarter | None = None
+    snapshot_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_snapshot_metadata(self) -> Self:
+        if self.import_type is ImportType.SNAPSHOT:
+            if self.selected_quarter is None or self.snapshot_date is None:
+                raise ValueError("Snapshot imports require a quarter and date")
+        elif self.selected_quarter is not None or self.snapshot_date is not None:
+            raise ValueError("Registry imports do not take a quarter or date")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_import(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.import_type is ImportType.REGISTRY:
+            data.pop("selected_quarter", None)
+            data.pop("snapshot_date", None)
+        return data
 
 
 class ImportErrorRow(BaseModel):

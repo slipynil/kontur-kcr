@@ -15,13 +15,13 @@ pytestmark = pytest.mark.postgres
 
 
 def packet(items, *, kind="SNAPSHOT", day="2026-04-20", quarter="2026_Q2", batch_id=None):
+    metadata = {"selected_quarter": quarter, "snapshot_date": day} if kind == "SNAPSHOT" else {}
     return ImportEnvelope(
         batch_id=batch_id or uuid4(),
         uploaded_by="00000000-0000-0000-0000-000000000001",
         import_type=kind,
-        selected_quarter=quarter,
-        snapshot_date=day,
         items=items,
+        **metadata,
     )
 
 
@@ -59,7 +59,6 @@ def register(engine):
                 {"client": {"kcr_code": "b", "inn": "00123"}},
             ],
             kind="REGISTRY",
-            day="2026-04-01",
         ),
     )
 
@@ -193,7 +192,7 @@ def test_historical_blank_does_not_borrow_future_or_confirm_warning(ready_databa
         assert conn.scalar(text("SELECT needs_review FROM clients WHERE kcr_code='a'")) is True
 
 
-def test_profile_warning_tags_false_and_older_values(ready_database):
+def test_registry_profile_warnings_and_update_order(ready_database):
     engine, _ = ready_database
     register(engine)
     apply_import(
@@ -215,20 +214,14 @@ def test_profile_warning_tags_false_and_older_values(ready_database):
                 }
             ],
             kind="REGISTRY",
-            day="2026-04-22",
         ),
     )
-    apply_import(
-        engine,
-        packet(
-            [{"client": {"kcr_code": "a", "manager_name": "historical"}}],
-            kind="REGISTRY",
-            day="2026-04-01",
-        ),
-    )
+    last = packet([{"client": {"kcr_code": "a", "manager_name": "manager"}}], kind="REGISTRY")
+    apply_import(engine, last)
     with engine.connect() as conn:
         client = conn.execute(text("SELECT * FROM clients WHERE kcr_code='a'")).mappings().one()
-        assert client["manager_name"] == "confirmed"
+        assert client["manager_name"] == "manager"
+        assert client["field_sources"]["manager_name"] == {"batch_id": str(last.batch_id)}
         assert not client["needs_review"] and not client["is_blocked"]
         assert client["inn"] == "00123"
         assert conn.scalar(text("SELECT count(*) FROM client_tags WHERE kcr_code='a'")) == 0
@@ -331,7 +324,12 @@ def test_http_import_available_by_default(ready_database):
     with TestClient(create_app(Settings(database_url=url))) as client:
         assert "/internal/v1/import/apply" in client.get("/openapi.json").json()["paths"]
         payload = packet([{"client": {"kcr_code": "a"}}], kind="REGISTRY").model_dump(mode="json")
-        assert client.post("/internal/v1/import/apply", json=payload).status_code == 200
+        path = "/internal/v1/import/apply"
+        assert client.post(path, json=payload).status_code == 200
+        assert client.post(path, json=payload).status_code == 200
+        assert client.post(path, json={**payload, "selected_quarter": "2026_Q2"}).status_code == 400
+        assert client.post(path, json={**payload, "snapshot_date": "2026-04-20"}).status_code == 400
+        assert client.post(path, json={**payload, "import_type": "SNAPSHOT"}).status_code == 400
         payload["items"] = [{"client": {"kcr_code": "b"}}]
         assert client.post("/internal/v1/import/apply", json=payload).status_code == 409
         invalid = client.post("/internal/v1/import/apply", json={"private": "sensitive"})

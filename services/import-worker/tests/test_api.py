@@ -19,16 +19,50 @@ from import_worker.models import ImportErrorRow, Status
 
 
 @pytest.mark.parametrize(
-    ("quarter", "date", "filename", "content", "code"),
+    ("params", "filename", "content", "code"),
     [
-        ("2026_Q5", "2026-04-10", "a.xlsx", b"test", "INVALID_IMPORT_REQUEST"),
-        ("2026_Q2", "2026-02-30", "a.xlsx", b"test", "INVALID_IMPORT_REQUEST"),
-        ("2026_Q2", "2026-04-10", "a.xls", b"test", "INVALID_IMPORT_FILE"),
-        ("2026_Q2", "2026-04-10", "a.xlsx", b"test", "INVALID_IMPORT_FILE"),
+        (
+            {"selected_quarter": "2026_Q5", "snapshot_date": "2026-04-10"},
+            "a.xlsx",
+            b"test",
+            "INVALID_IMPORT_REQUEST",
+        ),
+        (
+            {"selected_quarter": "2026_Q2", "snapshot_date": "2026-02-30"},
+            "a.xlsx",
+            b"test",
+            "INVALID_IMPORT_REQUEST",
+        ),
+        ({"snapshot_date": "2026-04-10"}, "a.xlsx", b"test", "INVALID_IMPORT_REQUEST"),
+        ({"selected_quarter": "2026_Q2"}, "a.xlsx", b"test", "INVALID_IMPORT_REQUEST"),
+        (
+            {"import_type": "REGISTRY", "selected_quarter": "2026_Q2"},
+            "a.xlsx",
+            b"test",
+            "INVALID_IMPORT_REQUEST",
+        ),
+        (
+            {"import_type": "REGISTRY", "snapshot_date": "2026-04-10"},
+            "a.xlsx",
+            b"test",
+            "INVALID_IMPORT_REQUEST",
+        ),
+        (
+            {"selected_quarter": "2026_Q2", "snapshot_date": "2026-04-10"},
+            "a.xls",
+            b"test",
+            "INVALID_IMPORT_FILE",
+        ),
+        (
+            {"selected_quarter": "2026_Q2", "snapshot_date": "2026-04-10"},
+            "a.xlsx",
+            b"test",
+            "INVALID_IMPORT_FILE",
+        ),
     ],
 )
 async def test_invalid_upload(
-    tmp_path: Path, quarter: str, date: str, filename: str, content: bytes, code: str
+    tmp_path: Path, params: dict[str, str], filename: str, content: bytes, code: str
 ) -> None:
     app = create_app(Settings("postgresql+asyncpg://unused", "amqp://unused", tmp_path))
     async with httpx.AsyncClient(
@@ -37,7 +71,7 @@ async def test_invalid_upload(
         response = await client.post(
             "/internal/v1/imports",
             headers={"X-User-Id": str(uuid4())},
-            data={"selected_quarter": quarter, "snapshot_date": date, "import_type": "SNAPSHOT"},
+            data={"import_type": "SNAPSHOT", **params},
             files={"file": (filename, content)},
         )
     assert response.status_code == 400
@@ -88,11 +122,7 @@ async def test_upload_discards_file_if_rejected_before_commit(
         response = await client.post(
             "/internal/v1/imports",
             headers={"X-User-Id": str(uuid4())},
-            data={
-                "selected_quarter": "2026_Q2",
-                "snapshot_date": "2026-04-10",
-                "import_type": "REGISTRY",
-            },
+            data={"import_type": "REGISTRY"},
             files={"file": ("registry.xlsx", content)},
         )
     assert response.status_code == (503 if valid else 400)

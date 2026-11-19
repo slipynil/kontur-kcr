@@ -8,9 +8,9 @@
 CREATE TABLE import_batches (
     id            UUID        PRIMARY KEY,
     uploaded_by   UUID        NOT NULL,   -- логическая ссылка на Identity DB users.id
-    selected_quarter TEXT NOT NULL CHECK (selected_quarter ~ '^\d{4}_Q[1-4]$'),
+    selected_quarter TEXT CHECK (selected_quarter ~ '^\d{4}_Q[1-4]$'),
     import_type TEXT NOT NULL CHECK (import_type IN ('REGISTRY', 'SNAPSHOT')),
-    snapshot_date DATE NOT NULL,
+    snapshot_date DATE,
     filename      TEXT        NOT NULL,
     status        TEXT        NOT NULL DEFAULT 'PROCESSING'
                   CHECK (status IN ('PROCESSING', 'COMPLETED', 'ROLLED_BACK', 'FAILED')),
@@ -23,7 +23,12 @@ CREATE TABLE import_batches (
     published_at  TIMESTAMPTZ,
     apply_payload JSONB,
     apply_started_at TIMESTAMPTZ,
-    clients_applied_at TIMESTAMPTZ
+    clients_applied_at TIMESTAMPTZ,
+    CONSTRAINT ck_import_batches_snapshot_metadata CHECK (
+        (import_type = 'SNAPSHOT'
+            AND selected_quarter IS NOT NULL AND snapshot_date IS NOT NULL)
+        OR (import_type = 'REGISTRY' AND selected_quarter IS NULL AND snapshot_date IS NULL)
+    )
 );
 
 CREATE INDEX idx_import_batches_unpublished ON import_batches (created_at)

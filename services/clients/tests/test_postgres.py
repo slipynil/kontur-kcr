@@ -1,5 +1,8 @@
 """Runs only with CLIENTS_TEST_ADMIN_URL; creates and drops its own temporary DB."""
 
+import json
+from uuid import uuid4
+
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
@@ -79,3 +82,48 @@ def test_blocking_migration_preserves_flags_independently_of_old_status(database
             SELECT is_blocked, inherited_fields, needs_review FROM clients ORDER BY kcr_code
         """)
         ).all() == [(False, {}, False), (True, {"is_blocked": {}}, True)]
+
+
+def test_registry_migration_cleans_profile_sources_and_undo(database):
+    engine, config, _ = database
+    command.upgrade(config, "0005_client_blocking_only")
+    registry, snapshot = uuid4(), uuid4()
+    metadata = {"quarter": "2026_Q2", "snapshot_date": "2026-04-20"}
+    registry_source = {"batch_id": str(registry), **metadata}
+    snapshot_source = {"batch_id": str(snapshot), **metadata}
+    sources = {"manager_name": registry_source, "snapshots.2026_Q1.total": snapshot_source}
+    prior = {"clients": [{"field_sources": sources, "inherited_fields": sources}]}
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO clients_import_operations(batch_id, payload_hash, result)
+                VALUES
+                    (:registry, 'r', '{"accepted_rows": 1, "created_history_records": 0}'),
+                    (:snapshot, 's', '{"accepted_rows": 1, "created_history_records": 1}')
+            """),
+            {"registry": registry, "snapshot": snapshot},
+        )
+        conn.execute(
+            text("""
+                INSERT INTO clients(kcr_code, field_sources, inherited_fields)
+                VALUES ('a', CAST(:sources AS jsonb), CAST(:sources AS jsonb))
+            """),
+            {"sources": json.dumps(sources)},
+        )
+        conn.execute(
+            text("""
+                INSERT INTO clients_import_undo(batch_id, kcr_code, previous_state)
+                VALUES (:snapshot, 'a', CAST(:state AS jsonb))
+            """),
+            {"snapshot": snapshot, "state": json.dumps(prior)},
+        )
+    command.upgrade(config, "head")
+    cleaned = {**sources, "manager_name": {"batch_id": str(registry)}}
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT field_sources, inherited_fields FROM clients")).one() == (
+            cleaned,
+            cleaned,
+        )
+        assert conn.scalar(text("SELECT previous_state FROM clients_import_undo")) == {
+            "clients": [{"field_sources": cleaned, "inherited_fields": cleaned}]
+        }

@@ -105,10 +105,16 @@ class Repository:
             raise RowError("UNEXPECTED_SNAPSHOT", "snapshot")
         before = self.before(code)
         delta = dict.fromkeys(COUNTERS, 0)
-        observation_date = (
-            item.snapshot.snapshot_date if item.snapshot else None
-        ) or envelope.snapshot_date
-        origin = Source(envelope.batch_id, envelope.selected_quarter, observation_date)
+        snapshot_origin = None
+        profile_origin = {"batch_id": str(envelope.batch_id)}
+        if item.snapshot is not None:
+            assert envelope.selected_quarter is not None and envelope.snapshot_date is not None
+            snapshot_origin = Source(
+                envelope.batch_id,
+                envelope.selected_quarter,
+                item.snapshot.snapshot_date or envelope.snapshot_date,
+            )
+            profile_origin = snapshot_origin.as_dict()
         profile = dict(existing[0]) if existing else {}
         tag_codes = list(
             conn.execute(
@@ -120,12 +126,14 @@ class Repository:
         current = {**profile, "tags": tag_codes}
         sources = profile.get("field_sources", {}).copy()
         supplied = item.client.model_dump(mode="json", exclude_unset=True, exclude={"kcr_code"})
-        # An older field cannot replace or confirm a newer current field.
-        supplied = {
-            key: value
-            for key, value in supplied.items()
-            if sources.get(key, {}).get("snapshot_date", "") <= observation_date.isoformat()
-        }
+        if snapshot_origin is not None:
+            # An older snapshot cannot replace or confirm a newer observed value.
+            observation_date = snapshot_origin.snapshot_date.isoformat()
+            supplied = {
+                key: value
+                for key, value in supplied.items()
+                if sources.get(key, {}).get("snapshot_date", "") <= observation_date
+            }
         values, warnings = merge_profile_fields(
             current,
             supplied,
@@ -135,7 +143,7 @@ class Repository:
         changes = {}
         for field, value in supplied.items():
             if not is_missing(value):
-                sources[field] = origin.as_dict()
+                sources[field] = profile_origin
                 if field != "tags":
                     changes[field] = values[field]
         changes.update(
@@ -162,8 +170,8 @@ class Repository:
                 ).scalar_one()
                 conn.execute(insert(self.client_tags).values(kcr_code=code, tag_id=tag_id))
         history_id = None
-        if item.snapshot is not None:
-            history_id = self.apply_snapshot(envelope, item, origin, warnings, delta)
+        if snapshot_origin is not None:
+            history_id = self.apply_snapshot(envelope, item, snapshot_origin, warnings, delta)
         return before, delta, history_id
 
     def apply_snapshot(self, envelope, item, origin, warnings, delta):

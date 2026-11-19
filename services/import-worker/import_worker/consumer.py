@@ -118,20 +118,23 @@ async def claim_apply(sessions: async_sessionmaker[AsyncSession], batch_id: UUID
         batch = await db.get(ImportBatch, batch_id, with_for_update=True)
         if batch is None or batch.apply_payload is None:
             return None
-        params = ImportParameters.model_validate(batch, from_attributes=True)
-        parsed = ParsedImport.model_validate(batch.apply_payload)
-        keys = [fingerprint(params, row) for row in parsed.rows]
-        already_applied = await applied_fingerprints(db, keys)
-        remaining = [
-            row for row, key in zip(parsed.rows, keys, strict=True) if key not in already_applied
-        ]
-        batch.success_count = len(parsed.rows) - len(remaining)
-        if not remaining:
-            finish(batch, Status.COMPLETED)
-            return None
-        batch.apply_payload = ParsedImport(rows=remaining).model_dump(
-            mode="json", exclude_unset=True
-        )
+        if batch.import_type == ImportType.SNAPSHOT:
+            params = ImportParameters.model_validate(batch, from_attributes=True)
+            parsed = ParsedImport.model_validate(batch.apply_payload)
+            keys = [fingerprint(params, row) for row in parsed.rows]
+            already_applied = await applied_fingerprints(db, keys)
+            remaining = [
+                row
+                for row, key in zip(parsed.rows, keys, strict=True)
+                if key not in already_applied
+            ]
+            batch.success_count = len(parsed.rows) - len(remaining)
+            if not remaining:
+                finish(batch, Status.COMPLETED)
+                return None
+            batch.apply_payload = ParsedImport(rows=remaining).model_dump(
+                mode="json", exclude_unset=True
+            )
         batch.apply_started_at = func.clock_timestamp()
         return batch_id
 
@@ -174,16 +177,18 @@ async def apply_claimed(
         add_errors(db, batch, errors)
         batch.success_count += result.accepted_rows
         if result.accepted_rows:
-            rejected = {error.row_number for error in result.errors}
-            accepted = {
-                fingerprint(params, row)
-                for index, row in enumerate(parsed.rows, start=1)
-                if index not in rejected
-            }
-            db.add_all([ImportObservation(batch_id=batch.id, fingerprint=key) for key in accepted])
             batch.clients_applied_at = func.clock_timestamp()
             batch.apply_payload = None
             if batch.import_type == ImportType.SNAPSHOT:
+                rejected = {error.row_number for error in result.errors}
+                accepted = {
+                    fingerprint(params, row)
+                    for index, row in enumerate(parsed.rows, start=1)
+                    if index not in rejected
+                }
+                db.add_all(
+                    [ImportObservation(batch_id=batch.id, fingerprint=key) for key in accepted]
+                )
                 return True
         finish(batch, Status.COMPLETED if batch.success_count else Status.FAILED)
         return False
@@ -220,6 +225,7 @@ async def complete_snapshot(
                 return False
             if operator_work is None:
                 raise RuntimeError("Не настроен адрес Operator Work")
+            assert batch.selected_quarter is not None
             try:
                 rejected_status = await send_delivery(
                     operator_work, batch.selected_quarter, batch.uploaded_by, delivery.payload

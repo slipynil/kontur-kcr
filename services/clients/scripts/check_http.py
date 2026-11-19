@@ -50,10 +50,10 @@ def check_business(client):
             "batch_id": str(uuid4()),
             "uploaded_by": actor,
             "import_type": kind,
-            "selected_quarter": "2026_Q2",
-            "snapshot_date": day,
             "items": items,
         }
+        if kind == "SNAPSHOT":
+            payload.update(selected_quarter="2026_Q2", snapshot_date=day)
         result = client.call("POST", "/internal/v1/import/apply", payload)
         assert result["rejected_rows"] == 0
         return payload, result
