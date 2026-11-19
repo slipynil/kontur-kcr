@@ -1,5 +1,5 @@
-import { describe, test as base } from '@e2e-dev/web';
-import { expect } from 'e2e';
+import { describe, test as base, type Browser } from '@e2e-dev/web';
+import { expect, type App, type Screen } from 'e2e';
 import { randomUUID } from 'node:crypto';
 import {
   accounts, api, applyClient, businessDate, cleanupClient, dateInQuarter, internal, newCode,
@@ -22,6 +22,20 @@ const test = base.extend<{ data: { admin: Actor; code: string; quarter: string; 
 const registry = (code: string) => workbook(`${code}-registry.xlsx`, {
   'Реестр': [['Код КЦР', 'Название организации', 'Телефон'], [code, `Синтетический реестр ${code}`, '+70000000001']],
 });
+
+const snapshotHeadings = ['Код КЦР', 'Всего документов', 'Непереданные документы', 'Исходный квартал'];
+
+async function uploadSnapshot(app: App, screen: Screen, path: string, quarter: string, date: string) {
+  await app.open('/upload');
+  await screen.getByLabel('Файл реестра .xlsx').setInputFiles(path);
+  await screen.getByLabel('Тип импорта').selectOption({ label: 'Срез' });
+  await screen.getByLabel('Квартал', { exact: true }).fill(quarter);
+  await screen.getByLabel('Дата среза').fill(date);
+  await screen.getByRole('button', 'Загрузить').tap();
+}
+
+const reportCounter = (browser: Browser, label: string) =>
+  browser.locator(`xpath=//small[normalize-space()="${label}"]/following-sibling::b`);
 
 const batchReport = async (admin: Actor, id: string) =>
   requireStatus(await api(`/imports/${id}`, { actor: admin }), 200, 'Read import report');
@@ -71,36 +85,91 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     }
   });
 
-  test('applies valid snapshot rows and reports duplicate, unknown and annual rows', async ({ data }) => {
-    const { code, admin, quarter } = data;
+  test('uploads a quarterly snapshot in the browser and skips annual and invalid rows', async ({ app, browser, screen, data }) => {
+    const { code, admin, quarter, previous } = data;
     const annualCode = newCode();
     const annualSheet = `весь ${quarter.slice(0, 4)} год`;
-    const headings = ['Код КЦР', 'Всего', 'Непередано', 'Исходный квартал'];
+    const date = dateInQuarter(quarter, 2);
     const file = workbook(`${code}-snapshot.xlsx`, {
-      [quarter]: [headings, [code, 100, 10, quarter], [code, 100, 8, quarter], [newCode(), 100, 4, quarter]],
-      [annualSheet]: [headings, [code, 100, 99, quarter], [annualCode, 100, 70, quarter]],
+      [quarter]: [
+        snapshotHeadings,
+        [code, 100, 10, quarter],
+        [code, 60, 6, previous],
+        [code, 100, 8, quarter],
+        [newCode(), 100, 4, quarter],
+      ],
+      [annualSheet]: [snapshotHeadings, [code, 100, 99, quarter], [annualCode, 100, 70, quarter]],
     });
     try {
       const registryRow = { quarter, registry: true, date: dateInQuarter(quarter) };
       applyClient(admin, { ...registryRow, code });
       applyClient(admin, { ...registryRow, code: annualCode });
-      const report = await submit(admin, file, quarter, 'SNAPSHOT', dateInQuarter(quarter, 2));
+      await uploadSnapshot(app, screen, file.path, quarter, date);
 
-      expect(report.total_rows).toBe(3);
-      expect(report.success_count).toBe(1);
-      expect(report.error_count).toBe(3);
+      await expect(browser).toHaveURL(/\/import-report\?batch=/);
+      await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(reportCounter(browser, 'Строк в файле')).toHaveText('4');
+      await expect(reportCounter(browser, 'Принято')).toHaveText('2');
+      await expect(reportCounter(browser, 'Ошибок')).toHaveText('3');
+
+      const batchId = await screen.getByLabel('ID пакета', { exact: true }).inputValue();
+      const report = await batchReport(admin, batchId);
+      expect(report).toMatchObject({ import_type: 'SNAPSHOT', selected_quarter: quarter, snapshot_date: date });
       expect(report.error_log).toEqual(expect.arrayContaining([
-        expect.objectContaining({ sheet: quarter, reason: 'Дубликат строки в листе' }),
-        expect.objectContaining({ sheet: quarter, reason: expect.stringContaining('Код КЦР отсутствует в реестре') }),
+        expect.objectContaining({ sheet: quarter, row_number: 4, reason: 'Дубликат строки в листе' }),
+        expect.objectContaining({ sheet: quarter, row_number: 5, reason: expect.stringContaining('Код КЦР отсутствует в реестре') }),
         expect.objectContaining({
           sheet: annualSheet, row_number: 0, reason: 'Годовой, составной или служебный лист пропущен',
         }),
       ]));
-      expect((await card(admin, code)).snapshots).toMatchObject([{ quarter, unsubmitted_documents: 10 }]);
+
+      await app.open(`/client/${code}`);
+      await screen.getByRole('tab', 'Документы').tap();
+      await expect(screen.getByRole('cell', { name: '10', exact: true })).toBeVisible();
+      await expect(screen.getByRole('cell', { name: '6', exact: true })).toBeVisible();
+
+      const { snapshots } = await card(admin, code);
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots).toEqual(expect.arrayContaining([
+        expect.objectContaining({ quarter, total_documents: 100, unsubmitted_documents: 10, snapshot_date: date }),
+        expect.objectContaining({ quarter: previous, total_documents: 60, unsubmitted_documents: 6, snapshot_date: date }),
+      ]));
       expect((await card(admin, annualCode)).snapshots).toEqual([]);
     } finally {
       file.remove();
       cleanupClient(admin, annualCode);
+    }
+  });
+
+  test('imports a standalone annual snapshot into the explicitly selected quarter', async ({ app, browser, screen, data }) => {
+    const { code, admin, quarter } = data;
+    const annualSheet = `весь ${quarter.slice(0, 4)} год`;
+    const date = dateInQuarter(quarter, 2);
+    const file = workbook(`${code}-annual.xlsx`, {
+      [annualSheet]: [
+        ['Уникальны обезличинный идентификатор', 'Код КЦР', 'Наитменование организации', 'документов всего', 'Всего не отправлено документов'],
+        ['anonymized-id', code, 'Тестовая организация', 100, 10],
+      ],
+    });
+    try {
+      applyClient(admin, { code, quarter, registry: true, date: dateInQuarter(quarter) });
+      await uploadSnapshot(app, screen, file.path, quarter, date);
+
+      await expect(browser).toHaveURL(/\/import-report\?batch=/);
+      await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(reportCounter(browser, 'Строк в файле')).toHaveText('1');
+      await expect(reportCounter(browser, 'Принято')).toHaveText('1');
+      await expect(reportCounter(browser, 'Ошибок')).toHaveText('0');
+
+      const batchId = await screen.getByLabel('ID пакета', { exact: true }).inputValue();
+      expect(await batchReport(admin, batchId)).toMatchObject({
+        status: 'COMPLETED', selected_quarter: quarter, error_log: [],
+      });
+      expect((await card(admin, code)).snapshots).toMatchObject([
+        { quarter, total_documents: 100, unsubmitted_documents: 10, snapshot_date: date },
+      ]);
+    } finally {
+      file.remove();
     }
   });
 

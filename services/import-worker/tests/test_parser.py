@@ -147,6 +147,66 @@ def test_snapshot_uses_named_columns_and_reports_future_origins(
     assert [error.sheet for error in result.errors[1:]] == ["Q1 2026", "I–II кв 2026"]
 
 
+def test_standalone_annual_snapshot_uses_selected_quarter_and_explicit_kcr_code(
+    tmp_path: Path, xlsx: WorkbookFactory
+) -> None:
+    path = tmp_path / "annual.xlsx"
+    path.write_bytes(
+        xlsx(
+            {
+                "весь 2025 год": [
+                    [
+                        "Уникальны обезличинный идентификатор",
+                        "Код КЦР",
+                        "Наитменование организации",
+                        "документов всего",
+                        "Всего не отправлено документов",
+                    ],
+                    ["legacy-id", "001", "Тестовая организация", 111, 7],
+                ]
+            }
+        )
+    )
+    result = parse_workbook(path, params())
+    assert result.total_rows == 1 and not result.errors
+    assert result.rows[0].item.client.kcr_code == "001"
+    assert result.rows[0].item.snapshot.model_dump() == {
+        "quarter": "2026_Q2",
+        "snapshot_date": date(2026, 4, 10),
+        "total_documents": 111,
+        "unsubmitted_documents": 7,
+    }
+
+
+def test_anonymized_snapshot_recognizes_legacy_header_without_counting_it_as_row(
+    tmp_path: Path, xlsx: WorkbookFactory
+) -> None:
+    path = tmp_path / "anonymized.xlsx"
+    path.write_bytes(
+        xlsx(
+            {
+                "2 кв 2026": [
+                    [None],
+                    [
+                        "Уникальны обезличинный идентификатор",
+                        None,
+                        None,
+                        "документов всего",
+                        "Всего не отправлено документов",
+                    ],
+                    ["legacy-id", None, None, 111, 0],
+                ]
+            }
+        )
+    )
+    result = parse_workbook(path, params())
+    assert result.total_rows == 1 and not result.errors
+    assert result.rows[0].row_number == 3
+    assert result.rows[0].item.client.kcr_code == "legacy-id"
+    assert result.rows[0].item.snapshot.total_documents == 111
+    assert result.rows[0].item.snapshot.unsubmitted_documents == 0
+
+
 def test_registry_uses_named_columns_without_reinterpreting_other_fields(
     tmp_path: Path, xlsx: WorkbookFactory
 ) -> None:

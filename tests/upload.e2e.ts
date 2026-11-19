@@ -54,10 +54,10 @@ describe('upload', { session: 'admin' }, () => {
     await expect(screen.getByRole('heading', { name: 'Срез_20.10.26_Дубна.xlsx', level: 2 })).toBeVisible();
     await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 180_000 });
     // Only the «3 кв 2026» sheet contributes rows. The error counter includes
-    // 245 rejected rows and one notice for each of the three skipped sheets.
-    await expect(statCard(browser, 'Строк в файле')).toHaveText('3405');
+    // 244 rejected rows and one notice for each of the three skipped sheets.
+    await expect(statCard(browser, 'Строк в файле')).toHaveText('3404');
     await expect(statCard(browser, 'Принято')).toHaveText('3160');
-    await expect(statCard(browser, 'Ошибок')).toHaveText('248');
+    await expect(statCard(browser, 'Ошибок')).toHaveText('247');
   });
 
   test('rejects a file that is not .xlsx without uploading it', async ({ app, screen, browser }) => {

@@ -40,12 +40,14 @@ HEADERS = {
     "manager_name": ("менеджер", "фио менеджера", "manager_name"),
     "tags": ("признаки", "специальные признаки", "tags"),
     "raw_work_status": ("рабочие отметки", "raw_work_status"),
-    "total_documents": ("всего", "всего документов", "total_documents"),
+    "total_documents": ("всего", "всего документов", "документов всего", "total_documents"),
     "unsubmitted_documents": (
         "непередано",
         "непереданные документы",
         "непереданные оригиналы документов",
         "неотправленные документы",
+        "не отправлено документов",
+        "всего не отправлено документов",
         "unsubmitted_documents",
     ),
     "quarter": ("quarter", "исходный квартал"),
@@ -68,6 +70,11 @@ LEGACY_COLUMNS = {
 }
 SNAPSHOT_FIELDS = {"kcr_code", "quarter", "total_documents", "unsubmitted_documents"}
 COUNTER_FIELDS = ("total_documents", "unsubmitted_documents")
+ANONYMIZED_CODE_HEADERS = {
+    "уникальный обезличенный идентификатор",
+    "уникальны обезличинный идентификатор",
+}
+ANNUAL_TITLE = re.compile(r"(?:(?:весь|годовой|годовая|годовые)\s+)?[0-9]{4}(?:\s*(?:г\.?|год))?")
 QUARTER_IN_TITLE = re.compile(
     r"(?<!\d)([0-9]{4})[\s_-]*q([1-4])(?=$|[\s_-])"
     r"|(?<!\w)(q[1-4]|[1-4]|iv|iii|ii|i)(?:\s*кв(?:артал)?\.?\s*|\s+)([0-9]{4})(?!\d)"
@@ -87,15 +94,14 @@ class InvalidWorkbook(ValueError):
     pass
 
 
-def sheet_skip_reason(title: str, selected_quarter: str) -> str | None:
+def sheet_skip_reason(
+    title: str, selected_quarter: str, *, allow_annual: bool = False
+) -> str | None:
     title = normalized_text(title)
+    if ANNUAL_TITLE.fullmatch(title):
+        return None if allow_annual else "Годовой, составной или служебный лист пропущен"
     quarters = QUARTER_IN_TITLE.findall(title)
-    if (
-        len(quarters) > 1
-        or AGGREGATE_TITLE.search(title)
-        or not quarters
-        and re.fullmatch(r"(?:весь\s+)?[0-9]{4}(?:\s*(?:г\.?|год))?", title)
-    ):
+    if len(quarters) > 1 or AGGREGATE_TITLE.search(title):
         return "Годовой, составной или служебный лист пропущен"
     if quarters:
         year, q, num, yr = quarters[0]
@@ -131,6 +137,18 @@ def header_columns(
         for index, value in enumerate(values)
         if (field := HEADER_FIELDS.get(normalized_text(value or ""))) in fields
     }
+    if (
+        import_type is ImportType.SNAPSHOT
+        and "kcr_code" not in columns
+        and any(field in columns for field in COUNTER_FIELDS)
+    ):
+        identifiers = [
+            index
+            for index, value in enumerate(values)
+            if normalized_text(value or "") in ANONYMIZED_CODE_HEADERS
+        ]
+        if len(identifiers) == 1:
+            columns["kcr_code"] = identifiers[0]
     code = columns.get("kcr_code")
     if code is None or code > 1 and len(columns) == 1:
         return None
@@ -302,8 +320,12 @@ def parse_workbook(
         try:
             raw = load_workbook(path, read_only=True, keep_links=False)
             try:
-                for sheet in cached.worksheets:
-                    reason = sheet_skip_reason(sheet.title, params.selected_quarter)
+                sheets = cached.worksheets
+                allow_annual = params.import_type is ImportType.SNAPSHOT and len(sheets) == 1
+                for sheet in sheets:
+                    reason = sheet_skip_reason(
+                        sheet.title, params.selected_quarter, allow_annual=allow_annual
+                    )
                     if reason:
                         result.errors.append(
                             ImportErrorRow(sheet=sheet.title, row_number=0, reason=reason)
