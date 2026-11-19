@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from clients_service.import_models import ClientStatus, Quarter, Tag
+from clients_service.import_models import Quarter, Tag
 
 
 class Dynamics(StrEnum):
@@ -42,7 +42,7 @@ class ClientListItem(BaseModel):
     kcr_code: str
     inn: str | None
     organization_name: str | None
-    status: ClientStatus
+    is_blocked: bool
     tags: list[Tag]
     needs_review: bool
     inherited_fields: dict[str, Any]
@@ -69,7 +69,6 @@ class ClientCard(BaseModel):
     inn: str | None
     kpp: str | None
     organization_name: str | None
-    status: ClientStatus
     is_blocked: bool
     manager_name: str | None
     contacts: dict[str, Any] | None

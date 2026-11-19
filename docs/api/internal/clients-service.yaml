@@ -681,11 +681,6 @@ components:
       - TECH_PARTNER
       - MPP
       - DO_NOT_WORK
-    ClientStatus:
-      type: string
-      enum:
-      - ACTIVE
-      - INACTIVE
     Dynamics:
       type: string
       enum:
@@ -769,8 +764,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         is_blocked:
           type: boolean
         manager_name:
@@ -796,6 +789,8 @@ components:
       allOf:
       - $ref: '#/components/schemas/Client'
       properties:
+        is_blocked:
+          type: boolean
         snapshots:
           type: array
           description: Актуальные срезы по кварталам, свежие первыми.
@@ -845,6 +840,7 @@ components:
           - $ref: '#/components/schemas/QuarterSummary'
           - type: 'null'
       required:
+      - is_blocked
       - dynamics_quarter
       - dynamics_previous_quarter
       - dynamics_current_documents
@@ -901,10 +897,10 @@ components:
 
         '
       required:
+      - is_blocked
       - kcr_code
       - inn
       - organization_name
-      - status
       - tags
       - dynamics_quarter
       - dynamics_previous_quarter
@@ -912,6 +908,8 @@ components:
       - dynamics_previous_documents
       - quarter_summary
       properties:
+        is_blocked:
+          type: boolean
         kcr_code:
           type: string
         inn:
@@ -922,8 +920,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         tags:
           type: array
           items:
@@ -1058,10 +1054,6 @@ components:
                     type:
                     - string
                     - 'null'
-                  status:
-                    oneOf:
-                    - $ref: '#/components/schemas/ClientStatus'
-                    - type: 'null'
                   tags:
                     type:
                     - array

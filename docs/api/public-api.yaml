@@ -1227,12 +1227,6 @@ components:
       - TECH_PARTNER
       - MPP
       - DO_NOT_WORK
-    ClientStatus:
-      type: string
-      description: Статус клиента (`spec.md` §2.2).
-      enum:
-      - ACTIVE
-      - INACTIVE
     Stage:
       type: string
       description: Этап работы по клиенту (`spec.md` §2.2).
@@ -1300,10 +1294,10 @@ components:
       type: object
       description: Строка общей таблицы клиентов.
       required:
+      - is_blocked
       - kcr_code
       - inn
       - organization_name
-      - status
       - tags
       - current_stage
       - assigned_operator_id
@@ -1338,8 +1332,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         is_blocked:
           type: boolean
         manager_name:
@@ -1489,10 +1481,10 @@ components:
       description: Карточка клиента с полной историей взаимодействия (`spec.md` §3.3, §4.4). Рабочие поля заполняет
         Gateway агрегацией Clients + Operator Work + Identity DB (ADR-0012).
       required:
+      - is_blocked
       - kcr_code
       - inn
       - organization_name
-      - status
       - tags
       - current_stage
       - assignment
@@ -1525,8 +1517,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         is_blocked:
           type: boolean
         manager_name:

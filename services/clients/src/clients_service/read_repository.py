@@ -95,7 +95,7 @@ CANDIDATES_SQL = """
 
 METRICS_SQL = """
     metrics AS (
-        SELECT c.kcr_code, c.inn, c.kpp, c.organization_name, c.status, c.is_blocked,
+        SELECT c.kcr_code, c.inn, c.kpp, c.organization_name, c.is_blocked,
             c.manager_name, c.contacts, c.needs_review, c.inherited_fields,
             ARRAY(SELECT t.code FROM client_tags ct JOIN tags t ON t.id = ct.tag_id
                   WHERE ct.kcr_code = c.kcr_code ORDER BY t.code) AS tags,

@@ -80,7 +80,6 @@
 - `inn`: String (Indexed)
 - `kpp`: String
 - `organization_name`: String
-- `status`: Enum (`ACTIVE`, `INACTIVE`)
 - `is_blocked`: Boolean
 - `manager_name`: String
 - `contacts`: JSONB

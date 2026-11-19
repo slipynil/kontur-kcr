@@ -38,17 +38,6 @@ def counter(value: str | None, label: str) -> int | None:
     return int(number)
 
 
-def client_status(value: str | None) -> str | None:
-    if value is None:
-        return None
-    key = normalized_text(value)
-    if key in {"active", "действующий", "дейсвующий", "действует"}:
-        return "ACTIVE"
-    if key in {"inactive", "недействующий", "не действующий", "не действует"}:
-        return "INACTIVE"
-    raise InvalidRow("Неизвестное значение действительности клиента")
-
-
 def blocked(value: str | None) -> bool | None:
     if value is None:
         return None
