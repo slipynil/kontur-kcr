@@ -156,7 +156,7 @@ function UploadForm() {
           <option value="REGISTRY">Реестр</option><option value="SNAPSHOT">Срез</option>
         </select></label>
         {type === 'SNAPSHOT' && <>
-          <label>Квартал загрузки<QuarterInput required value={quarter} onChange={setQuarter} /></label>
+          <QuarterInput label="Квартал загрузки" required value={quarter} onChange={setQuarter} />
           <DateField label="Дата среза" value={date} onChange={setDate} required />
         </>}
       </div>
