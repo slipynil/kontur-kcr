@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 QUARTER_PATTERN = r"^[0-9]{4}_Q[1-4]$"
 Quarter = Annotated[str, Field(pattern=QUARTER_PATTERN)]
@@ -54,7 +55,8 @@ class ClientInput(BaseModel):
     inn: str | None = None
     kpp: str | None = None
     organization_name: str | None = None
-    status: str | None = None
+    # Preserve the payload of legacy in-flight batches when retrying delivery.
+    status: SkipJsonSchema[str | None] = None
     is_blocked: bool | None = None
     manager_name: str | None = None
     contacts: dict[str, str] | None = None

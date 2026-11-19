@@ -144,8 +144,8 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
               <dl className="data-grid">
                 <div><dt>ИНН</dt><dd>{c.inn ?? '—'}</dd></div>
                 <div><dt>КПП</dt><dd>{c.kpp ?? '—'}</dd></div>
-                <div><dt>Статус</dt><dd><Badge tone={c.is_blocked ? 'bad' : c.status === 'ACTIVE' ? 'good' : 'neutral'}>
-                  {c.is_blocked ? 'Заблокирован' : c.status === 'ACTIVE' ? 'Активен' : 'Неактивен'}
+                <div><dt>Блокировка</dt><dd><Badge tone={c.is_blocked ? 'bad' : 'good'}>
+                  {c.is_blocked ? 'Заблокирован' : 'Нет блокировки'}
                 </Badge></dd></div>
                 <div><dt>Менеджер</dt><dd>{c.manager_name ?? '—'}</dd></div>
                 <div><dt>Признаки</dt><dd>{c.tags.map(tag => tags[tag] ?? tag).join(', ') || '—'}</dd></div>

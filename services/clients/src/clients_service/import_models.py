@@ -6,7 +6,15 @@ from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 Quarter = Annotated[str, Field(pattern=r"^\d{4}_Q[1-4]$")]
 CalendarQuarter = Annotated[
@@ -29,11 +37,6 @@ class Tag(StrEnum):
     DO_NOT_WORK = "DO_NOT_WORK"
 
 
-class ClientStatus(StrEnum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-
-
 class InputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,12 +46,18 @@ class ClientInput(InputModel):
     inn: str | None = None
     kpp: str | None = None
     organization_name: str | None = None
-    status: ClientStatus | None = None
     tags: list[Tag] | None = None
     manager_name: str | None = None
     is_blocked: StrictBool | None = None
     contacts: dict[str, Any] | None = None
     raw_work_status: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_legacy_status(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "status" in value:
+            return {key: field for key, field in value.items() if key != "status"}
+        return value
 
     @field_validator("kcr_code")
     @classmethod

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pashagolub/pgxmock/v5"
 
 	"github.com/slipynil/kontur-kcr/services/identity/internal/auth"
@@ -43,6 +44,27 @@ func newMockStore(t *testing.T) (pgxmock.PgxPoolIface, *identity.PostgresStore) 
 }
 
 var testCreatedAt = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+func TestOpenRejectsMalformedDSN(t *testing.T) {
+	if _, err := identity.Open(context.Background(), "postgres://%zz"); err == nil {
+		t.Fatal("Open(malformed dsn) = nil error, want parse error")
+	}
+}
+
+func TestPostgresCloseIgnoresNonPoolDB(t *testing.T) {
+	_, store := newMockStore(t)
+	// pgxmock — не пул: Close ничего не делает и не паникует.
+	store.Close()
+}
+
+func TestPostgresCloseClosesPool(t *testing.T) {
+	// connect_timeout сокращает ожидание фонового подключения при Close.
+	pool, err := pgxpool.New(context.Background(), "postgres://identity:identity@127.0.0.1:1/identity?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.NewPostgresStore(pool).Close()
+}
 
 func TestPostgresGetByLogin(t *testing.T) {
 	mock, store := newMockStore(t)
@@ -173,6 +195,33 @@ func TestPostgresList(t *testing.T) {
 	}
 	if total != 2 || len(users) != 2 {
 		t.Fatalf("total = %d, users = %d, want 2, 2", total, len(users))
+	}
+}
+
+func TestPostgresGetByIDsIterationFailure(t *testing.T) {
+	mock, store := newMockStore(t)
+	id := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	rows := pgxmock.NewRows(userColumns()).
+		AddRow(id, "ivanov", "$2a$10$hash", auth.RoleAdmin, true, testCreatedAt).
+		RowError(1, errors.New("rows iteration failed"))
+	mock.ExpectQuery(selectByIDsSQL).WithArgs(pgxmock.AnyArg()).WillReturnRows(rows)
+
+	_, err := store.GetByIDs(context.Background(), []uuid.UUID{id})
+	if err == nil {
+		t.Fatal("error = nil, want rows iteration error")
+	}
+}
+
+func TestPostgresListIterationFailure(t *testing.T) {
+	mock, store := newMockStore(t)
+	rows := pgxmock.NewRows(append(userColumns(), "total")).
+		AddRow(uuid.New(), "ivanov", "$2a$10$hash", auth.RoleAdmin, true, testCreatedAt, 1).
+		RowError(1, errors.New("rows iteration failed"))
+	mock.ExpectQuery(listSQL).WithArgs(20, 0).WillReturnRows(rows)
+
+	_, _, err := store.List(context.Background(), 20, 0)
+	if err == nil {
+		t.Fatal("error = nil, want rows iteration error")
 	}
 }
 

@@ -454,7 +454,18 @@ class Assignments:
             ).mappings()
             return {"items": [dict(row) for row in rows]}
 
-    def pool(self, quarter: str) -> list[dict]:
+    def published_codes(self, code: str | None = None) -> list[str]:
+        with self.engine.connect() as db:
+            return list(
+                db.execute(
+                    text("""SELECT kcr_code FROM client_work_cycles
+                        WHERE is_current AND published_at IS NOT NULL
+                          AND (CAST(:code AS text) IS NULL OR kcr_code = :code)"""),
+                    {"code": code},
+                ).scalars()
+            )
+
+    def pool(self, quarter: str, visible_codes: list[str] | None = None) -> list[dict]:
         with self.engine.connect() as db:
             rows = db.execute(
                 text(
@@ -469,9 +480,11 @@ class Assignments:
                               cycle.wait_until > (statement_timestamp() AT TIME ZONE
                                                   'Europe/Moscow')::date)
                          AND cycle.is_current
+                         AND (CAST(:codes AS text[]) IS NULL
+                              OR cycle.kcr_code = ANY(CAST(:codes AS text[])))
                        ORDER BY cycle.kcr_code"""
                 ),
-                {"quarter": quarter},
+                {"quarter": quarter, "codes": visible_codes},
             ).mappings()
             return [dict(row) for row in rows]
 
@@ -563,22 +576,29 @@ class Assignments:
                 raise WorkError(409, "REQUEST_ID_CONFLICT", "ID запроса уже используется")
             return 202, dict(row)
 
-    def notifications(self, operator: UUID, limit: int, offset: int) -> list[dict]:
+    def notifications(
+        self, operator: UUID, limit: int, offset: int, visible_codes: list[str] | None = None
+    ) -> list[dict]:
         with self.engine.connect() as db:
             rows = db.execute(
                 text(
                     """SELECT * FROM client_reassignment_requests
-                       WHERE owner_id = :operator OR requester_id = :operator
+                       WHERE (owner_id = :operator OR requester_id = :operator)
+                         AND (CAST(:codes AS text[]) IS NULL OR kcr_code = ANY(CAST(:codes AS text[])))
                        ORDER BY (status = 'PENDING') DESC, created_at DESC, id DESC
                        LIMIT :limit OFFSET :offset"""
                 ),
-                {"operator": operator, "limit": limit, "offset": offset},
+                {"operator": operator, "limit": limit, "offset": offset, "codes": visible_codes},
             ).mappings()
             return [dict(row) for row in rows]
 
-    def reject(self, request_id: UUID, operator: UUID) -> tuple[int, dict]:
+    def reject(
+        self, request_id: UUID, operator: UUID, visible_codes: list[str] | None = None
+    ) -> tuple[int, dict]:
         with self.engine.begin() as db:
             request = self._owned_request(db, request_id, operator)
+            if visible_codes is not None and request["kcr_code"] not in visible_codes:
+                raise WorkError(404, "REASSIGNMENT_NOT_FOUND", "Запрос не найден")
             now = _lock(db, request["kcr_code"])
             request = self._owned_request(db, request_id, operator)
             if request["status"] == "PENDING":

@@ -9,7 +9,7 @@ jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }))
 const user: User = { id: 'operator', login: 'operator', role: 'OPERATOR', is_active: true, created_at: '' };
 const assignmentId = '11111111-1111-4111-8111-111111111111';
 const card: ClientCard = {
-  kcr_code: 'A', inn: null, organization_name: 'Компания', status: 'ACTIVE', tags: [],
+  kcr_code: 'A', inn: null, organization_name: 'Компания', is_blocked: false, tags: [],
   current_stage: 'IN_WORK', assignment_id: assignmentId, work_quarter: '2026_Q4',
   assignment: { operator_id: user.id, operator_name: user.login, assigned_at: '', work_quarter: '2026_Q4' },
   snapshots: [{ kcr_code: 'A', quarter: '2026_Q3', total_documents: 20, unsubmitted_documents: 10, snapshot_date: '2026-10-01' }],

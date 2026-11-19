@@ -147,6 +147,23 @@ def test_filter_before_pagination_tags_and_literal_search(data):
     assert [item.kcr_code for item in list_clients(engine).items] == ["ABC%_", "a", "b", "c"]
 
 
+def test_operator_registry_filters_unblocked_published_clients_before_pagination(data):
+    engine, _, _ = data
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE clients SET is_blocked = true WHERE kcr_code = 'a'"))
+
+    scope = ["a", "b", "c"]
+    result = list_clients(engine, visible_codes=scope, page_size=1)
+    assert result.total == 2
+    assert [item.kcr_code for item in result.items] == ["b"]
+    assert [
+        item.kcr_code for item in list_clients(engine, visible_codes=scope, search="00123").items
+    ] == ["b"]
+    assert list_clients(engine, visible_codes=scope, search="ABC%_").total == 0
+    assert list_clients(engine, visible_codes=[]).total == 0
+    assert list_clients(engine).total == 4
+
+
 def test_duration_first_repeat_long_reset_and_no_calendar_ageing(data):
     engine, _, add = data
     add([snapshot("a", "2026_Q1", 10)])

@@ -42,7 +42,6 @@ export type LoginResponse = {
 
 export type Tag = "VIP" | "NOVICE" | "INTEGRATOR" | "TECH_PARTNER" | "MPP" | "DO_NOT_WORK";
 
-export type ClientStatus = "ACTIVE" | "INACTIVE";
 
 export type Stage = "POOL" | "IN_WORK" | "WAIT_DEADLINE" | "CLAIM" | "CLOSED";
 
@@ -67,8 +66,7 @@ export type ClientListItem = {
   inn: string | null;
   kpp?: string | null;
   organization_name: string | null;
-  status: ClientStatus;
-  is_blocked?: boolean;
+  is_blocked: boolean;
   manager_name?: string | null;
   tags: (Tag)[];
   current_stage: Stage;
@@ -118,8 +116,7 @@ export type ClientCard = {
   inn: string | null;
   kpp?: string | null;
   organization_name: string | null;
-  status: ClientStatus;
-  is_blocked?: boolean;
+  is_blocked: boolean;
   manager_name?: string | null;
   contacts?: Record<string, unknown> | null;
   tags: (Tag)[];

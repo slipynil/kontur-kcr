@@ -155,6 +155,22 @@ paths:
                 $ref: '#/components/schemas/Error'
         '422':
           description: Некорректный пакет, квартал или повторяющиеся коды.
+  /pool/published-codes:
+    get:
+      operationId: listCurrentPublishedCodes
+      summary: Коды клиентов с текущим опубликованным циклом
+      x-roles: [OPERATOR]
+      parameters:
+      - name: kcr_code
+        in: query
+        schema: {type: string}
+      responses:
+        '200':
+          description: Коды для проверки доступности в Gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientVisibilityScope'
   /pool/publication:
     put:
       operationId: publishPool
@@ -204,14 +220,14 @@ paths:
       operationId: listPublishedClients
       summary: Получить опубликованный пул текущего квартала
       x-roles: [ADMIN, OPERATOR]
-      parameters:
+      parameters: &poolParams
       - $ref: '#/components/parameters/WorkQuarter'
       - $ref: '#/components/parameters/UserIdHeader'
       - name: X-User-Role
         in: header
         required: true
         schema: { type: string, enum: [ADMIN, OPERATOR] }
-      responses:
+      responses: &poolResponses
         '200':
           description: Коды клиентов и актуальные ответственные.
           content:
@@ -228,6 +244,19 @@ paths:
                       properties:
                         kcr_code: { type: string }
                         assigned_operator_id: { type: [string, 'null'], format: uuid }
+    post:
+      operationId: listScopedPublishedClients
+      summary: Получить опубликованный пул текущего квартала
+      x-roles: [ADMIN, OPERATOR]
+      parameters: *poolParams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses: *poolResponses
+
   /clients/{kcr_code}/publication:
     put:
       operationId: publishClient
@@ -336,7 +365,7 @@ paths:
       operationId: listReassignmentNotifications
       summary: Получить входящие и отправленные запросы
       x-roles: [OPERATOR]
-      parameters:
+      parameters: &notificationsParams
       - $ref: '#/components/parameters/UserIdHeader'
       - name: X-User-Role
         in: header
@@ -348,7 +377,7 @@ paths:
       - name: offset
         in: query
         schema: { type: integer, minimum: 0, default: 0 }
-      responses:
+      responses: &notificationsResponses
         '200':
           description: Уведомления текущего оператора.
           content:
@@ -361,6 +390,19 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ReassignmentRequest'
+    post:
+      operationId: listScopedReassignmentNotifications
+      summary: Получить входящие и отправленные запросы
+      x-roles: [OPERATOR]
+      parameters: *notificationsParams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses: *notificationsResponses
+
   /reassignment-notifications/{request_id}/reject:
     post:
       operationId: rejectReassignment
@@ -376,6 +418,12 @@ paths:
         in: path
         required: true
         schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
       responses:
         '200':
           description: Запрос отклонён текущим получателем уведомления.
@@ -601,6 +649,13 @@ components:
         type: string
         format: uuid
   schemas:
+    ClientVisibilityScope:
+      type: object
+      required: [codes]
+      properties:
+        codes:
+          type: array
+          items: {type: string}
     SnapshotDelivery:
       type: object
       additionalProperties: false

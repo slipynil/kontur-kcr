@@ -33,6 +33,21 @@ def restore_rows(connection, table, rows, *, upsert_client=False):
         raise ValueError("Unexpected recovery table")
     if not rows:
         return 0
+    if table.name in {"clients", "quarter_snapshot_history"}:
+        # Undo made before the migration can still contain obsolete provenance.
+        rows = [dict(row) for row in rows]
+        for row in rows:
+            fields = row.get("inherited_fields") or {}
+            if "status" in fields:
+                row["inherited_fields"] = {
+                    key: value for key, value in fields.items() if key != "status"
+                }
+                if table.name == "clients":
+                    row["needs_review"] = bool(row["inherited_fields"])
+            if table.name == "clients" and "status" in (row.get("field_sources") or {}):
+                row["field_sources"] = {
+                    key: value for key, value in row["field_sources"].items() if key != "status"
+                }
     identity = " OVERRIDING SYSTEM VALUE" if table.name == "quarter_snapshot_history" else ""
     statement = (
         f"INSERT INTO {table.name}{identity} SELECT * FROM "

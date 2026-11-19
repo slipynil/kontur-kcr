@@ -20,6 +20,7 @@ from clients_service.read_repository import (
     get_card,
     get_history,
     list_clients,
+    unblocked_codes,
 )
 
 router = APIRouter(prefix="/internal/v1/clients", tags=["Registry"])
@@ -101,14 +102,34 @@ class AffectedClientsQuery(BaseModel):
     offset: int = Field(default=0, ge=0, le=100_000_000)
 
 
-@router.get("", response_model=ClientPage, operation_id="listClients")
-def registry(request: Request, query: Annotated[ListQuery, Query()]):
+class ClientScope(BaseModel):
+    codes: list[str]
+
+
+def read_registry(request: Request, query: ListQuery, visible_codes: list[str] | None = None):
     validate_unique_parameters(request)
     parameters = query.model_dump()
     parameters["tags"] = query.tags.split(",") if query.tags else ()
     if parameters["search"] is not None:
         parameters["search"] = parameters["search"].strip()
-    return list_clients(request.app.state.engine, **parameters)
+    return list_clients(request.app.state.engine, visible_codes=visible_codes, **parameters)
+
+
+@router.get("", response_model=ClientPage, operation_id="listClients")
+def registry(request: Request, query: Annotated[ListQuery, Query()]):
+    return read_registry(request, query)
+
+
+@router.post("/operator-registry", response_model=ClientPage, operation_id="listOperatorClients")
+def operator_registry(request: Request, query: Annotated[ListQuery, Query()], scope: ClientScope):
+    return read_registry(request, query, scope.codes)
+
+
+@router.post(
+    "/unblocked-codes", response_model=ClientScope, operation_id="filterUnblockedClientCodes"
+)
+def filter_unblocked_codes(request: Request, scope: ClientScope):
+    return ClientScope(codes=unblocked_codes(request.app.state.engine, scope.codes))
 
 
 @router.get("/{kcr_code}", response_model=ClientCard, operation_id="getClient")

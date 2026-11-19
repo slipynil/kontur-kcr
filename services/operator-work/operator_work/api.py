@@ -37,6 +37,10 @@ class TakeRequest(BaseModel):
     request_id: UUID
 
 
+class ClientScope(BaseModel):
+    codes: list[str]
+
+
 class PublishPoolRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -174,6 +178,18 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     def pool(work_quarter: Quarter, _user: Annotated[tuple[UUID, str], Depends(actor)]):
         return {"items": app.state.assignments.pool(work_quarter)}
 
+    @app.get("/internal/v1/pool/published-codes", operation_id="listCurrentPublishedCodes")
+    def published_codes(_user: Annotated[UUID, Depends(operator)], kcr_code: str | None = None):
+        return ClientScope(codes=app.state.assignments.published_codes(kcr_code))
+
+    @app.post(
+        "/internal/v1/pool", response_model=PoolResponse, operation_id="listScopedPublishedClients"
+    )
+    def scoped_pool(
+        scope: ClientScope, work_quarter: Quarter, _user: Annotated[UUID, Depends(operator)]
+    ):
+        return {"items": app.state.assignments.pool(work_quarter, scope.codes)}
+
     @app.get(
         "/internal/v1/clients/{kcr_code}/cycles",
         response_model=CycleList,
@@ -263,9 +279,26 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     ):
         return {"items": app.state.assignments.notifications(user, limit, offset)}
 
+    @app.post(
+        "/internal/v1/reassignment-notifications",
+        operation_id="listScopedReassignmentNotifications",
+    )
+    def scoped_notifications(
+        scope: ClientScope,
+        user: Annotated[UUID, Depends(operator)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return {"items": app.state.assignments.notifications(user, limit, offset, scope.codes)}
+
     @app.post("/internal/v1/reassignment-notifications/{request_id}/reject")
-    def reject(request_id: UUID, user: Annotated[UUID, Depends(operator)]):
-        status, result = app.state.assignments.reject(request_id, user)
+    def reject(
+        request_id: UUID, user: Annotated[UUID, Depends(operator)], scope: ClientScope | None = None
+    ):
+        if scope is None:
+            status, result = app.state.assignments.reject(request_id, user)
+        else:
+            status, result = app.state.assignments.reject(request_id, user, scope.codes)
         return JSONResponse(status_code=status, content=jsonable_encoder(result))
 
     return app

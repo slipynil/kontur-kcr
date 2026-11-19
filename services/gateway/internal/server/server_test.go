@@ -131,7 +131,22 @@ func newTestEnv(t *testing.T) *testEnv {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			spy.record(r)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
+			body := `{"ok":true}`
+			switch r.URL.Path {
+			case "/internal/v1/pool/published-codes":
+				if r.URL.Query().Get("kcr_code") == "HIDDEN" {
+					body = `{"codes":[]}`
+				} else {
+					body = `{"codes":["6671-0042"]}`
+				}
+			case "/internal/v1/clients/unblocked-codes":
+				body = `{"codes":["6671-0042"]}`
+			case "/internal/v1/clients/6671-0042":
+				body = `{"is_blocked":false,"kcr_code":"6671-0042"}`
+			case "/internal/v1/clients/6671-0042/work-state":
+				body = `{"work_quarter":"2026_Q4","stage":"POOL"}`
+			}
+			_, _ = w.Write([]byte(body))
 		}))
 		t.Cleanup(server.Close)
 		return server, spy
@@ -381,7 +396,7 @@ func TestProxyRoutingTable(t *testing.T) {
 	}{
 		{
 			name: "clients list", method: http.MethodGet, target: "/api/v1/clients",
-			token: operator, wantCode: http.StatusOK, wantSpy: env.clients, wantPath: "GET /internal/v1/clients",
+			token: operator, wantCode: http.StatusOK, wantSpy: env.clients, wantPath: "POST /internal/v1/clients/operator-registry",
 		},
 		{
 			name: "client card", method: http.MethodGet, target: "/api/v1/clients/6671-0042",
@@ -401,7 +416,7 @@ func TestProxyRoutingTable(t *testing.T) {
 		},
 		{
 			name: "reassignment notifications", method: http.MethodGet, target: "/api/v1/reassignment-notifications",
-			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/reassignment-notifications",
+			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "POST /internal/v1/reassignment-notifications",
 		},
 		{
 			name: "publish pool", method: http.MethodPut, target: "/api/v1/pool/publication?work_quarter=2026_Q4",
@@ -409,7 +424,7 @@ func TestProxyRoutingTable(t *testing.T) {
 		},
 		{
 			name: "read published pool", method: http.MethodGet, target: "/api/v1/pool?work_quarter=2026_Q4",
-			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "GET /internal/v1/pool",
+			token: operator, wantCode: http.StatusOK, wantSpy: env.operator, wantPath: "POST /internal/v1/pool",
 		},
 		{
 			name: "publish client", method: http.MethodPut, target: "/api/v1/clients/6671-0042/publication?work_quarter=2026_Q4",
@@ -440,7 +455,7 @@ func TestProxyRoutingTable(t *testing.T) {
 				t.Fatalf("status = %d, want %d, body %s", w.Code, tt.wantCode, w.Body.String())
 			}
 			paths := tt.wantSpy.paths
-			if len(paths) != before+1 || paths[len(paths)-1] != tt.wantPath {
+			if len(paths) <= before || paths[len(paths)-1] != tt.wantPath {
 				t.Fatalf("upstream got %v, want last %q", paths, tt.wantPath)
 			}
 		})
@@ -475,6 +490,27 @@ func TestProxyRoleRestrictions(t *testing.T) {
 				t.Fatalf("status = %d, want 401/403", w.Code)
 			}
 		})
+	}
+}
+
+func TestOperatorCannotAccessUnpublishedClientRoutes(t *testing.T) {
+	env := newTestEnv(t)
+	operator := env.login(t, "operator")
+	for _, route := range []struct{ method, suffix string }{
+		{http.MethodGet, "/snapshots/history"},
+		{http.MethodGet, "/events"},
+		{http.MethodPost, "/events"},
+		{http.MethodPost, "/take"},
+	} {
+		target := "/api/v1/clients/HIDDEN" + route.suffix
+		if w := env.do(route.method, target, operator); w.Code != http.StatusNotFound {
+			t.Errorf("%s %s: status %d, body %s", route.method, target, w.Code, w.Body.String())
+		}
+	}
+	for _, path := range env.operator.paths {
+		if strings.Contains(path, "/clients/HIDDEN/") {
+			t.Errorf("hidden client request reached upstream: %s", path)
+		}
 	}
 }
 

@@ -2,7 +2,7 @@ import { describe, test as base } from '@e2e-dev/web';
 import { expect } from 'e2e';
 import { randomInt } from 'node:crypto';
 import {
-  accounts, api, applyClient, businessDate, cleanupClient, dateInQuarter, newCode, quarterAt, signIn,
+  accounts, api, applyClient, businessDate, cleanupClient, dateInQuarter, newCode, publish, quarterAt, signIn,
   type Actor,
 } from './kontur-fixtures';
 
@@ -42,7 +42,14 @@ describe('client registry', { session: 'admin' }, () => {
     await app.open('/');
     await screen.getByLabel('Код КЦР или ИНН').fill(client.inn.slice(1));
     await screen.getByRole('button', 'Применить').tap();
+    await expect(screen.getByText('Клиенты не найдены', { exact: true })).toBeVisible();
+    await app.open(`/client/${client.code}`);
+    await expect(screen.getByText('Клиент недоступен', { exact: true })).toBeVisible();
 
+    await publish(client.admin, client.code, client.quarter);
+    await app.open('/');
+    await screen.getByLabel('Код КЦР или ИНН').fill(client.inn.slice(1));
+    await screen.getByRole('button', 'Применить').tap();
     await expect(screen.getByRole('button', client.code)).toBeVisible();
   });
 

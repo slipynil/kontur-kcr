@@ -56,7 +56,7 @@ paths:
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
         кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
-      parameters:
+      parameters: &registryParams
       - name: search
         in: query
         description: Буквальное вхождение в КЦР или ИНН, без учёта регистра. Символы % и _ не являются шаблонами.
@@ -139,7 +139,7 @@ paths:
           type: number
           minimum: 0
           maximum: 100
-      responses:
+      responses: &registryResponses
         '200':
           description: Страница реестра.
           content:
@@ -158,6 +158,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /clients/operator-registry:
+    post:
+      tags: [Registry]
+      operationId: listOperatorClients
+      summary: Реестр незаблокированных клиентов в опубликованной области доступа
+      parameters: *registryParams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses: *registryResponses
+  /clients/unblocked-codes:
+    post:
+      operationId: filterUnblockedClientCodes
+      summary: Оставить незаблокированные коды из переданной области доступа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses:
+        '200':
+          description: Незаблокированные коды
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientVisibilityScope'
+
   /clients/{kcr_code}:
     get:
       tags:
@@ -626,6 +657,13 @@ components:
         type: string
       example: 6671-0042
   schemas:
+    ClientVisibilityScope:
+      type: object
+      required: [codes]
+      properties:
+        codes:
+          type: array
+          items: {type: string}
     AffectedClientsPage:
       type: object
       required: [batch_id, items, total, limit, offset]
@@ -681,11 +719,6 @@ components:
       - TECH_PARTNER
       - MPP
       - DO_NOT_WORK
-    ClientStatus:
-      type: string
-      enum:
-      - ACTIVE
-      - INACTIVE
     Dynamics:
       type: string
       enum:
@@ -769,8 +802,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         is_blocked:
           type: boolean
         manager_name:
@@ -796,6 +827,8 @@ components:
       allOf:
       - $ref: '#/components/schemas/Client'
       properties:
+        is_blocked:
+          type: boolean
         snapshots:
           type: array
           description: Актуальные срезы по кварталам, свежие первыми.
@@ -845,6 +878,7 @@ components:
           - $ref: '#/components/schemas/QuarterSummary'
           - type: 'null'
       required:
+      - is_blocked
       - dynamics_quarter
       - dynamics_previous_quarter
       - dynamics_current_documents
@@ -901,10 +935,10 @@ components:
 
         '
       required:
+      - is_blocked
       - kcr_code
       - inn
       - organization_name
-      - status
       - tags
       - dynamics_quarter
       - dynamics_previous_quarter
@@ -912,6 +946,8 @@ components:
       - dynamics_previous_documents
       - quarter_summary
       properties:
+        is_blocked:
+          type: boolean
         kcr_code:
           type: string
         inn:
@@ -922,8 +958,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          $ref: '#/components/schemas/ClientStatus'
         tags:
           type: array
           items:
@@ -1058,10 +1092,6 @@ components:
                     type:
                     - string
                     - 'null'
-                  status:
-                    oneOf:
-                    - $ref: '#/components/schemas/ClientStatus'
-                    - type: 'null'
                   tags:
                     type:
                     - array

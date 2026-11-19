@@ -103,8 +103,8 @@ type workState struct {
 
 // Client отдаёт агрегированную карточку: GET /api/v1/clients/{kcr_code}.
 // Clients — источник карточки; его ошибки уходят наружу как есть, как при проксировании.
-// Operator Work: 404 означает «цикла нет» — карточка отдаётся с пустыми рабочими
-// полями, любая другая ошибка срывает ответ целиком со статусом 502
+// Operator Work: 404 скрывает карточку у оператора, администратор получает
+// карточку с пустыми рабочими полями.
 // (решение по ADR-0012, docs/api/public-api.yaml getClientCard).
 func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 	who, ok := auth.FromContext(r.Context())
@@ -137,6 +137,10 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 	cardResult, stateResult := <-cardCh, <-stateCh
 
 	if cardResult.failure != nil {
+		if who.Role == auth.RoleOperator && cardResult.failure.status == http.StatusNotFound {
+			hiddenClient(w)
+			return
+		}
 		a.respondUpstreamFailure(w, cardResult.failure, "clients")
 		return
 	}
@@ -144,6 +148,10 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(cardResult.body, &card); err != nil {
 		a.log.Error("clients card is not a json object", "error", err)
 		httpx.WriteInternalError(w)
+		return
+	}
+	if who.Role == auth.RoleOperator && card["is_blocked"] != false {
+		hiddenClient(w)
 		return
 	}
 
@@ -159,8 +167,22 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 		}
 		state = &parsed
 	case stateResult.failure.status == http.StatusNotFound:
-		// Нет действующего цикла — карточка отдаётся с пустыми рабочими полями.
+		if who.Role == auth.RoleOperator {
+			hiddenClient(w)
+			return
+		}
 	case stateResult.failure.status == http.StatusConflict:
+		if who.Role == auth.RoleOperator {
+			scope, failure := a.publishedScope(r, who, code)
+			if failure != nil {
+				a.respondUpstreamFailure(w, failure, "client visibility")
+				return
+			}
+			if len(scope.Codes) == 0 {
+				hiddenClient(w)
+				return
+			}
+		}
 		// Исторический цикл запрошен явно: ответ Operator Work в едином формате.
 		a.respondUpstreamFailure(w, stateResult.failure, "operator-work")
 		return
@@ -290,6 +312,9 @@ func decodeUpstreamError(status int, body []byte) *upstreamFailure {
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || payload.Code == "" {
+		if status == http.StatusUnprocessableEntity {
+			return &upstreamFailure{status: status, code: httpx.CodeValidationError, message: "Некорректные параметры запроса"}
+		}
 		return unavailable()
 	}
 	return &upstreamFailure{status: status, code: payload.Code, message: payload.Message}
