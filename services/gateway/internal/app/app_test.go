@@ -76,6 +76,35 @@ func TestRunFailsOnUnreachableDB(t *testing.T) {
 	}
 }
 
+func TestRunFailsOnInvalidUpstreamURL(t *testing.T) {
+	configs.Initialize(".env", t.TempDir(), "env")
+	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("CLIENTS_ENDPOINT", "clients-without-scheme")
+
+	err := app.Run(context.Background(), configs.GetConfig(), app.WithStore(&stubStore{}))
+	if err == nil {
+		t.Fatal("Run = nil, want error for an invalid upstream url")
+	}
+	if !strings.Contains(err.Error(), "init server") {
+		t.Errorf("error = %v, want server init failure", err)
+	}
+}
+
+func TestSeedFailsOnUnreachableDB(t *testing.T) {
+	configs.Initialize(".env", t.TempDir(), "env")
+	t.Setenv("ADMIN_LOGIN", "admin")
+	t.Setenv("ADMIN_PASSWORD", "password123")
+	t.Setenv("IDENTITY_DSN", "postgres://identity:identity@127.0.0.1:1/identity?sslmode=disable")
+
+	err := app.Seed(context.Background(), configs.GetConfig())
+	if err == nil {
+		t.Fatal("Seed = nil, want error for an unreachable identity db")
+	}
+	if !strings.Contains(err.Error(), "identity db") {
+		t.Errorf("error = %v, want identity db failure", err)
+	}
+}
+
 func TestRunStopsOnContextCancel(t *testing.T) {
 	cfg := testConfig(t)
 

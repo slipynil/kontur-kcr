@@ -64,6 +64,15 @@ func TestRequestLoggerDefaultsStatusOK(t *testing.T) {
 	}
 }
 
+func TestStatusWriterUnwrap(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writer := &statusWriter{ResponseWriter: recorder}
+
+	if got := writer.Unwrap(); got != recorder {
+		t.Fatalf("Unwrap() = %v, want the wrapped writer", got)
+	}
+}
+
 func TestRecoverer(t *testing.T) {
 	log, buf := testLogger()
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
