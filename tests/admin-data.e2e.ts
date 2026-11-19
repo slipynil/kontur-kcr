@@ -141,28 +141,33 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
     }
   });
 
-  test('rejects a workbook containing only an annual snapshot without saving a quarterly snapshot', async ({ app, browser, screen, data }) => {
+  test('imports a standalone annual snapshot into the explicitly selected quarter', async ({ app, browser, screen, data }) => {
     const { code, admin, quarter } = data;
     const annualSheet = `весь ${quarter.slice(0, 4)} год`;
+    const date = dateInQuarter(quarter, 2);
     const file = workbook(`${code}-annual.xlsx`, {
-      [annualSheet]: [snapshotHeadings.slice(0, 3), [code, 100, 10]],
+      [annualSheet]: [
+        ['Уникальны обезличинный идентификатор', 'Код КЦР', 'Наитменование организации', 'документов всего', 'Всего не отправлено документов'],
+        ['anonymized-id', code, 'Тестовая организация', 100, 10],
+      ],
     });
     try {
       applyClient(admin, { code, quarter, registry: true, date: dateInQuarter(quarter) });
-      await uploadSnapshot(app, screen, file.path, quarter, dateInQuarter(quarter, 2));
+      await uploadSnapshot(app, screen, file.path, quarter, date);
 
       await expect(browser).toHaveURL(/\/import-report\?batch=/);
-      await expect(screen.getByText('Ошибка импорта', { exact: true })).toBeVisible({ timeout: 30_000 });
-      await expect(reportCounter(browser, 'Принято')).toHaveText('0');
-      await expect(reportCounter(browser, 'Ошибок')).toHaveText('1');
+      await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(reportCounter(browser, 'Строк в файле')).toHaveText('1');
+      await expect(reportCounter(browser, 'Принято')).toHaveText('1');
+      await expect(reportCounter(browser, 'Ошибок')).toHaveText('0');
 
       const batchId = await screen.getByLabel('ID пакета', { exact: true }).inputValue();
       expect(await batchReport(admin, batchId)).toMatchObject({
-        status: 'FAILED',
-        total_rows: 0,
-        error_log: [{ sheet: annualSheet, row_number: 0, reason: 'Годовой, составной или служебный лист пропущен' }],
+        status: 'COMPLETED', selected_quarter: quarter, error_log: [],
       });
-      expect((await card(admin, code)).snapshots).toEqual([]);
+      expect((await card(admin, code)).snapshots).toMatchObject([
+        { quarter, total_documents: 100, unsubmitted_documents: 10, snapshot_date: date },
+      ]);
     } finally {
       file.remove();
     }
