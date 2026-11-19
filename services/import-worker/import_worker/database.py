@@ -21,9 +21,9 @@ class ImportBatch(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True)
     uploaded_by: Mapped[UUID]
     filename: Mapped[str] = mapped_column(Text)
-    selected_quarter: Mapped[str] = mapped_column(Text)
+    selected_quarter: Mapped[str | None] = mapped_column(Text)
     import_type: Mapped[str] = mapped_column(Text)
-    snapshot_date: Mapped[date]
+    snapshot_date: Mapped[date | None]
     status: Mapped[str] = mapped_column(Text, server_default=Status.PROCESSING)
     total_rows: Mapped[int] = mapped_column(server_default=text("0"))
     success_count: Mapped[int] = mapped_column(server_default=text("0"))

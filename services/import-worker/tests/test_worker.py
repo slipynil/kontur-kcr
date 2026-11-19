@@ -64,6 +64,7 @@ async def test_retries_same_batch_after_lost_clients_response(
     monkeypatch.setattr(consumer, "RETRY_DELAY", 0)
     registry = xlsx({"Реестр": [["001", None, "Организация 1"], ["002", None, "Организация 2"]]})
     batch.import_type = "REGISTRY"
+    batch.selected_quarter = batch.snapshot_date = None
     batch.file_sha256 = hashlib.sha256(registry).hexdigest()
     (settings.upload_dir / f"{batch.id}.xlsx").write_bytes(registry)
     db.scalar.side_effect = [None, None, None, batch.id]
@@ -102,12 +103,12 @@ async def test_retries_same_batch_after_lost_clients_response(
 
     assert requests[0] == requests[1]
     assert requests[0]["batch_id"] == str(batch.id)
+    assert {"selected_quarter", "snapshot_date"}.isdisjoint(requests[0])
     assert [item["client"]["kcr_code"] for item in requests[0]["items"]] == ["001", "002"]
     assert (batch.total_rows, batch.success_count, batch.error_count) == (2, 1, 1)
-    error = db.add_all.call_args_list[-2].args[0][0]
+    error = db.add_all.call_args.args[0][0]
     assert (error.sheet, error.row_number, error.kcr_code) == ("Реестр", 2, "002")
-    observation = db.add_all.call_args.args[0][0]
-    assert observation.batch_id == batch.id
+    db.scalars.assert_not_awaited()
     assert batch.apply_payload is None and batch.clients_applied_at is not None
     assert batch.status == Status.COMPLETED and batch.completed_at is not None
     assert not list(settings.upload_dir.iterdir())

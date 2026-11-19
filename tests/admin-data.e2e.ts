@@ -49,9 +49,11 @@ async function submit(admin: Actor, file: ReturnType<typeof workbook>, quarter: 
                       type: 'REGISTRY' | 'SNAPSHOT', date: string) {
   const form = new FormData();
   form.set('file', new Blob([new Uint8Array(file.bytes)]), file.path.split(/[\\/]/).at(-1));
-  form.set('selected_quarter', quarter);
   form.set('import_type', type);
-  form.set('snapshot_date', date);
+  if (type === 'SNAPSHOT') {
+    form.set('selected_quarter', quarter);
+    form.set('snapshot_date', date);
+  }
   const reply = await api('/imports', { actor: admin, method: 'POST', body: form });
   if (![200, 201, 202].includes(reply.status)) requireStatus(reply, 202, 'Submit workbook');
   return completed(admin, reply.body.id);

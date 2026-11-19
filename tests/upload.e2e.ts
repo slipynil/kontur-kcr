@@ -24,8 +24,8 @@ describe('upload', { session: 'admin' }, () => {
     await app.open('/upload');
 
     await screen.getByLabel('Файл реестра .xlsx').setInputFiles(REGISTRY_FILE);
-    await screen.getByLabel('Квартал').fill('2026_Q4');
-    await screen.getByLabel('Дата среза').fill('2026-11-15');
+    await expect(screen.getByLabel('Квартал')).not.toBeVisible();
+    await expect(screen.getByLabel('Дата среза')).not.toBeVisible();
     await screen.getByRole('button', 'Загрузить').tap();
 
     await expect(browser).toHaveURL(/\/import-report\?batch=/, { timeout: 30_000 });
@@ -45,9 +45,9 @@ describe('upload', { session: 'admin' }, () => {
     await app.open('/upload');
 
     await screen.getByLabel('Файл реестра .xlsx').setInputFiles(SNAPSHOT_FILE);
+    await screen.getByLabel('Тип импорта').selectOption({ label: 'Срез' });
     await screen.getByLabel('Квартал').fill('2026_Q3');
     await screen.getByLabel('Дата среза').fill('2026-10-20');
-    await screen.getByLabel('Тип импорта').selectOption({ label: 'Срез' });
     await screen.getByRole('button', 'Загрузить').tap();
 
     await expect(browser).toHaveURL(/\/import-report\?batch=/, { timeout: 30_000 });
@@ -64,8 +64,6 @@ describe('upload', { session: 'admin' }, () => {
     await app.open('/upload');
 
     await screen.getByLabel('Файл реестра .xlsx').setInputFiles('package.json');
-    await screen.getByLabel('Квартал').fill('2026_Q4');
-    await screen.getByLabel('Дата среза').fill('2026-11-15');
     await screen.getByRole('button', 'Загрузить').tap();
 
     // Next.js renders an empty aria-live route announcer with role="alert"; filter it out.
@@ -81,6 +79,7 @@ describe('upload', { session: 'admin' }, () => {
     await app.open('/upload');
 
     await screen.getByLabel('Файл реестра .xlsx').setInputFiles('package.json');
+    await screen.getByLabel('Тип импорта').selectOption({ label: 'Срез' });
     await screen.getByLabel('Квартал').fill('2026-Q4');
     await screen.getByLabel('Дата среза').fill('2026-11-15');
     await screen.getByRole('button', 'Загрузить').tap();

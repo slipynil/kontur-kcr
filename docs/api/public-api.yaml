@@ -898,9 +898,8 @@ paths:
       tags:
       - Imports
       operationId: uploadImport
-      summary: Загрузить Excel с выбором квартала
-      description: Загрузить REGISTRY/SNAPSHOT. Квартал и дата среза указываются пользователем; дата файла/имя листа
-        не назначают период.
+      summary: Загрузить реестр или срез из Excel
+      description: Квартал и дата обязательны только для SNAPSHOT. Квартал среза выбирает администратор.
       parameters: []
       requestBody:
         required: true
@@ -910,9 +909,7 @@ paths:
               type: object
               required:
               - file
-              - selected_quarter
               - import_type
-              - snapshot_date
               properties:
                 file:
                   type: string
@@ -930,6 +927,17 @@ paths:
                 snapshot_date:
                   type: string
                   format: date
+              if:
+                properties:
+                  import_type:
+                    const: SNAPSHOT
+              then:
+                required: [selected_quarter, snapshot_date]
+              else:
+                not:
+                  anyOf:
+                  - required: [selected_quarter]
+                  - required: [snapshot_date]
       responses:
         '202':
           description: Файл принят в обработку.
@@ -938,7 +946,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
         '400':
-          description: Файл не передан или не является `.xlsx`.
+          description: Некорректный файл `.xlsx` или параметры выбранного типа импорта.
           content:
             application/json:
               schema:
@@ -1982,8 +1990,7 @@ components:
           format: date-time
     ImportBatch:
       type: object
-      description: Пакет с выбранным кварталом и результатами. Отчёт содержит ошибки; rollback разрешён только для
-        последнего применённого пакета.
+      description: Пакет импорта и результаты. Квартал и дата присутствуют для SNAPSHOT.
       required:
       - id
       - uploaded_by
@@ -1993,9 +2000,7 @@ components:
       - success_count
       - error_count
       - created_at
-      - selected_quarter
       - import_type
-      - snapshot_date
       properties:
         id:
           type: string
@@ -2033,6 +2038,17 @@ components:
         snapshot_date:
           type: string
           format: date
+      if:
+        properties:
+          import_type:
+            const: SNAPSHOT
+      then:
+        required: [selected_quarter, snapshot_date]
+      else:
+        not:
+          anyOf:
+          - required: [selected_quarter]
+          - required: [snapshot_date]
     AssistantSummaryResponse:
       type: object
       required:

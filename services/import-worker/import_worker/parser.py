@@ -92,7 +92,7 @@ class InvalidWorkbook(ValueError):
 
 
 def sheet_skip_reason(
-    title: str, selected_quarter: str, *, allow_annual: bool = False
+    title: str, selected_quarter: str | None, *, allow_annual: bool = False
 ) -> str | None:
     title = normalized_text(title)
     if ANNUAL_TITLE.fullmatch(title):
@@ -100,7 +100,7 @@ def sheet_skip_reason(
     quarters = QUARTER_IN_TITLE.findall(title)
     if len(quarters) > 1 or AGGREGATE_TITLE.search(title):
         return "Годовой, составной или служебный лист пропущен"
-    if quarters:
+    if quarters and selected_quarter is not None:
         year, q, num, yr = quarters[0]
         quarter = q or ROMAN_QUARTERS.get(num, num.removeprefix("q"))
         if f"{year or yr}_Q{quarter}" != selected_quarter:
@@ -193,6 +193,7 @@ def row_item(
     if code is None:
         raise InvalidRow("В строке отсутствует Код КЦР")
     if params.import_type is ImportType.SNAPSHOT:
+        assert params.selected_quarter is not None and params.snapshot_date is not None
         original = values[columns["quarter"]] if "quarter" in columns else params.selected_quarter
         if original is None or not QUARTER.fullmatch(original):
             raise InvalidRow("Некорректный исходный квартал документов")

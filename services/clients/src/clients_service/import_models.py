@@ -3,7 +3,7 @@
 import re
 from datetime import date
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 from uuid import UUID
 
 from pydantic import (
@@ -82,9 +82,20 @@ class ImportItem(InputModel):
 class ImportEnvelope(InputModel):
     batch_id: UUID
     uploaded_by: UUID
-    selected_quarter: CalendarQuarter
     import_type: ImportType
-    snapshot_date: date
+    selected_quarter: CalendarQuarter | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    snapshot_date: date | None = Field(default=None, exclude_if=lambda value: value is None)
     # Row validation belongs to the application layer so one bad row need not
     # prevent validation of its neighbours. The envelope itself must be valid.
     items: Annotated[list[dict[str, Any]], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def validate_snapshot_metadata(self) -> Self:
+        if self.import_type is ImportType.SNAPSHOT:
+            if self.selected_quarter is None or self.snapshot_date is None:
+                raise ValueError("Snapshot imports require a quarter and date")
+        elif self.model_fields_set & {"selected_quarter", "snapshot_date"}:
+            raise ValueError("Registry imports do not take a quarter or date")
+        return self

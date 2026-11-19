@@ -77,9 +77,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def upload(
         file: Annotated[UploadFile, File()],
         user_id: Annotated[UUID, Header(alias="X-User-Id")],
-        selected_quarter: Annotated[str, Form(pattern=QUARTER_PATTERN)],
         import_type: Annotated[ImportType, Form()],
-        snapshot_date: Annotated[str, Form(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+        selected_quarter: Annotated[str | None, Form(pattern=QUARTER_PATTERN)] = None,
+        snapshot_date: Annotated[str | None, Form(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
     ) -> Batch:
         filename = PurePosixPath((file.filename or "").replace("\\", "/")).name
         if "\x00" in filename or not filename.lower().endswith(".xlsx"):
@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             params = ImportParameters(
                 selected_quarter=selected_quarter,
                 import_type=import_type,
-                snapshot_date=date.fromisoformat(snapshot_date),
+                snapshot_date=date.fromisoformat(snapshot_date) if snapshot_date else None,
             )
         except ValueError as exc:
             raise APIError(400, "INVALID_IMPORT_REQUEST", "Проверьте параметры запроса") from exc

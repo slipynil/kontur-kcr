@@ -55,14 +55,12 @@ poetry run pytest --cov=. --cov-report=term --cov-report=json
 {
   "batch_id": "00000000-0000-0000-0000-000000000101",
   "uploaded_by": "00000000-0000-0000-0000-000000000001",
-  "selected_quarter": "2026_Q2",
   "import_type": "REGISTRY",
-  "snapshot_date": "2026-04-20",
   "items": [{"client": {"kcr_code": "example-001", "organization_name": "Тестовый клиент"}}]
 }
 ```
 
-Для SNAPSHOT используйте новый `batch_id`, укажите `import_type=SNAPSHOT` и добавьте в строку `"snapshot": {"quarter": "2026_Q1", "total_documents": 100, "unsubmitted_documents": 7}`. Правила применения пакетов приведены в [ADR-0004](../../docs/adr/0004-clients-import-application.md).
+Для SNAPSHOT используйте новый `batch_id`, укажите `import_type=SNAPSHOT`, `selected_quarter` и `snapshot_date`. Добавьте в строку `"snapshot": {"quarter": "2026_Q1", "total_documents": 100, "unsubmitted_documents": 7}`. Правила применения пакетов приведены в [ADR-0004](../../docs/adr/0004-clients-import-application.md) и [ADR-0016](../../docs/adr/0016-snapshot-only-import-metadata.md).
 
 ## Чтение в изолированной разработке
 

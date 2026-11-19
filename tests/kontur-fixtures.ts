@@ -145,8 +145,9 @@ export function applyClient(admin: Actor, options: {
     ...(phone === undefined ? {} : { contacts: phone === null ? null : { phone } }),
   };
   const applied = requireStatus(internal('clients', '/import/apply', admin, 'POST', {
-    batch_id: batch, uploaded_by: admin.user.id, selected_quarter: quarter, snapshot_date: date,
+    batch_id: batch, uploaded_by: admin.user.id,
     import_type: registry ? 'REGISTRY' : 'SNAPSHOT',
+    ...(registry ? {} : { selected_quarter: quarter, snapshot_date: date }),
     items: [{ client, ...(remaining === undefined ? {} : {
       snapshot: { quarter, unsubmitted_documents: remaining, ...(!omitTotal ? { total_documents: 100 } : {}) },
     }) }],

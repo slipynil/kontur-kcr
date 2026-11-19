@@ -203,10 +203,10 @@ export type ImportBatch = {
   success_count: number;
   error_count: number;
   created_at: string;
-  selected_quarter: string;
-  import_type: "REGISTRY" | "SNAPSHOT";
-  snapshot_date: string;
-};
+} & (
+  | { import_type: "REGISTRY" }
+  | { import_type: "SNAPSHOT"; selected_quarter: string; snapshot_date: string }
+);
 
 export type AssistantSummaryResponse = {
   kcr_code: string;

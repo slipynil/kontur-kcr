@@ -46,6 +46,7 @@ it('remembers an opened import report and shows its link on a later visit', asyn
   const batch = {
     id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301',
     filename: 'clients.xlsx',
+    import_type: 'SNAPSHOT',
     selected_quarter: '2026_Q4',
     snapshot_date: '2026-11-18',
     status: 'FAILED',
@@ -278,21 +279,33 @@ it('saves a call only after the API succeeds', async () => {
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(call[0]).toBe('/api/v1/clients/A%2FB/events'); expect(JSON.parse(call[1].body)).toMatchObject({ event_type: 'CALL_RESULT', work_quarter: '2026_Q3', call_result: 'AGREEMENT', comment_text: 'Обещали передать' });
 });
-it('uploads the file and all four required multipart fields', async () => {
+it.each(['REGISTRY', 'SNAPSHOT'])('uploads %s with only its multipart fields', async type => {
   (fetch as jest.Mock).mockResolvedValue(json({ id: 'batch-id' }, 202)); render(<Imports reportOnly={false} />);
   const file = new File(['xlsx'], 'clients.xlsx');
   fireEvent.change(screen.getByLabelText('Файл реестра .xlsx'), { target: { files: [file] } });
+  expect(screen.queryByLabelText('Квартал')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Дата среза')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Тип импорта'), { target: { value: 'SNAPSHOT' } });
   fireEvent.change(screen.getByLabelText('Квартал'), { target: { value: '2025_Q2' } });
   fireEvent.change(screen.getByLabelText('Дата среза'), { target: { value: '2025-06-01' } });
+  if (type === 'REGISTRY') {
+    fireEvent.change(screen.getByLabelText('Тип импорта'), { target: { value: type } });
+    expect(screen.queryByLabelText('Квартал')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Дата среза')).not.toBeInTheDocument();
+  }
   fireEvent.submit(screen.getByRole('button', { name: 'Загрузить' }).closest('form')!);
   await waitFor(() => expect(push).toHaveBeenCalledWith('/import-report?batch=batch-id'));
   const body = (fetch as jest.Mock).mock.calls[0][1].body as FormData;
-  expect(body.get('file')).toBe(file); expect(body.get('selected_quarter')).toBe('2025_Q2'); expect(body.get('import_type')).toBe('REGISTRY'); expect(body.get('snapshot_date')).toBe('2025-06-01');
+  expect(body.get('file')).toBe(file);
+  expect(body.get('import_type')).toBe(type);
+  expect(body.get('selected_quarter')).toBe(type === 'SNAPSHOT' ? '2025_Q2' : null);
+  expect(body.get('snapshot_date')).toBe(type === 'SNAPSHOT' ? '2025-06-01' : null);
 });
 
 it('shows a visible quarter format error instead of silently blocking submit', async () => {
   render(<Imports reportOnly={false} />);
   fireEvent.change(screen.getByLabelText('Файл реестра .xlsx'), { target: { files: [new File(['xlsx'], 'clients.xlsx')] } });
+  fireEvent.change(screen.getByLabelText('Тип импорта'), { target: { value: 'SNAPSHOT' } });
   fireEvent.change(screen.getByLabelText('Квартал'), { target: { value: '2025-Q2' } });
   fireEvent.change(screen.getByLabelText('Дата среза'), { target: { value: '2025-06-01' } });
   fireEvent.submit(screen.getByRole('button', { name: 'Загрузить' }).closest('form')!);
@@ -365,10 +378,11 @@ it('shows field validation on an empty user submit instead of calling the API', 
 });
 it('rolls back a completed import with a recovery command', async () => {
   search = 'batch=batch-id';
-  const batch = { id: 'batch-id', filename: 'clients.xlsx', status: 'COMPLETED', selected_quarter: '2026_Q4', snapshot_date: '2026-11-10', total_rows: 10, success_count: 10, error_count: 0 };
+  const batch = { id: 'batch-id', filename: 'clients.xlsx', status: 'COMPLETED', import_type: 'REGISTRY', total_rows: 10, success_count: 10, error_count: 0 };
   (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(json(init?.method === 'POST' ? { ...batch, status: 'ROLLED_BACK' } : batch)));
   render(<Imports reportOnly />); fireEvent.click(await screen.findByRole('button', { name: 'Откатить пакет' }));
   const dialog = await screen.findByRole('dialog', { name: 'Откатить пакет?' });
+  expect(within(dialog).queryByText('Квартал загрузки')).not.toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Откатить пакет' }));
   await screen.findByText('Пакет откачен');
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');

@@ -40,10 +40,9 @@ paths:
       tags:
       - Imports
       operationId: uploadImport
-      summary: Загрузить файл с выбранным кварталом
-      description: Приём XLSX с обязательным выбором квартала и типа данных. Квартал не выводится из даты файла.
-        Создаётся пакет; после применения согласованно обновляется работа операторов с сохранением действующего
-        срока.
+      summary: Загрузить реестр или срез из Excel
+      description: Квартал и дата обязательны только для SNAPSHOT. Применение среза обновляет работу операторов
+        с сохранением действующего срока.
       parameters:
       - $ref: '#/components/parameters/UserIdHeader'
       requestBody:
@@ -54,9 +53,7 @@ paths:
               type: object
               required:
               - file
-              - selected_quarter
               - import_type
-              - snapshot_date
               properties:
                 file:
                   type: string
@@ -74,6 +71,17 @@ paths:
                 snapshot_date:
                   type: string
                   format: date
+              if:
+                properties:
+                  import_type:
+                    const: SNAPSHOT
+              then:
+                required: [selected_quarter, snapshot_date]
+              else:
+                not:
+                  anyOf:
+                  - required: [selected_quarter]
+                  - required: [snapshot_date]
       responses:
         '202':
           description: Файл принят в обработку.
@@ -82,7 +90,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ImportBatch'
         '400':
-          description: Файл не передан или не является `.xlsx`.
+          description: Некорректный файл `.xlsx` или параметры выбранного типа импорта.
           content:
             application/json:
               schema:
@@ -279,8 +287,7 @@ components:
           type: string
     ImportBatch:
       type: object
-      description: Пакет с выбранным кварталом и результатами. Отчёт содержит ошибки; rollback разрешён только для
-        последнего применённого пакета.
+      description: Пакет импорта и результаты. Квартал и дата присутствуют для SNAPSHOT.
       required:
       - id
       - uploaded_by
@@ -290,9 +297,7 @@ components:
       - success_count
       - error_count
       - created_at
-      - selected_quarter
       - import_type
-      - snapshot_date
       properties:
         id:
           type: string
@@ -341,3 +346,14 @@ components:
         snapshot_date:
           type: string
           format: date
+      if:
+        properties:
+          import_type:
+            const: SNAPSHOT
+      then:
+        required: [selected_quarter, snapshot_date]
+      else:
+        not:
+          anyOf:
+          - required: [selected_quarter]
+          - required: [snapshot_date]

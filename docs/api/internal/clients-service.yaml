@@ -821,7 +821,7 @@ components:
         inherited_fields:
           type: object
           additionalProperties: true
-          description: Поле → источник (квартал, пакет, дата)
+          description: Поле → пакет источника. Для среза также сохраняются квартал и дата.
     ClientCard:
       type: object
       allOf:
@@ -1044,17 +1044,14 @@ components:
           type: integer
     ImportApplyRequest:
       type: object
-      description: Нормализованный пакет ADR-0004. Конверт проверяется целиком, строки — независимо. batch_id является
-        ключом повтора. REGISTRY
-        принимает профиль без snapshot, SNAPSHOT требует известный КЦР и snapshot. Дата строки по умолчанию равна
+      description: Нормализованный пакет. batch_id является ключом повтора. REGISTRY принимает профиль без snapshot,
+        квартала и даты. SNAPSHOT требует известный КЦР, snapshot, квартал и дату. Дата строки по умолчанию равна
         snapshot_date конверта.
       required:
       - batch_id
       - uploaded_by
       - items
-      - selected_quarter
       - import_type
-      - snapshot_date
       properties:
         batch_id:
           type: string
@@ -1185,11 +1182,17 @@ components:
           required:
           - import_type
         then:
+          required: [selected_quarter, snapshot_date]
           properties:
             items:
               items:
                 required:
                 - snapshot
+        else:
+          not:
+            anyOf:
+            - required: [selected_quarter]
+            - required: [snapshot_date]
       additionalProperties: false
     ImportApplyResponse:
       type: object
