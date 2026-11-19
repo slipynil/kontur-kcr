@@ -17,6 +17,23 @@ const bounds = [
 ];
 const dynamicsTone = { ALL_SUBMITTED: 'good', REDUCING: 'good', NO_CHANGE: 'neutral', GROWING: 'bad' } as const;
 
+async function loadClientCodes(filters: Record<string, string>, signal?: AbortSignal) {
+  const loadPage = (page: number) => request<ClientListResponse>(
+    '/clients' + queryString({ ...filters, page, page_size: REGISTRY_PAGE_SIZE }), { signal },
+  );
+  const first = await loadPage(1);
+  const codes = new Set(first.items.map(client => client.kcr_code));
+  const changed = 'Список клиентов изменился. Повторите действие.';
+  const pageCount = Math.ceil(first.total / first.page_size);
+  for (let page = 2; page <= pageCount; page++) {
+    const next = await loadPage(page);
+    if (next.total !== first.total) throw new Error(changed);
+    next.items.forEach(client => codes.add(client.kcr_code));
+  }
+  if (codes.size !== first.total) throw new Error(changed);
+  return codes;
+}
+
 export function Clients({ user, side, top }: { user: User; side?: ReactNode; top?: ReactNode }) {
   const router = useRouter();
   const admin = user.role === 'ADMIN';
@@ -28,7 +45,8 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const [revision, setRevision] = useState(0);
-  const [selection, setSelection] = useState<string[]>([]);
+  const [selection, setSelection] = useState<ReadonlySet<string>>(() => new Set());
+  const selectionRequest = useRef<AbortController | null>(null);
   const [publishQuarter, setPublishQuarter] = useState('');
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [publishAllCodes, setPublishAllCodes] = useState<string[] | null>(null);
@@ -37,7 +55,9 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
   const appliedSearch = filters.search ?? '';
   const result = useResource<ClientListResponse>('/clients' + queryString({ ...filters, page, page_size: PAGE_SIZE }), revision);
   const rows = result.data?.items ?? [];
-  const shownSelection = rows.filter(row => selection.includes(row.kcr_code)).map(row => row.kcr_code);
+  const selectedOnPage = rows.filter(row => selection.has(row.kcr_code)).length;
+  const allOnPageSelected = rows.length > 0 && selectedOnPage === rows.length;
+  const selectionDisabled = result.loading || action.busy || search !== appliedSearch;
   const displayQuarter = filters.quarter || currentQuarter();
   const filterCount = Object.entries(filters).filter(([name, value]) => name !== 'search' && value).length;
 
@@ -45,10 +65,43 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
     if (search === appliedSearch) return;
     const timer = setTimeout(() => {
       setFilters(current => ({ ...current, search }));
-      setPage(1); setSelection([]);
+      setPage(1); resetSelection();
     }, 300);
     return () => clearTimeout(timer);
   }, [search, appliedSearch]);
+
+  useEffect(() => () => selectionRequest.current?.abort(), []);
+
+  function resetSelection() {
+    selectionRequest.current?.abort();
+    setSelection(new Set());
+  }
+
+  function selectFiltered() {
+    void action.run(async () => {
+      const controller = new AbortController();
+      selectionRequest.current = controller;
+      try {
+        const codes = await loadClientCodes({ ...filters, quarter: displayQuarter }, controller.signal);
+        if (!controller.signal.aborted) setSelection(codes);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+      } finally {
+        selectionRequest.current = null;
+      }
+    });
+  }
+
+  function updateSelection(codes: string[], checked: boolean) {
+    setSelection(current => {
+      const next = new Set(current);
+      for (const code of codes) {
+        if (checked) next.add(code);
+        else next.delete(code);
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!moveFilterFocus.current) return;
@@ -63,11 +116,11 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
   }
 
   function change(name: string, value: string) { setDraft(current => ({ ...current, [name]: value })); }
-  function clearFilters() { setDraft({}); setFilters({}); setPage(1); setSelection([]); }
+  function clearFilters() { setDraft({}); setFilters({}); setPage(1); resetSelection(); }
   function showClient(code: string) { router.push(`/client/${encodeURIComponent(code)}`); }
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setFilters({ ...draft, search }); setPage(1); setSelection([]);
+    setFilters({ ...draft, search }); setPage(1); resetSelection();
   }
   function checkedQuarter() {
     if (!quarterPattern.test(publishQuarter)) throw new Error('Квартал обзвона должен быть в формате 2026_Q4');
@@ -79,32 +132,25 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
     });
   }
   function published(count: number) {
-    setSelection([]); setPublicationOpen(false); setPublishAllCodes(null);
+    resetSelection(); setPublicationOpen(false); setPublishAllCodes(null);
     setRevision(current => current + 1);
     action.setNotice(`Опубликовано клиентов: ${count}`);
   }
   function prepareAll() {
     void action.run(async () => {
       checkedQuarter();
-      const codes = new Set<string>();
-      const loadPage = (page: number) => request<ClientListResponse>('/clients' + queryString({ page, page_size: REGISTRY_PAGE_SIZE }));
-      const first = await loadPage(1);
-      const pageCount = Math.ceil(first.total / first.page_size);
-      first.items.forEach(client => codes.add(client.kcr_code));
-      for (let nextPage = 2; nextPage <= pageCount; nextPage++) {
-        const result = await loadPage(nextPage);
-        if (result.total !== first.total) throw new Error('Реестр изменился. Повторите публикацию.');
-        result.items.forEach(client => codes.add(client.kcr_code));
-      }
-      if (codes.size !== first.total) throw new Error('Реестр изменился. Повторите публикацию.');
+      const codes = await loadClientCodes({});
       if (!codes.size) throw new Error('В реестре нет клиентов');
       setPublishAllCodes([...codes]);
     });
   }
   function confirmAll() {
     if (!publishAllCodes) return;
-    const codes = publishAllCodes;
+    publishSelection(publishAllCodes);
+  }
+  function publishSelection(codes: string[]) {
     void action.run(async () => {
+      if (!codes.length) throw new Error('Выберите хотя бы одного клиента');
       const quarter = checkedQuarter();
       let count = 0;
       try {
@@ -129,7 +175,7 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
         <button type="button" className="button icon-button" aria-label="Скрыть фильтры" onClick={toggleFilters}><X aria-hidden="true" /></button>
       </div>
       <div data-filter-body>
-        <label>Квартал сравнения<QuarterInput value={draft.quarter || ''} onChange={value => change('quarter', value)} /></label>
+        <QuarterInput label="Квартал сравнения" value={draft.quarter || ''} onChange={value => change('quarter', value)} />
         <label>Динамика<select value={draft.dynamics || ''} onChange={event => change('dynamics', event.target.value)}>
           <option value="">Любая</option>{Object.entries(dynamics).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
@@ -167,37 +213,45 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
       ]} />
       <div className="section-header"><div><h2>Реестр клиентов</h2><p>Откройте строку, чтобы посмотреть карточку клиента.</p></div></div>
       <div className="registry-toolbar">
-        <label className="registry-search"><span className="sr-only">Код КЦР или ИНН</span>
-          <span className="input-icon search-input"><Search size={16} aria-hidden="true" />
-            <input form={filtersOpen ? 'registry-filters' : undefined} placeholder="Поиск по коду КЦР или ИНН" maxLength={256}
-              value={draft.search || ''} onChange={event => change('search', event.target.value)} />
-          </span>
-        </label>
+        <div className="inline-actions registry-query">
+          <label className="registry-search"><span className="sr-only">Код КЦР или ИНН</span>
+            <span className="input-icon search-input"><Search size={16} aria-hidden="true" />
+              <input form={filtersOpen ? 'registry-filters' : undefined} placeholder="Поиск по коду КЦР или ИНН" maxLength={256}
+                value={draft.search || ''} onChange={event => change('search', event.target.value)} />
+            </span>
+          </label>
+          {admin && <>
+            <button type="button" className="button secondary" disabled={selectionDisabled || !result.data?.total}
+              onClick={selectFiltered}>Выбрать всех по фильтрам</button>
+            <span className="help-text" role="status">
+              {!publicationOpen && action.busy ? 'Загружаем клиентов по фильтрам…' : `Выбрано клиентов: ${selection.size}`}
+            </span>
+            {selection.size > 0 && <button type="button" className="button text-link" disabled={action.busy}
+              onClick={resetSelection}>Снять выделение</button>}
+          </>}
+        </div>
         <div className="inline-actions">
-          <button type="button" className="button text-link" onClick={() => setRevision(current => current + 1)}><RefreshCw aria-hidden="true" />Обновить</button>
+          <button type="button" className="button text-link" onClick={() => { resetSelection(); setRevision(current => current + 1); }}><RefreshCw aria-hidden="true" />Обновить</button>
           <button type="button" className="button secondary" ref={filterToggle} aria-expanded={filtersOpen} aria-controls={filtersOpen ? 'registry-filters' : undefined}
             onClick={toggleFilters}><Filter aria-hidden="true" />Фильтры{filterCount ? ` · ${filterCount}` : ''}</button>
-          {admin && <button type="button" className="button primary" aria-haspopup="dialog" disabled={!result.data || result.loading}
+          {admin && <button type="button" className="button primary" aria-haspopup="dialog" disabled={!result.data || selectionDisabled}
             onClick={() => { action.reset(); setPublicationOpen(true); }}><Upload aria-hidden="true" />Публикация на обзвон</button>}
         </div>
       </div>
       <Feedback {...result} />
       {!publicationOpen && <Feedback {...action} />}
-      {shownSelection.length > 0 && <p className="help-text selection-label" role="status">Выбрано клиентов: {shownSelection.length}</p>}
       <div className="table-wrap" tabIndex={0} role="region" aria-label="Реестр клиентов">
         <table className="registry-table"><thead><tr>
           {admin && <th scope="col"><input type="checkbox" aria-label="Выбрать всех на странице"
-            checked={rows.length > 0 && shownSelection.length === rows.length} disabled={!rows.length}
-            onChange={event => setSelection(event.target.checked ? rows.map(row => row.kcr_code) : [])} /></th>}
+            ref={checkbox => { if (checkbox) checkbox.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
+            checked={allOnPageSelected} disabled={selectionDisabled || !rows.length}
+            onChange={event => updateSelection(rows.map(row => row.kcr_code), event.target.checked)} /></th>}
           {['Код КЦР', 'Клиент / ИНН', 'За квартал', 'Всего', 'Динамика', 'Этап', 'Ответственный', 'Признаки'].map(label => <th scope="col" key={label}>{label}</th>)}
         </tr></thead><tbody>{rows.map(client => <tr key={client.kcr_code} className="client-row" onClick={event => {
           if (!(event.target as HTMLElement).closest('button, input, label, a') && !window.getSelection()?.toString()) showClient(client.kcr_code);
         }}>
-          {admin && <td><input type="checkbox" aria-label={`Выбрать ${client.kcr_code}`} checked={selection.includes(client.kcr_code)}
-            onChange={event => {
-              const checked = event.target.checked;
-              setSelection(current => checked ? [...current, client.kcr_code] : current.filter(code => code !== client.kcr_code));
-            }} /></td>}
+          {admin && <td><input type="checkbox" aria-label={`Выбрать ${client.kcr_code}`} checked={selection.has(client.kcr_code)}
+            disabled={selectionDisabled} onChange={event => updateSelection([client.kcr_code], event.target.checked)} /></td>}
           <td><button type="button" className="text-link" onClick={() => showClient(client.kcr_code)}>{client.kcr_code}</button></td>
           <td><div className="client-identity"><span className="monogram" aria-hidden="true">{client.organization_name?.trim().charAt(0).toUpperCase() || 'К'}</span>
             <div><strong>{client.organization_name ?? 'Нет названия'}</strong><small>{client.inn ? `ИНН ${client.inn}` : 'ИНН не указан'}</small></div>
@@ -218,7 +272,7 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
       {!result.loading && result.data && !rows.length && <EmptyState title="Клиенты не найдены" description="Измените параметры поиска или сбросьте фильтры.">
         <button type="button" className="button secondary" onClick={clearFilters}>Сбросить фильтры</button>
       </EmptyState>}
-      {result.data && <Pager page={page} total={result.data.total} pageSize={result.data.page_size} onChange={next => { setPage(next); setSelection([]); }} />}
+      {result.data && <Pager page={page} total={result.data.total} pageSize={result.data.page_size} onChange={setPage} />}
     </main>
     {admin && <Modal open={publicationOpen} title={publishAllCodes ? 'Опубликовать весь реестр?' : 'Публикация на обзвон'}
       description={publishAllCodes ? 'Клиенты станут доступны операторам в выбранном квартале.' : 'Передача клиентов в операторский пул.'}
@@ -229,14 +283,10 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
         <ConfirmActions label="Опубликовать всех" busy={action.busy} onConfirm={confirmAll} onClose={() => { setPublishAllCodes(null); action.reset(); }} />
       </> : <form className="stack" noValidate onSubmit={event => {
         event.preventDefault();
-        void action.run(async () => {
-          if (!shownSelection.length) throw new Error('Выберите хотя бы одного клиента');
-          await publish(shownSelection, checkedQuarter());
-          published(shownSelection.length);
-        });
+        publishSelection([...selection]);
       }}>
-        <label>Квартал обзвона<QuarterInput required ariaLabel="Квартал обзвона" value={publishQuarter} onChange={setPublishQuarter} /></label>
-        <p>Выбрано клиентов: {shownSelection.length}</p>
+        <QuarterInput label="Квартал обзвона" required ariaLabel="Квартал обзвона" value={publishQuarter} onChange={setPublishQuarter} />
+        <p>Выбрано клиентов: {selection.size}</p>
         <Feedback error={action.error} />
         <div className="stack">
           <button className="button primary" disabled={action.busy}>Опубликовать выбранных</button>

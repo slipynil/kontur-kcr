@@ -159,7 +159,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
             <section className="dynamics-panel">
               <h2>Динамика документов</h2>
               <form className="inline-form" onSubmit={event => { event.preventDefault(); setQuarter(quarterDraft); }}>
-                <label>Квартал сравнения<QuarterInput value={quarterDraft} onChange={setQuarterDraft} /></label>
+                <QuarterInput label="Квартал сравнения" value={quarterDraft} onChange={setQuarterDraft} />
                 <button className="button secondary">Показать динамику</button>
               </form>
               <div className="comparison-line">
@@ -209,7 +209,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
           <div className="section-header event-header">
             <h2>Лента событий</h2>
             <form className="inline-form" onSubmit={event => { event.preventDefault(); setEventQuarter(eventQuarterDraft); setEventPage(1); }}>
-              <label>Квартал событий<QuarterInput ariaLabel="Квартал событий" value={eventQuarterDraft} onChange={setEventQuarterDraft} /></label>
+              <QuarterInput label="Квартал событий" ariaLabel="Квартал событий" value={eventQuarterDraft} onChange={setEventQuarterDraft} />
               <button className="button secondary">Показать события</button>
             </form>
           </div>
@@ -244,7 +244,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
             setPublishOpen(false); action.setNotice('Клиент опубликован'); refresh();
           });
         }}>
-          <label>Квартал обзвона<QuarterInput required ariaLabel="Квартал обзвона" value={publishQuarter} onChange={setPublishQuarter} /></label>
+          <QuarterInput label="Квартал обзвона" required ariaLabel="Квартал обзвона" value={publishQuarter} onChange={setPublishQuarter} />
           <Feedback error={action.error} />
           <div className="modal-actions">
             <button type="button" className="button secondary" disabled={action.busy} onClick={() => { setPublishOpen(false); action.reset(); }}>Отмена</button>

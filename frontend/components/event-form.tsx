@@ -65,8 +65,8 @@ export function EventForm({ card, user, base, call, onSaved, dialog }: {
         };
       } else {
         if (!comment.trim()) throw new Error('Введите комментарий.');
-        const date = new Date(historical);
-        if (!Number.isFinite(date.getTime()) || date.getTime() > Date.now()) throw new Error('Укажите дату комментария в прошлом.');
+        const date = new Date(`${historical}T00:00:00+03:00`);
+        if (!Number.isFinite(date.getTime()) || date.getTime() >= Date.now()) throw new Error('Укажите дату комментария в прошлом.');
         attempt.current = {
           ...shared, event_type: kind, historical_event_date: date.toISOString(),
           work_quarter: card.work_quarter ?? null,
@@ -113,7 +113,7 @@ export function EventForm({ card, user, base, call, onSaved, dialog }: {
       </Tabs.Content>
       <Tabs.Content value="HISTORICAL_COMMENT" className="event-fields">
         <fieldset disabled={action.busy || pending}>
-          <DateField label="Дата комментария" value={historical} onChange={setHistorical} required withTime />
+          <DateField label="Дата комментария" value={historical} onChange={setHistorical} required />
         </fieldset>
       </Tabs.Content>
     </Tabs.Root>

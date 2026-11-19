@@ -142,7 +142,7 @@ function UploadForm() {
         </div>
       </div>
       <div className="form-grid">
-        <label>Квартал загрузки<QuarterInput required value={quarter} onChange={setQuarter} /></label>
+        <QuarterInput label="Квартал загрузки" required value={quarter} onChange={setQuarter} />
         <DateField label="Дата среза" value={date} onChange={setDate} required />
         <label>Тип импорта<select value={type} onChange={event => setType(event.target.value as ImportBatch['import_type'])}>
           <option value="REGISTRY">Реестр</option><option value="SNAPSHOT">Срез</option>

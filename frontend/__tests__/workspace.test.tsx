@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import Workspace from '../components/workspace';
 import { Clients } from '../components/clients';
 import { ClientDetails } from '../components/client-details';
+import { currentQuarter, QuarterInput } from '../components/api-ui';
 import { Imports, Users } from '../components/management';
 import { readSession, saveSession } from '../lib/api';
 import type { User } from '../lib/contracts';
@@ -20,6 +21,25 @@ beforeEach(() => {
   global.fetch = jest.fn(async () => json(page)) as jest.Mock;
 });
 function signIn(role: User['role'] = 'OPERATOR') { saveSession({ token: 'jwt', token_type: 'Bearer', expires_in: 3600, user: { ...user, role } }); }
+
+it('keeps the quarter input focused when opening suggestions and accepts typed text', () => {
+  const onChange = jest.fn();
+  render(<QuarterInput label="Квартал загрузки" value="" onChange={onChange} required />);
+  const field = screen.getByRole('combobox', { name: 'Квартал' });
+  field.focus();
+  fireEvent.click(field);
+  expect(screen.getByRole('listbox')).toBeVisible();
+  expect(screen.getByRole('option', { name: currentQuarter() })).toBeVisible();
+  expect(screen.queryByRole('option', { name: 'По умолчанию' })).not.toBeInTheDocument();
+  expect(field).toHaveFocus();
+  expect(field).toHaveAttribute('autocomplete', 'off');
+  fireEvent.change(field, { target: { value: '2' } });
+  expect(onChange).toHaveBeenCalledWith('2');
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  fireEvent.click(field);
+  fireEvent.click(screen.getByRole('option', { name: currentQuarter() }));
+  expect(onChange).toHaveBeenLastCalledWith(currentQuarter());
+});
 
 it('remembers an opened import report and shows its link on a later visit', async () => {
   signIn('ADMIN');
@@ -63,6 +83,8 @@ it('shows field validation on an empty login submit instead of calling the API',
 it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
   await screen.findByText('Раздел доступен только администратору.');
+  expect(screen.getByRole('link', { name: 'Клиенты' })).toHaveAttribute('href', '/');
+  expect(screen.getByRole('button', { name: 'Запросы' })).toBeVisible();
   expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/users'))).toBe(false);
 });
 it('applies server search and preserves zero numeric filters', async () => {
@@ -147,6 +169,7 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
     init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json(list(['E2E-1', 'E2E-2']))));
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  expect(screen.getByRole('checkbox', { name: 'Выбрать всех на странице' })).toBePartiallyChecked();
   fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
   fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
@@ -154,6 +177,35 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'PUT');
   expect(call[0]).toBe('/api/v1/pool/publication?work_quarter=2026_Q4');
   expect(JSON.parse(call[1].body)).toEqual({ codes: ['E2E-1'] });
+});
+it('selects and publishes filtered clients across pages, except manually unchecked rows', async () => {
+  const codes = Array.from({ length: 101 }, (_, index) => `VIP-${index}`);
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') return Promise.resolve(json(undefined, 204));
+    const params = new URL(url, 'http://localhost').searchParams;
+    const matches = params.get('tags') === 'VIP' ? codes : ['OTHER', ...codes];
+    const page = Number(params.get('page'));
+    const size = Number(params.get('page_size'));
+    return Promise.resolve(json({
+      ...list(matches.slice((page - 1) * size, page * size)), total: matches.length, page, page_size: size,
+    }));
+  });
+  render(<Clients user={{ ...user, role: 'ADMIN' }} />);
+  fireEvent.change(screen.getByLabelText('Признак'), { target: { value: 'VIP' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
+  await screen.findByRole('checkbox', { name: 'Выбрать VIP-0' });
+  fireEvent.click(screen.getByRole('button', { name: 'Выбрать всех по фильтрам' }));
+  await screen.findByText('Выбрано клиентов: 101');
+  fireEvent.click(screen.getByRole('button', { name: 'Страница 2' }));
+  const checkbox = await screen.findByRole('checkbox', { name: 'Выбрать VIP-20' });
+  expect(checkbox).toBeChecked();
+  fireEvent.click(checkbox);
+  fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
+  fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));
+  await screen.findByText('Опубликовано клиентов: 100');
+  const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'PUT');
+  expect(JSON.parse(call[1].body)).toEqual({ codes: codes.filter(code => code !== 'VIP-20') });
 });
 it('publishes the whole registry across pages and respects the API batch limit', async () => {
   const codes = Array.from({ length: 1001 }, (_, index) => `CLIENT-${index}`);
