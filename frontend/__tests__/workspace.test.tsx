@@ -83,6 +83,8 @@ it('shows field validation on an empty login submit instead of calling the API',
 it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
   await screen.findByText('Раздел доступен только администратору.');
+  expect(screen.getByRole('link', { name: 'Клиенты' })).toHaveAttribute('href', '/');
+  expect(screen.getByRole('button', { name: 'Запросы' })).toBeVisible();
   expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/users'))).toBe(false);
 });
 it('applies server search and preserves zero numeric filters', async () => {
@@ -167,6 +169,7 @@ it('publishes the selected registry clients for the chosen quarter', async () =>
     init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json(list(['E2E-1', 'E2E-2']))));
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  expect(screen.getByRole('checkbox', { name: 'Выбрать всех на странице' })).toBePartiallyChecked();
   fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
   fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать выбранных' }));

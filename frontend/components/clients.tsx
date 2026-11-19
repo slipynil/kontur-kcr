@@ -55,7 +55,8 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
   const appliedSearch = filters.search ?? '';
   const result = useResource<ClientListResponse>('/clients' + queryString({ ...filters, page, page_size: PAGE_SIZE }), revision);
   const rows = result.data?.items ?? [];
-  const allOnPageSelected = rows.length > 0 && rows.every(row => selection.has(row.kcr_code));
+  const selectedOnPage = rows.filter(row => selection.has(row.kcr_code)).length;
+  const allOnPageSelected = rows.length > 0 && selectedOnPage === rows.length;
   const selectionDisabled = result.loading || action.busy || search !== appliedSearch;
   const displayQuarter = filters.quarter || currentQuarter();
   const filterCount = Object.entries(filters).filter(([name, value]) => name !== 'search' && value).length;
@@ -242,6 +243,7 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
       <div className="table-wrap" tabIndex={0} role="region" aria-label="Реестр клиентов">
         <table className="registry-table"><thead><tr>
           {admin && <th scope="col"><input type="checkbox" aria-label="Выбрать всех на странице"
+            ref={checkbox => { if (checkbox) checkbox.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
             checked={allOnPageSelected} disabled={selectionDisabled || !rows.length}
             onChange={event => updateSelection(rows.map(row => row.kcr_code), event.target.checked)} /></th>}
           {['Код КЦР', 'Клиент / ИНН', 'За квартал', 'Всего', 'Динамика', 'Этап', 'Ответственный', 'Признаки'].map(label => <th scope="col" key={label}>{label}</th>)}
