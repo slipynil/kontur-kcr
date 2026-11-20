@@ -150,8 +150,13 @@ function UploadForm() {
       </div>
       <div className="form-grid">
         <label>Тип импорта<select value={type} disabled={action.busy} onChange={event => {
+          const nextType = event.target.value as ImportBatch['import_type'];
           action.reset();
-          setType(event.target.value as ImportBatch['import_type']);
+          if (nextType === 'REGISTRY') {
+            setQuarter('');
+            setDate('');
+          }
+          setType(nextType);
         }}>
           <option value="REGISTRY">Реестр</option><option value="SNAPSHOT">Срез</option>
         </select></label>

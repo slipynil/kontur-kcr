@@ -302,6 +302,20 @@ it.each(['REGISTRY', 'SNAPSHOT'])('uploads %s with only its multipart fields', a
   expect(body.get('snapshot_date')).toBe(type === 'SNAPSHOT' ? '2025-06-01' : null);
 });
 
+it('clears snapshot metadata when switching to a registry upload', () => {
+  render(<Imports reportOnly={false} />);
+  const type = screen.getByLabelText('Тип импорта');
+  fireEvent.change(type, { target: { value: 'SNAPSHOT' } });
+  fireEvent.change(screen.getByLabelText('Квартал'), { target: { value: '2025_Q2' } });
+  fireEvent.change(screen.getByLabelText('Дата среза'), { target: { value: '2025-06-01' } });
+  fireEvent.change(type, { target: { value: 'REGISTRY' } });
+  expect(screen.queryByLabelText('Квартал')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Дата среза')).not.toBeInTheDocument();
+  fireEvent.change(type, { target: { value: 'SNAPSHOT' } });
+  expect(screen.getByLabelText('Квартал')).toHaveValue('');
+  expect(screen.getByLabelText('Дата среза')).toHaveValue('');
+});
+
 it('shows a visible quarter format error instead of silently blocking submit', async () => {
   render(<Imports reportOnly={false} />);
   fireEvent.change(screen.getByLabelText('Файл реестра .xlsx'), { target: { files: [new File(['xlsx'], 'clients.xlsx')] } });
