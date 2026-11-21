@@ -67,11 +67,14 @@ const card = async (admin: Actor, code: string) =>
 
 describe('administrator imports and recovery', { session: 'admin', timeout: 100_000 }, () => {
   test('loads a registry workbook through the browser and reports its accepted row', async ({ app, browser, screen, data }) => {
-    const { code, admin } = data;
+    const { code, admin, quarter } = data;
+    const date = dateInQuarter(quarter, 2);
     const file = registry(code);
     try {
       await app.open('/upload');
       await screen.getByLabel('Файл реестра .xlsx').setInputFiles(file.path);
+      await screen.getByLabel('Квартал', { exact: true }).fill(quarter);
+      await screen.getByLabel('Дата среза').fill(date);
 
       await screen.getByRole('button', 'Загрузить').tap();
 

@@ -64,13 +64,17 @@ CREATE TABLE client_assignments (
     FOREIGN KEY (kcr_code, work_quarter) REFERENCES client_work_cycles (kcr_code, work_quarter) ON DELETE CASCADE
 );
 
--- Одно активное закрепление на цикл. Смена ответственного и событие OPERATOR_ASSIGN атомарны.
+-- Максимум одно активное закрепление на клиента в квартальном цикле; take сериализуется по строке цикла;
+-- при отсутствии действующего ожидания: завершить прежнюю запись и создать новую
+-- в одной транзакции с проверкой wait_until и записью OPERATOR_ASSIGN (spec.md §3.3).
+-- WAIT_DEADLINE блокирует перезакрепление до даты оператора, включая новый квартал.
+-- После даты при остатке клиент возвращается в POOL; переход идемпотентен.
 CREATE UNIQUE INDEX uq_assignment_active
     ON client_assignments (kcr_code, work_quarter) WHERE released_at IS NULL;
 
 CREATE INDEX idx_assignments_operator ON client_assignments (operator_id, work_quarter, released_at);
 
-COMMENT ON TABLE client_assignments IS 'Текущее закрепление и история смены ответственного. Действующий срок ожидания сохраняется при перезакреплении.';
+COMMENT ON TABLE client_assignments IS 'Закрепление за оператором + история. Взятие и перезакрепление атомарны в рамках work_quarter; WAIT_DEADLINE до wait_until блокирует смену ответственного через границу квартала. Старые циклы сохраняются как история. released_at/released_by завершают прежнее закрепление; отдельных действий освобождения и снятия нет.';
 
 -- ---------------------------------------------------------------------------
 -- История этапов работы
@@ -93,13 +97,33 @@ COMMENT ON TABLE client_stages IS 'История этапов по кварта
 
 ALTER TABLE client_work_cycles ADD COLUMN published_at TIMESTAMPTZ;
 
-CREATE TABLE client_take_operations (
+CREATE TABLE client_reassignment_requests (
     id UUID PRIMARY KEY,
-    assignment_id UUID NOT NULL REFERENCES client_assignments(id) ON DELETE CASCADE,
-    expected_assignment_id UUID
+    kcr_code TEXT NOT NULL,
+    work_quarter TEXT NOT NULL,
+    expected_assignment_id UUID NOT NULL REFERENCES client_assignments(id) ON DELETE CASCADE,
+    owner_id UUID NOT NULL,
+    requester_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'REJECTED', 'TRANSFERRED', 'CANCELLED')),
+    resolved_at TIMESTAMPTZ,
+    CHECK (owner_id <> requester_id),
+    CHECK (expires_at = created_at + INTERVAL '1 hour'),
+    CHECK ((status = 'PENDING') = (resolved_at IS NULL)),
+    FOREIGN KEY (kcr_code, work_quarter)
+        REFERENCES client_work_cycles(kcr_code, work_quarter) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_take_operations_assignment ON client_take_operations (assignment_id);
+CREATE UNIQUE INDEX uq_pending_reassignment
+    ON client_reassignment_requests (kcr_code, work_quarter) WHERE status = 'PENDING';
+
+CREATE INDEX idx_reassignment_due
+    ON client_reassignment_requests (expires_at) WHERE status = 'PENDING';
+
+CREATE INDEX idx_reassignment_owner ON client_reassignment_requests (owner_id, created_at DESC);
+CREATE INDEX idx_reassignment_requester ON client_reassignment_requests (requester_id, created_at DESC);
 
 -- Call operation replay uses the event ID and the original assignment and deadline.
 ALTER TABLE client_events ADD COLUMN call_assignment_id UUID;

@@ -85,6 +85,17 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         app.state.cleanup = Cleanup(database)
         stop = asyncio.Event()
 
+        async def process_deadlines():
+            while not stop.is_set():
+                try:
+                    await asyncio.to_thread(assignments.settle_due)
+                except SQLAlchemyError:
+                    logger.exception("Could not process reassignment deadlines")
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=5)
+                except TimeoutError:
+                    pass
+
         async def process_waits(url: str):
             with httpx.Client(base_url=url, timeout=3, trust_env=False) as clients:
                 expiry = WaitExpiry(database, clients)
@@ -99,12 +110,14 @@ def create_app(engine: Engine | None = None) -> FastAPI:
                         pass
 
         stop_waits = Event()
+        task = asyncio.create_task(process_deadlines())
         wait_task = asyncio.create_task(process_waits(clients_url)) if clients_url else None
         try:
             yield
         finally:
             stop_waits.set()
             stop.set()
+            await task
             if wait_task is not None:
                 await wait_task
             if registry is not None:
@@ -221,16 +234,19 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     ):
         return app.state.assignments.state_current(kcr_code, work_quarter)
 
-    @app.post("/internal/v1/clients/{kcr_code}/take", operation_id="takeClient")
+    @app.post(
+        "/internal/v1/clients/{kcr_code}/take", responses={202: {"description": "Запрос создан"}}
+    )
     def take(
         kcr_code: str,
         work_quarter: Quarter,
         body: TakeRequest,
         user: Annotated[UUID, Depends(operator)],
     ):
-        return app.state.assignments.take(
+        status, result = app.state.assignments.take(
             kcr_code, work_quarter, user, body.expected_assignment_id, body.request_id
         )
+        return JSONResponse(status_code=status, content=jsonable_encoder(result))
 
     @app.get(
         "/internal/v1/clients/{kcr_code}/events",
@@ -268,5 +284,35 @@ def create_app(engine: Engine | None = None) -> FastAPI:
             "scope": body.scope,
             "status": "COMPLETED",
         }
+
+    @app.get("/internal/v1/reassignment-notifications")
+    def notifications(
+        user: Annotated[UUID, Depends(operator)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return {"items": app.state.assignments.notifications(user, limit, offset)}
+
+    @app.post(
+        "/internal/v1/reassignment-notifications",
+        operation_id="listScopedReassignmentNotifications",
+    )
+    def scoped_notifications(
+        scope: ClientScope,
+        user: Annotated[UUID, Depends(operator)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return {"items": app.state.assignments.notifications(user, limit, offset, scope.codes)}
+
+    @app.post("/internal/v1/reassignment-notifications/{request_id}/reject")
+    def reject(
+        request_id: UUID, user: Annotated[UUID, Depends(operator)], scope: ClientScope | None = None
+    ):
+        if scope is None:
+            status, result = app.state.assignments.reject(request_id, user)
+        else:
+            status, result = app.state.assignments.reject(request_id, user, scope.codes)
+        return JSONResponse(status_code=status, content=jsonable_encoder(result))
 
     return app

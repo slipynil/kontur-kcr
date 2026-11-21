@@ -1,6 +1,6 @@
 'use client';
 
-import { FileText, LayoutGrid, LogOut, Upload, UserRound, UsersRound } from 'lucide-react';
+import { Bell, FileText, LayoutGrid, LogOut, Upload, UserRound, UsersRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -11,6 +11,7 @@ import { ClientDetails } from './client-details';
 import { Imports, Users } from './management';
 import { ThemeToggle } from './theme-toggle';
 import { Login } from './login';
+import { ReassignmentNotifications } from './reassignment-notifications';
 import { Brand, EmptyState, PageHeader } from './presentation';
 
 const adminLinks = [
@@ -24,6 +25,7 @@ export default function Workspace() {
   const pathname = usePathname();
   const [session, setSession] = useState<{ user: User } | null>(null);
   const [ready, setReady] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -31,6 +33,7 @@ export default function Workspace() {
       clearTimeout(timer);
       const saved = readSession();
       setSession(saved); setReady(true);
+      if (!saved) setNotificationsOpen(false);
       if (saved) timer = setTimeout(() => setToken(null), Math.min(saved.expiresAt - Date.now(), 2147483647));
     };
     // Read storage after hydration and follow session changes in other tabs.
@@ -60,6 +63,7 @@ export default function Workspace() {
       aria-current={(href === '/' ? registry || !!code : pathname === href) ? 'page' : undefined}>
       <Icon aria-hidden="true" />{label}
     </Link>)}
+    {!admin && <button type="button" className="nav-item" aria-haspopup="dialog" onClick={() => setNotificationsOpen(true)}><Bell aria-hidden="true" />Запросы</button>}
   </nav>;
   const sessionActions = <>
     <ThemeToggle />
@@ -95,5 +99,7 @@ export default function Workspace() {
             </EmptyState></div></>}
         </main>
       </div>}
+    {!admin && <ReassignmentNotifications key={user.id} userId={user.id}
+      dialog={{ open: notificationsOpen, onClose: () => setNotificationsOpen(false) }} />}
   </>;
 }

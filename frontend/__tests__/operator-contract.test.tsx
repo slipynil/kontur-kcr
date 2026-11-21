@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { EventForm } from '../components/event-form';
 import { ClientDetails } from '../components/client-details';
+import { ReassignmentNotifications } from '../components/reassignment-notifications';
 import { newRequestId } from '../lib/api';
 import type { ClientCard, User } from '../lib/contracts';
 
@@ -15,6 +16,7 @@ const card: ClientCard = {
   dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3',
   dynamics_current_documents: null, dynamics_previous_documents: 10, quarter_summary: null,
 };
+const page = { items: [], total: 0, page: 1, page_size: 20 };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data });
 const onSaved = jest.fn();
 beforeEach(() => {
@@ -69,27 +71,24 @@ it('does not expose event creation to an administrator', () => {
   render(<EventForm card={card} user={{ ...user, role: 'ADMIN' }} base="/clients/A" call onSaved={onSaved} />);
   expect(screen.queryByRole('button', { name: 'Сохранить событие' })).not.toBeInTheDocument();
 });
-it('updates the card owner and keeps the deadline after direct reassignment', async () => {
-  const waiting = { ...card, current_stage: 'WAIT_DEADLINE', wait_until: '2099-01-01' };
-  const colleague = { ...waiting, assignment: { ...card.assignment, operator_id: 'colleague', operator_name: 'Коллега' } };
-  let changed = false;
-  (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => {
-    if (init?.method === 'POST') {
-      changed = true;
-      return Promise.resolve(response({ assignment_id: 'new-assignment', assigned_operator_id: user.id }));
-    }
-    return Promise.resolve(response(changed ? waiting : colleague));
-  });
+it('handles an accepted reassignment request without claiming ownership', async () => {
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => Promise.resolve(response(
+    init?.method === 'POST' ? { status: 'PENDING', expires_at: '2026-11-15T18:00:00Z' } : url.includes('/events') || url.includes('/history') ? page : { ...card, assignment: { ...card.assignment, operator_id: 'colleague' } },
+    init?.method === 'POST' ? 202 : 200,
+  )));
   render(<ClientDetails code="A" user={user} call={false} />);
-  const reassign = await screen.findByRole('button', { name: 'Перезакрепить на себя' });
-  expect(reassign).toBeEnabled();
-  expect(screen.getByText('Клиент закреплён за оператором Коллега.')).toBeInTheDocument();
-
-  fireEvent.click(reassign);
-
-  await screen.findByRole('button', { name: 'Записать звонок' });
-  expect(screen.getByText('Клиент закреплён за вами')).toBeInTheDocument();
-  expect(screen.getByText('Ожидание срока')).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: 'Перезакрепить на себя' }));
+  await screen.findByText(/Запрос на перезакрепление ожидает решения/);
+  expect(screen.queryByText('Клиент закреплён за вами')).not.toBeInTheDocument();
   const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
   expect(JSON.parse(call[1].body)).toMatchObject({ expected_assignment_id: assignmentId, request_id: expect.any(String) });
+});
+it('allows only the notified owner to reject and refreshes the notifications', async () => {
+  const notification = { id: 'req', kcr_code: 'A', status: 'PENDING', owner_id: user.id, requester_id: 'colleague', expires_at: '2099-01-01T00:00:00Z' };
+  (fetch as jest.Mock).mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(response(init?.method === 'POST' ? { ...notification, status: 'REJECTED' } : { items: [notification] })));
+  render(<ReassignmentNotifications userId={user.id} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Отклонить запрос' }));
+  await screen.findByText('Запрос отклонён');
+  await waitFor(() => expect((fetch as jest.Mock).mock.calls.filter(([, init]) => !init.method)).toHaveLength(2));
+  expect((fetch as jest.Mock).mock.calls.some(([url, init]) => url === '/api/v1/reassignment-notifications/req/reject' && init.method === 'POST')).toBe(true);
 });

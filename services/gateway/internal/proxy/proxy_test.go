@@ -210,7 +210,7 @@ func TestProxyUpstreamUnavailable(t *testing.T) {
 
 func TestProxyPassesUpstreamErrorStatus(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"code":"ASSIGNMENT_CHANGED"}`, http.StatusConflict)
+		http.Error(w, `{"code":"CLIENT_WAIT_DEADLINE_ACTIVE"}`, http.StatusConflict)
 	}))
 	t.Cleanup(upstream.Close)
 	upstreams := newTestUpstreams(t, upstream.URL)
@@ -223,7 +223,7 @@ func TestProxyPassesUpstreamErrorStatus(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "ASSIGNMENT_CHANGED") {
+	if !strings.Contains(w.Body.String(), "CLIENT_WAIT_DEADLINE_ACTIVE") {
 		t.Errorf("body = %q", w.Body.String())
 	}
 }
