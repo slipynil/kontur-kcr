@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -564,32 +564,9 @@ class Assignments:
                 )
             if active and _protected(cycle, now):
                 raise WorkError(409, "CLIENT_WAIT_DEADLINE_ACTIVE", "Срок ожидания ещё действует")
-            if active is None:
-                return 200, _assign(db, code, quarter, operator, None, now)
             if pending:
-                raise WorkError(
-                    409, "REASSIGNMENT_PENDING", "Запрос перезакрепления уже ожидает ответа"
-                )
-
-            row = _one(
-                db,
-                """INSERT INTO client_reassignment_requests
-                       (id, kcr_code, work_quarter, expected_assignment_id, owner_id,
-                        requester_id, created_at, expires_at)
-                   VALUES (:id, :code, :quarter, :expected, :owner, :requester, :now, :expires_at)
-                   ON CONFLICT (id) DO NOTHING RETURNING *""",
-                id=request_id,
-                code=code,
-                quarter=quarter,
-                expected=expected,
-                owner=active["operator_id"],
-                requester=operator,
-                now=now,
-                expires_at=now + timedelta(hours=1),
-            )
-            if row is None:
-                raise WorkError(409, "REQUEST_ID_CONFLICT", "ID запроса уже используется")
-            return 202, dict(row)
+                _resolve(db, pending["id"], "CANCELLED", now)
+            return 200, _assign(db, code, quarter, operator, active, now)
 
     def notifications(
         self, operator: UUID, limit: int, offset: int, visible_codes: list[str] | None = None

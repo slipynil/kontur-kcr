@@ -78,34 +78,29 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     );
   });
 
-  test('allows the owner to veto reassignment from the notification', async ({ app, browser, screen, work }) => {
+  test('immediately takes over a client assigned to another operator', { session: 'operator_b' }, async ({ app, screen, work }) => {
     const { admin, first, second, code, quarter } = work;
     await publish(admin, code, quarter);
-    const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
-    const pending = requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
-    expect(pending.status).toBe('PENDING');
-    expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
-    expect(Date.parse(pending.expires_at) - Date.parse(pending.created_at)).toBe(3_600_000);
-    await app.open('/');
-    await screen.getByRole('button', 'Запросы').tap();
-    const notification = browser.locator('[role="dialog"] .notification-list li').filter({ hasText: code });
+    requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
+    await app.open(`/client/${code}`);
 
-    await notification.getByRole('button', 'Отклонить запрос').tap();
-
-    await expect(screen.getByText('Запрос отклонён', { exact: true })).toBeVisible();
-    await expect(notification).toContainText('Отклонён');
-    expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
+    await expect(screen.getByText(first.user.login, { exact: true })).toBeVisible();
+    await screen.getByRole('button', 'Перезакрепить на себя').tap();
+    await expect(screen.getByText('Клиент перезакреплён на вас', { exact: true })).toBeVisible();
+    await expect(screen.getByRole('button', 'Записать звонок')).toBeVisible();
+    expect(assignment(second, code, quarter).assigned_operator_id).toBe(second.user.id);
+    const notifications = requireStatus(
+      await api('/reassignment-notifications', { actor: second }), 200, 'Read existing requests',
+    );
+    expect(notifications.items.some((item: { kcr_code: string }) => item.kcr_code === code)).toBe(false);
   });
 
-  test('transfers the client after the veto window and keeps an old-form call without its wait', { session: 'operator_b' },
+  test('keeps an old-form call without its wait after immediate reassignment', { session: 'operator_b' },
     async ({ app, screen, work }) => {
       const { admin, first, second, code, quarter, today } = work;
       await publish(admin, code, quarter);
       const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
-      requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
-
-      expireWork(code, quarter, 'reassignment');
-      await expect.poll(() => assignment(second, code, quarter).assigned_operator_id, { timeout: 35_000 }).toBe(second.user.id);
+      requireStatus(await take(second, code, quarter, original.assignment_id), 200, 'Immediately reassign');
       const recorded = requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
         wait_until: addDays(today, 4),
       })), 201, 'Save stale-form call');

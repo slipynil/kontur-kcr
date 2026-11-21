@@ -85,7 +85,8 @@ it('restores operator access without exposing admin requests', async () => {
   signIn(); pathname = '/users'; render(<Workspace />);
   await screen.findByText('Раздел доступен только администратору.');
   expect(screen.getByRole('link', { name: 'Клиенты' })).toHaveAttribute('href', '/');
-  expect(screen.getByRole('button', { name: 'Запросы' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Запросы' })).not.toBeInTheDocument();
+  expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/reassignment-notifications'))).toBe(false);
   expect((fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/users'))).toBe(false);
 });
 it('applies server search and preserves zero numeric filters', async () => {
@@ -263,18 +264,24 @@ it('publishes a single client from the card', async () => {
   expect(call[0]).toBe('/api/v1/clients/A%2FB/publication?work_quarter=2026_Q3');
   expect(call[1].body).toBeUndefined();
 });
-it('allows reassignment and sends the real work quarter, then displays 409', async () => {
-  (fetch as jest.Mock).mockImplementation(clientFetch);
+it('takes only a free client and reports a conflict when its assignment changed', async () => {
+  (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) =>
+    init?.method === 'POST'
+      ? Promise.resolve(json({ code: 'ASSIGNMENT_CHANGED', message: 'Ответственный изменился. Обновите карточку' }, 409))
+      : Promise.resolve(json({ ...card, assignment: null, assignment_id: null })));
   render(<ClientDetails code="A/B" user={user} call={false} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Перезакрепить на себя' }));
-  await screen.findByText('Срок ещё не наступил');
-  expect((fetch as jest.Mock).mock.calls.some(([url, init]) => url === '/api/v1/clients/A%2FB/take?work_quarter=2026_Q3' && init.method === 'POST')).toBe(true);
+  fireEvent.click(await screen.findByRole('button', { name: 'Взять в работу' }));
+  await screen.findByText('Ответственный изменился. Обновите карточку');
+  const call = (fetch as jest.Mock).mock.calls.find(([, init]) => init.method === 'POST');
+  expect(call[0]).toBe('/api/v1/clients/A%2FB/take?work_quarter=2026_Q3');
+  expect(JSON.parse(call[1].body).expected_assignment_id).toBeNull();
   expect(screen.queryByText('Снять с оператора')).not.toBeInTheDocument();
 });
 it('protects active waiting across quarters', async () => {
   (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, current_stage: 'WAIT_DEADLINE', wait_until: '2099-01-01' })));
   render(<ClientDetails code="A/B" user={user} call={false} />);
-  expect(await screen.findByRole('button', { name: 'Перезакрепить на себя' })).toBeDisabled();
+  expect(await screen.findByText(/Ожидание защищает ответственного до/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Перезакрепить на себя' })).toBeDisabled();
 });
 it('saves a call only after the API succeeds', async () => {
   (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(json({ id: 'event', wait_applied: true }, 201)) : Promise.resolve(json(url.includes('/events') || url.includes('/history') ? page : { ...card, assignment: { ...card.assignment, operator_id: user.id } })));

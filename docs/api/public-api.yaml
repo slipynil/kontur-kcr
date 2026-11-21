@@ -418,10 +418,9 @@ paths:
       x-operator-visibility: current-published
       summary: Взять или перезакрепить клиента на себя
       description: |
-        Свободный опубликованный клиент закрепляется сразу.
-        Для занятого клиента создаётся уведомление ответственному на один час.
-        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
-        и исторический цикл дают 409.
+        Опубликованный клиент закрепляется сразу, включая смену ответственного у занятого клиента.
+        Действующий WAIT_DEADLINE, смена назначения и исторический цикл дают 409.
+        Повтор старого запроса по его request_id может вернуть сохранённый результат обработки.
       x-roles:
       - OPERATOR
       parameters:
@@ -435,7 +434,7 @@ paths:
               $ref: '#/components/schemas/TakeRequest'
       responses:
         '200':
-          description: Клиент закреплён за текущим оператором.
+          description: Клиент закреплён за текущим оператором либо возвращён результат старого запроса.
           content:
             application/json:
               schema:
@@ -443,7 +442,7 @@ paths:
                 - $ref: '#/components/schemas/TakeResponse'
                 - $ref: '#/components/schemas/ReassignmentRequest'
         '202':
-          description: Запрос ожидает решения ответственного.
+          description: Повтор ранее созданного запроса, который ещё ожидает решения.
           content:
             application/json:
               schema:

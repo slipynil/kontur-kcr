@@ -235,7 +235,8 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         return app.state.assignments.state_current(kcr_code, work_quarter)
 
     @app.post(
-        "/internal/v1/clients/{kcr_code}/take", responses={202: {"description": "Запрос создан"}}
+        "/internal/v1/clients/{kcr_code}/take",
+        responses={202: {"description": "Повтор ранее созданного ожидающего запроса"}},
     )
     def take(
         kcr_code: str,

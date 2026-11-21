@@ -31,7 +31,7 @@ def mock_api(monkeypatch):
         yield client, assignments
 
 
-def test_operator_can_request_reassignment_and_owner_can_reject(mock_api):
+def test_legacy_reassignment_can_be_replayed_and_rejected(mock_api):
     client, assignments = mock_api
     owner_id, operator_id, assignment_id, request_id = (uuid4() for _ in range(4))
     created = datetime(2026, 11, 14, 9, tzinfo=UTC)
