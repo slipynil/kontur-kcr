@@ -224,7 +224,8 @@ paths:
       description: 'ADR-0005: актуальные остатки выбранного quarter и предшествующего исходного квартала. Без quarter
         используется текущий календарный квартал Europe/Moscow; без одного из периодов dynamics=null. Сумма остатков
         и категория клиента учитывают все периоды независимо от лимита срезов. Выбранный quarter не скрывает другие
-        кварталы клиента. Оба квартала и числа сравнения возвращаются явно.'
+        кварталы клиента. Оба квартала и числа сравнения возвращаются явно. Активный ответственный берётся из
+        текущего опубликованного цикла обзвона, независимо от квартала сравнения документов.'
       x-roles:
       - ADMIN
       - OPERATOR
@@ -322,6 +323,12 @@ paths:
                 $ref: '#/components/schemas/ClientListResponse'
         '400':
           description: Некорректные или неподдерживаемые параметры запроса.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Сервис назначений недоступен или вернул некорректные данные.
           content:
             application/json:
               schema:
@@ -1367,6 +1374,9 @@ components:
           - 'null'
           format: uuid
           description: Оператор, за которым закреплён клиент; `null` — клиент свободен.
+        operator_name:
+          type: [string, 'null']
+          description: Логин ответственного из Identity DB; null при отсутствии назначения или пользователя.
         dynamics:
           $ref: '#/components/schemas/NullableDynamics'
           description: Сравнение актуальных остатков quarter и предыдущего исходного квартала. Нет одного периода

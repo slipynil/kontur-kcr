@@ -14,6 +14,7 @@ import (
 
 	"github.com/slipynil/kontur-kcr/services/identity/internal/auth"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/card"
+	"github.com/slipynil/kontur-kcr/services/identity/internal/identity"
 )
 
 const (
@@ -56,7 +57,7 @@ func newVisibilityEnv(
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
-	router.Get("/api/v1/clients", aggregator.Registry(next))
+	router.Get("/api/v1/clients", aggregator.Registry)
 	router.Get("/api/v1/clients/{kcr_code}/snapshots/history", aggregator.VisibleClient(next))
 	router.Get("/api/v1/pool", aggregator.Pool(next))
 	router.Get("/api/v1/reassignment-notifications", aggregator.Notifications(next))
@@ -325,7 +326,16 @@ func TestVisibleClientUpstreamFailures(t *testing.T) {
 }
 
 func TestRegistryScopesOperatorCollection(t *testing.T) {
-	operator := publishedPool(`{"codes":["` + operatorCode + `"]}`)
+	operator := &upstreamStub{router: func(call recordedCall) (int, string) {
+		switch call.path {
+		case publishedCodesPath:
+			return http.StatusOK, `{"codes":["` + operatorCode + `","OTHER"]}`
+		case "/internal/v1/clients/current-assignees":
+			return http.StatusOK, `{"items":[{"kcr_code":"` + operatorCode + `","assigned_operator_id":"` + operatorID + `"}]}`
+		default:
+			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
+		}
+	}}
 	clients := &upstreamStub{router: func(call recordedCall) (int, string) {
 		if call.path != registryPath {
 			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
@@ -333,7 +343,8 @@ func TestRegistryScopesOperatorCollection(t *testing.T) {
 		return http.StatusOK, `{"items":[{"kcr_code":"` + operatorCode + `"}]}`
 	}}
 	called := false
-	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
+	users := &fakeUsers{user: identity.User{ID: uuid.MustParse(operatorID), Login: "operator-login"}}
+	e := newVisibilityEnv(t, clients, operator, users, recordingNext(&called))
 
 	w := e.get(t, "/api/v1/clients?page=2&page_size=10")
 
@@ -343,8 +354,13 @@ func TestRegistryScopesOperatorCollection(t *testing.T) {
 	if called {
 		t.Error("scoped collection must answer without the proxy handler")
 	}
-	if got := strings.TrimSpace(w.Body.String()); got != `{"items":[{"kcr_code":"`+operatorCode+`"}]}` {
-		t.Errorf("body = %s, want upstream payload", got)
+	if got := strings.TrimSpace(w.Body.String()); got != `{"items":[{"assigned_operator_id":"`+operatorID+`","kcr_code":"`+operatorCode+`","operator_name":"operator-login"}]}` {
+		t.Errorf("body = %s, want enriched registry page", got)
+	}
+	operatorCalls := operator.recorded()
+	if len(operatorCalls) != 2 || operatorCalls[1].method != http.MethodPost ||
+		string(operatorCalls[1].body) != `{"codes":["`+operatorCode+`"]}` {
+		t.Fatalf("expected one assignee request scoped to the page, got %+v", operatorCalls)
 	}
 	calls := clients.recorded()
 	if len(calls) != 1 {
@@ -354,7 +370,7 @@ func TestRegistryScopesOperatorCollection(t *testing.T) {
 	if call.method != http.MethodPost || call.path != registryPath || call.query != "page=2&page_size=10" {
 		t.Errorf("registry call = %s %s?%s", call.method, call.path, call.query)
 	}
-	if string(call.body) != `{"codes":["`+operatorCode+`"]}` {
+	if string(call.body) != `{"codes":["`+operatorCode+`","OTHER"]}` {
 		t.Errorf("registry body = %s", call.body)
 	}
 	if got := call.header.Get("X-User-Id"); got != operatorID {
@@ -503,7 +519,6 @@ func TestScopedCollectionsBypassForAdmin(t *testing.T) {
 		name   string
 		target string
 	}{
-		{name: "registry", target: "/api/v1/clients"},
 		{name: "pool", target: "/api/v1/pool"},
 		{name: "notifications", target: "/api/v1/reassignment-notifications"},
 	}
@@ -521,6 +536,47 @@ func TestScopedCollectionsBypassForAdmin(t *testing.T) {
 			}
 			if len(operator.recorded()) != 0 || len(clients.recorded()) != 0 {
 				t.Error("admin must not request the visibility scope")
+			}
+		})
+	}
+}
+
+func TestRegistryAdminReadsAssigneesWithoutVisibilityScope(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   int
+	}{
+		{"free client", http.StatusOK, `{"items":[]}`, http.StatusOK},
+		{"unavailable", http.StatusServiceUnavailable, `{"code":"SERVICE_UNAVAILABLE"}`, http.StatusBadGateway},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clients := &upstreamStub{router: func(call recordedCall) (int, string) {
+				if call.method != http.MethodGet || call.path != "/internal/v1/clients" {
+					return http.StatusNotFound, `{"code":"NOT_FOUND"}`
+				}
+				return http.StatusOK, `{"items":[{"kcr_code":"A"}],"total":1}`
+			}}
+			operator := &upstreamStub{router: func(call recordedCall) (int, string) {
+				if call.path != "/internal/v1/clients/current-assignees" {
+					return http.StatusNotFound, `{"code":"NOT_FOUND"}`
+				}
+				return test.status, test.body
+			}}
+			called := false
+			e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
+			w := e.getAs(t, "/api/v1/clients", auth.RoleAdmin)
+			if w.Code != test.want {
+				t.Fatalf("status = %d, want %d; %s", w.Code, test.want, w.Body)
+			}
+			if got := operator.recorded(); len(got) != 1 || got[0].path != "/internal/v1/clients/current-assignees" {
+				t.Fatalf("expected only the assignee request, got %+v", got)
+			}
+			if test.status == http.StatusOK && strings.TrimSpace(w.Body.String()) !=
+				`{"items":[{"assigned_operator_id":null,"kcr_code":"A","operator_name":null}],"total":1}` {
+				t.Fatalf("unexpected registry page: %s", w.Body)
 			}
 		})
 	}

@@ -41,6 +41,10 @@ class ClientScope(BaseModel):
     codes: list[str]
 
 
+class RegistryPageScope(BaseModel):
+    codes: Annotated[list[Annotated[str, Field(min_length=1)]], Field(min_length=1, max_length=100)]
+
+
 class PublishPoolRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -181,6 +185,16 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     @app.get("/internal/v1/pool/published-codes", operation_id="listCurrentPublishedCodes")
     def published_codes(_user: Annotated[UUID, Depends(operator)], kcr_code: str | None = None):
         return ClientScope(codes=app.state.assignments.published_codes(kcr_code))
+
+    @app.post(
+        "/internal/v1/clients/current-assignees",
+        response_model=PoolResponse,
+        operation_id="listCurrentClientAssignees",
+    )
+    def current_assignees(
+        scope: RegistryPageScope, _user: Annotated[tuple[UUID, str], Depends(actor)]
+    ):
+        return {"items": app.state.assignments.current_assignees(scope.codes)}
 
     @app.post(
         "/internal/v1/pool", response_model=PoolResponse, operation_id="listScopedPublishedClients"

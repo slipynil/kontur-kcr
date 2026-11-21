@@ -1144,6 +1144,8 @@ def test_gateway_read_contract_and_trusted_actor(api, operators):
 
 def test_work_state_follows_the_current_cycle_lifecycle(api, operators):
     a, _, _ = operators
+    batch = {"codes": [CODE, "MISSING"]}
+    assignees_url = f"{BASE}/clients/current-assignees"
     missing = api.get(f"{CLIENT}/work-state", headers=a)
     assert missing.status_code == 404
     assert missing.json()["code"] == "WORK_CYCLE_NOT_FOUND"
@@ -1158,12 +1160,16 @@ def test_work_state_follows_the_current_cycle_lifecycle(api, operators):
     assert free.status_code == 200
     assert free.json()["work_quarter"] == QUARTER
     assert free.json()["assigned_operator_id"] is None
+    assert api.post(assignees_url, headers=a, json=batch).json() == {"items": []}
 
     taken = take(api, a)
     assert taken.status_code == 200
     assigned = api.get(f"{CLIENT}/work-state", headers=a).json()
     assert assigned["assigned_operator_id"] == a["X-User-Id"]
     assert assigned["assignment_id"] == taken.json()["assignment_id"]
+    expected = {"items": [{"kcr_code": CODE, "assigned_operator_id": a["X-User-Id"]}]}
+    assert api.post(assignees_url, headers=a, json=batch).json() == expected
+    assert api.post(assignees_url, headers=identity("ADMIN"), json=batch).json() == expected
 
     explicit = api.get(f"{CLIENT}/work-state", params=CYCLE, headers=a)
     assert explicit.status_code == 200

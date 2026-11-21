@@ -171,6 +171,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClientVisibilityScope'
+  /clients/current-assignees:
+    post:
+      operationId: listCurrentClientAssignees
+      summary: Активные ответственные для клиентов одной страницы реестра
+      description: Возвращает только назначения текущих опубликованных циклов. Свободные клиенты пропускаются.
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codes]
+              properties:
+                codes:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Активные назначения для переданных кодов
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [kcr_code, assigned_operator_id]
+                      properties:
+                        kcr_code: {type: string}
+                        assigned_operator_id: {type: string, format: uuid}
+        '422':
+          description: Некорректный список кодов клиента.
   /pool/publication:
     put:
       operationId: publishPool

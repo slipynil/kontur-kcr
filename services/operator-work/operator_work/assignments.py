@@ -465,6 +465,21 @@ class Assignments:
                 ).scalars()
             )
 
+    def current_assignees(self, codes: list[str]) -> list[dict]:
+        with self.engine.connect() as db:
+            rows = db.execute(
+                text("""SELECT cycle.kcr_code, assignment.operator_id AS assigned_operator_id
+                        FROM client_work_cycles AS cycle
+                        JOIN client_assignments AS assignment
+                          ON assignment.kcr_code = cycle.kcr_code
+                         AND assignment.work_quarter = cycle.work_quarter
+                         AND assignment.released_at IS NULL
+                        WHERE cycle.is_current AND cycle.published_at IS NOT NULL
+                          AND cycle.kcr_code = ANY(CAST(:codes AS text[]))"""),
+                {"codes": codes},
+            ).mappings()
+            return [dict(row) for row in rows]
+
     def pool(self, quarter: str, visible_codes: list[str] | None = None) -> list[dict]:
         with self.engine.connect() as db:
             rows = db.execute(

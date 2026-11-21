@@ -106,20 +106,14 @@ func (a *Aggregator) VisibleClient(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (a *Aggregator) Registry(next http.HandlerFunc) http.HandlerFunc {
-	return a.scopedCollection(next, true, func(_ *http.Request) string {
-		return "/internal/v1/clients/operator-registry"
-	})
-}
-
 func (a *Aggregator) Pool(next http.HandlerFunc) http.HandlerFunc {
-	return a.scopedCollection(next, false, func(_ *http.Request) string {
+	return a.scopedCollection(next, func(_ *http.Request) string {
 		return "/internal/v1/pool"
 	})
 }
 
 func (a *Aggregator) Notifications(next http.HandlerFunc) http.HandlerFunc {
-	return a.scopedCollection(next, false, func(_ *http.Request) string {
+	return a.scopedCollection(next, func(_ *http.Request) string {
 		return "/internal/v1/reassignment-notifications"
 	})
 }
@@ -131,13 +125,13 @@ func (a *Aggregator) Reject(next http.HandlerFunc) http.HandlerFunc {
 			httpx.WriteValidationError(w)
 			return
 		}
-		a.scopedCollection(next, false, func(_ *http.Request) string {
+		a.scopedCollection(next, func(_ *http.Request) string {
 			return fmt.Sprintf("/internal/v1/reassignment-notifications/%s/reject", id)
 		})(w, r)
 	}
 }
 
-func (a *Aggregator) scopedCollection(next http.HandlerFunc, registry bool, path func(*http.Request) string) http.HandlerFunc {
+func (a *Aggregator) scopedCollection(next http.HandlerFunc, path func(*http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		who, ok := auth.FromContext(r.Context())
 		if !ok {
@@ -149,18 +143,14 @@ func (a *Aggregator) scopedCollection(next http.HandlerFunc, registry bool, path
 			return
 		}
 		scope, failure := a.publishedScope(r, who, "")
-		if failure == nil && !registry {
+		if failure == nil {
 			scope, failure = a.unblockedScope(r, who, scope)
 		}
 		if failure != nil {
 			a.respondUpstreamFailure(w, failure, "client visibility")
 			return
 		}
-		upstream := a.operatorURL
-		if registry {
-			upstream = a.clientsURL
-		}
-		data, failure := a.scopeRequest(r, who, upstream, path(r), r.URL.RawQuery, scope)
+		data, failure := a.scopeRequest(r, who, a.operatorURL, path(r), r.URL.RawQuery, scope)
 		if failure != nil {
 			a.respondUpstreamFailure(w, failure, "scoped client data")
 			return
