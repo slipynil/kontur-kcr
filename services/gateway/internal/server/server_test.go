@@ -139,14 +139,14 @@ func newTestEnv(t *testing.T) *testEnv {
 				} else {
 					body = `{"codes":["6671-0042"]}`
 				}
-			case "/internal/v1/clients/unblocked-codes":
+			case "/internal/v1/clients/registered-codes":
 				body = `{"codes":["6671-0042"]}`
 			case "/internal/v1/clients", "/internal/v1/clients/operator-registry":
 				body = `{"items":[{"kcr_code":"6671-0042"}]}`
 			case "/internal/v1/clients/current-assignees":
 				body = `{"items":[]}`
 			case "/internal/v1/clients/6671-0042":
-				body = `{"is_blocked":false,"kcr_code":"6671-0042"}`
+				body = `{"kcr_code":"6671-0042"}`
 			case "/internal/v1/clients/6671-0042/work-state":
 				body = `{"work_quarter":"2026_Q4","stage":"POOL"}`
 			}

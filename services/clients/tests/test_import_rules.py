@@ -63,15 +63,15 @@ def test_new_quarter_cannot_invent_counts(incoming, field):
 
 def test_profile_confirmation_clears_only_supplied_field():
     origin = source().as_dict()
-    current = {"manager_name": "old", "contacts": {"phone": "123"}, "is_blocked": True}
+    current = {"manager_name": "old", "contacts": {"phone": "123"}}
     warnings = {"manager_name": origin, "contacts": origin}
     values, remaining = merge_profile_fields(
         current,
-        {"manager_name": "new", "is_blocked": False},
+        {"manager_name": "new"},
         sources={key: origin for key in current},
         inherited=warnings,
     )
-    assert values["is_blocked"] is False
+    assert values["manager_name"] == "new"
     assert remaining == {"contacts": origin}
     assert warnings == {"manager_name": origin, "contacts": origin}
 

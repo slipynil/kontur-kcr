@@ -146,6 +146,64 @@ def test_manual_full_deletion_restores_only_clients_touched_by_batch(setup):
         get_card(engine, "b")
 
 
+def test_removing_blocking_preserves_legacy_replay_and_rollback(database):
+    engine, config, _ = database
+    migration.upgrade(config, "0006_registry_provenance")
+    with engine.begin() as connection:
+        connection.execute(
+            text("""
+                INSERT INTO clients(kcr_code, organization_name, is_blocked, inherited_fields,
+                                    field_sources, needs_review)
+                VALUES ('a', 'before', true, '{"is_blocked": {}}', '{"is_blocked": {}}', true),
+                       ('b', 'unaffected', true, '{"is_blocked": {}, "manager_name": {}}',
+                        '{"is_blocked": {}, "manager_name": {}}', true)
+            """)
+        )
+    original = ImportEnvelope(
+        batch_id=uuid4(),
+        uploaded_by=uuid4(),
+        import_type="SNAPSHOT",
+        selected_quarter="2026_Q2",
+        snapshot_date="2026-04-10",
+        items=[snapshot("2026_Q1", 10)],
+    )
+    assert apply_import(engine, original)["accepted_rows"] == 1
+    with engine.begin() as connection:
+        connection.execute(
+            text("""UPDATE quarter_snapshot_history SET inherited_fields = '{"is_blocked": {}}'""")
+        )
+    legacy = ImportEnvelope(
+        batch_id=uuid4(),
+        uploaded_by=uuid4(),
+        import_type="REGISTRY",
+        items=[{"client": {"kcr_code": "a", "organization_name": "after", "is_blocked": True}}],
+    )
+    applied = apply_import(engine, legacy)
+    assert applied["accepted_rows"] == 1
+    delete(engine)
+
+    migration.upgrade(config, "head")
+    assert apply_import(engine, legacy) == applied
+    assert get_card(engine, "b").model_dump()["inherited_fields"] == {"manager_name": {}}
+    with engine.connect() as connection:
+        undo = connection.scalar(
+            text("SELECT previous_state FROM clients_import_undo WHERE batch_id = :batch"),
+            {"batch": legacy.batch_id},
+        )["clients"][0]
+        assert "is_blocked" not in undo
+        assert undo["field_sources"] == undo["inherited_fields"] == {}
+        assert undo["needs_review"] is False
+        archived = connection.scalar(text("SELECT payload FROM clients_deleted_history"))
+        assert archived["inherited_fields"] == {}
+
+    assert rollback(engine, legacy)["restored_history_records"] == 1
+    restored = get_card(engine, "a")
+    assert restored.organization_name == "before"
+    assert restored.outstanding_documents == 10
+    assert not restored.needs_review
+    assert "is_blocked" not in restored.model_dump()
+
+
 def test_deletion_before_new_import_is_not_undone_by_its_rollback(setup):
     engine, _, apply, _ = setup
     apply([snapshot("2026_Q1", 10)])

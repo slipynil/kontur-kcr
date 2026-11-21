@@ -12,7 +12,7 @@ const push = jest.fn(); const replace = jest.fn();
 jest.mock('next/navigation', () => ({ usePathname: () => pathname, useRouter: () => ({ push, replace }), useSearchParams: () => new URLSearchParams(search) }));
 const user: User = { id: 'operator-id', login: 'operator', role: 'OPERATOR', is_active: true, created_at: '2026-01-01' };
 const page = { items: [], total: 0, page: 1, page_size: 20 };
-const card = { assignment_id: '11111111-1111-4111-8111-111111111111', kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], is_blocked: false, current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
+const card = { assignment_id: '11111111-1111-4111-8111-111111111111', kcr_code: 'A/B', inn: null, organization_name: 'Компания', tags: [], current_stage: 'IN_WORK', assignment: { operator_id: 'another', operator_name: 'Другой оператор', work_quarter: '2026_Q3' }, work_quarter: '2026_Q3', snapshots: [], dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: 0, quarter_summary: null };
 const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data });
 beforeEach(() => {
   localStorage.clear(); pathname = '/'; search = ''; jest.clearAllMocks();
@@ -162,7 +162,7 @@ it('disables taking when Gateway reports no published work cycle', async () => {
   expect(screen.getByText('Для клиента пока нет опубликованного цикла обзвона.')).toBeVisible();
 });
 const list = (codes: string[]) => ({
-  items: codes.map(code => ({ kcr_code: code, inn: null, organization_name: `Организация ${code}`, is_blocked: false, tags: [], current_stage: 'POOL', assigned_operator_id: null, dynamics: null, latest_snapshot: null, dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: null, quarter_summary: null })),
+  items: codes.map(code => ({ kcr_code: code, inn: null, organization_name: `Организация ${code}`, tags: [], current_stage: 'POOL', assigned_operator_id: null, dynamics: null, latest_snapshot: null, dynamics_quarter: '2026_Q4', dynamics_previous_quarter: '2026_Q3', dynamics_current_documents: null, dynamics_previous_documents: null, quarter_summary: null })),
   page: 1, page_size: 20, total: codes.length,
 });
 it('publishes the selected registry clients for the chosen quarter', async () => {
