@@ -1,5 +1,6 @@
 import hashlib
 import re
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 from xml.etree.ElementTree import ParseError
@@ -8,6 +9,7 @@ from zlib import error as ZlibError
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils.cell import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
 from import_worker.models import (
@@ -22,20 +24,25 @@ from import_worker.models import (
 )
 from import_worker.validation import (
     QUARTER,
+    REGISTRY_STATUS_TAGS,
     InvalidRow,
     counter,
     normalized_text,
-    tags,
 )
 
+REGISTRY_HEADERS = (
+    "Код КЦР",
+    "Название",
+    "СЦ",
+    "КПП",
+    "ИНН",
+    "ФИО менеджера",
+    "ФИО менеджера КП",
+    "статус клиента",
+)
+REGISTRY_WIDTH = len(REGISTRY_HEADERS)
 HEADERS = {
     "kcr_code": ("код кцр", "kcr_code"),
-    "organization_name": ("название", "название организации", "organization_name"),
-    "inn": ("инн", "inn"),
-    "kpp": ("кпп", "kpp"),
-    "manager_name": ("менеджер", "фио менеджера", "manager_name"),
-    "tags": ("признаки", "специальные признаки", "tags"),
-    "raw_work_status": ("рабочие отметки", "raw_work_status"),
     "total_documents": ("всего", "всего документов", "документов всего", "total_documents"),
     "unsubmitted_documents": (
         "непередано",
@@ -47,24 +54,15 @@ HEADERS = {
         "unsubmitted_documents",
     ),
     "quarter": ("quarter", "исходный квартал"),
-    "phone": ("телефон", "phone"),
-    "email": ("email", "e-mail", "электронная почта"),
 }
 HEADER_FIELDS = {alias: field for field, aliases in HEADERS.items() for alias in aliases}
 LEGACY_COLUMNS = {
     "kcr_code": 0,
-    "organization_name": 2,
     "total_documents": 3,
     "unsubmitted_documents": 4,
-    "tags": 6,
-    "raw_work_status": 6,
-    "inn": 7,
-    "kpp": 8,
-    "manager_name": 11,
 }
 LEGACY_BLOCKING_COLUMN = 10
 IGNORED_HEADERS = {"блокировка", "блокировка в сервисе", "is_blocked"}
-SNAPSHOT_FIELDS = {"kcr_code", "quarter", "total_documents", "unsubmitted_documents"}
 COUNTER_FIELDS = ("total_documents", "unsubmitted_documents")
 ANONYMIZED_CODE_HEADERS = {
     "уникальный обезличенный идентификатор",
@@ -120,24 +118,109 @@ def cell_text(cell: Any) -> str | None:
     return str(value).strip() or None
 
 
-def header_columns(
-    values: tuple[str | None, ...], import_type: ImportType
-) -> dict[str, int] | None:
-    fields = (
-        SNAPSHOT_FIELDS
-        if import_type is ImportType.SNAPSHOT
-        else HEADERS.keys() - (SNAPSHOT_FIELDS - {"kcr_code"})
+def has_excel_error(cell: Any, value: str | None, original: Any) -> bool:
+    return (
+        cell.data_type == "e"
+        or (value or "").upper() in EXCEL_ERRORS
+        or original.data_type == "f"
+        and value is None
     )
+
+
+def registry_header_error(sheet: Any) -> ImportErrorRow | None:
+    sheet.reset_dimensions()
+    cells = next(sheet.iter_rows(max_row=1), ())
+    values = map(cell_text, cells)
+    for index, (expected, value) in enumerate(zip_longest(REGISTRY_HEADERS, values), 1):
+        if expected is None and value is not None:
+            reason = "лишний столбец в реестре"
+        elif expected is not None and (value or "").casefold() != expected.casefold():
+            reason = f"ожидается заголовок «{expected}»"
+        else:
+            continue
+        return ImportErrorRow(
+            sheet=sheet.title, row_number=1, reason=f"{get_column_letter(index)}1 — {reason}"
+        )
+    return None
+
+
+def registry_row_error(
+    cached: tuple[Any, ...], values: tuple[str | None, ...], uncached: tuple[Any, ...]
+) -> tuple[int, str] | None:
+    for index, (header, cell, value, original) in enumerate(
+        zip_longest(REGISTRY_HEADERS, cached, values, uncached), 1
+    ):
+        if header is None:
+            if value is not None or original is not None and original.value is not None:
+                return index, "лишний столбец в реестре"
+            continue
+        if cell is not None and has_excel_error(cell, value, original):
+            return index, f"«{header}» содержит ошибку Excel или формулу без результата"
+        if index == 1 and value is None:
+            return index, "отсутствует код КЦР"
+        if index == REGISTRY_WIDTH and value not in REGISTRY_STATUS_TAGS:
+            return index, "недопустимый статус клиента"
+    return None
+
+
+def parse_registry_sheet(sheet: Any, raw_sheet: Any, result: ParsedImport) -> None:
+    raw_sheet.reset_dimensions()
+    seen: set[str] = set()
+    for number, (cached, uncached) in enumerate(
+        zip(sheet.iter_rows(min_row=2), raw_sheet.iter_rows(min_row=2), strict=True), 2
+    ):
+        values = tuple(map(cell_text, cached))
+        if not any(values) and not any(cell.data_type == "f" for cell in uncached):
+            continue
+        normalized = tuple(value.casefold() if value is not None else None for value in values)
+        code_key = normalized[0]
+        if TOTAL_LABEL.match(code_key or "") or (
+            code_key is None and any(TOTAL_LABEL.match(value or "") for value in normalized[1:3])
+        ):
+            continue
+        result.total_rows += 1
+        code = values[0]
+        error = registry_row_error(cached, normalized, uncached)
+        if error is None and code_key in seen:
+            error = (1, "дубликат кода КЦР в листе")
+        if error is not None:
+            index, reason = error
+            valid_code = code and not has_excel_error(cached[0], code, uncached[0])
+            result.errors.append(
+                ImportErrorRow(
+                    sheet=sheet.title,
+                    row_number=number,
+                    kcr_code=code if valid_code else None,
+                    reason=f"{get_column_letter(index)}{number} — {reason}",
+                )
+            )
+            continue
+        assert code is not None and code_key is not None
+        _, name, _, kpp, inn, manager, _, status = values[:REGISTRY_WIDTH]
+        status_key = normalized[REGISTRY_WIDTH - 1]
+        assert status_key is not None
+        client = ClientInput(
+            kcr_code=code,
+            organization_name=name,
+            kpp=kpp,
+            inn=inn,
+            manager_name=manager,
+            tags=[REGISTRY_STATUS_TAGS[status_key]],
+            raw_work_status=status,
+        )
+        seen.add(code_key)
+        result.rows.append(
+            SourceRow(sheet=sheet.title, row_number=number, item=ImportItem(client=client))
+        )
+
+
+def header_columns(values: tuple[str | None, ...]) -> dict[str, int] | None:
     columns = {
         field: index
         for index, value in enumerate(values)
-        if (field := HEADER_FIELDS.get(normalized_text(value or ""))) in fields
+        if (field := HEADER_FIELDS.get(normalized_text(value or ""))) is not None
     }
-    if (
-        import_type is ImportType.SNAPSHOT
-        and "kcr_code" not in columns
-        and any(field in columns for field in COUNTER_FIELDS)
-    ):
+    if "kcr_code" not in columns and any(field in columns for field in COUNTER_FIELDS):
         identifiers = [
             index
             for index, value in enumerate(values)
@@ -148,17 +231,6 @@ def header_columns(
     code = columns.get("kcr_code")
     if code is None or code > 1 and len(columns) == 1:
         return None
-    if (
-        import_type is ImportType.REGISTRY
-        and code == 1
-        and normalized_text(values[1] or "") == "код кцр"
-        and all(
-            field == "kcr_code" or LEGACY_COLUMNS.get(field, index) == index
-            for field, index in columns.items()
-        )
-    ):
-        # The legacy registry labels column B while the identifiers are in A.
-        columns["kcr_code"] = 0
     return columns
 
 
@@ -183,7 +255,7 @@ def is_total(
     )
 
 
-def row_item(
+def snapshot_item(
     values: tuple[str | None, ...],
     columns: dict[str, int],
     params: ImportParameters,
@@ -191,46 +263,30 @@ def row_item(
     code = values[columns["kcr_code"]]
     if code is None:
         raise InvalidRow("В строке отсутствует Код КЦР")
-    if params.import_type is ImportType.SNAPSHOT:
-        assert params.selected_quarter is not None and params.snapshot_date is not None
-        original = values[columns["quarter"]] if "quarter" in columns else params.selected_quarter
-        if original is None or not QUARTER.fullmatch(original):
-            raise InvalidRow("Некорректный исходный квартал документов")
-        if original > params.selected_quarter:
-            raise InvalidRow("Исходный квартал документов позже квартала наблюдения")
-        return ImportItem(
-            client=ClientInput(kcr_code=code),
-            snapshot=SnapshotInput(
-                quarter=original,
-                snapshot_date=params.snapshot_date,
-                total_documents=counter(
-                    field_value(values, columns, "total_documents"), "Всего документов"
-                ),
-                unsubmitted_documents=counter(
-                    field_value(values, columns, "unsubmitted_documents"), "Непереданные документы"
-                ),
+    assert params.selected_quarter is not None and params.snapshot_date is not None
+    original = values[columns["quarter"]] if "quarter" in columns else params.selected_quarter
+    if original is None or not QUARTER.fullmatch(original):
+        raise InvalidRow("Некорректный исходный квартал документов")
+    if original > params.selected_quarter:
+        raise InvalidRow("Исходный квартал документов позже квартала наблюдения")
+    return ImportItem(
+        client=ClientInput(kcr_code=code),
+        snapshot=SnapshotInput(
+            quarter=original,
+            snapshot_date=params.snapshot_date,
+            total_documents=counter(
+                field_value(values, columns, "total_documents"), "Всего документов"
             ),
-        )
-    contacts = {
-        field: value
-        for field in ("phone", "email")
-        if field in columns and (value := values[columns[field]]) is not None
-    }
-    profile = ClientInput(
-        kcr_code=code,
-        organization_name=field_value(values, columns, "organization_name"),
-        inn=field_value(values, columns, "inn"),
-        kpp=field_value(values, columns, "kpp"),
-        manager_name=field_value(values, columns, "manager_name"),
-        tags=tags(field_value(values, columns, "tags")),
-        raw_work_status=field_value(values, columns, "raw_work_status"),
+            unsubmitted_documents=counter(
+                field_value(values, columns, "unsubmitted_documents"), "Непереданные документы"
+            ),
+        ),
     )
-    if "phone" in columns or "email" in columns:
-        profile.contacts = contacts or None
-    return ImportItem(client=profile)
 
 
-def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: ParsedImport) -> None:
+def parse_snapshot_sheet(
+    sheet: Any, raw_sheet: Any, params: ImportParameters, result: ParsedImport
+) -> None:
     columns = LEGACY_COLUMNS.copy()
     ignored = {LEGACY_BLOCKING_COLUMN}
     seen: set[tuple[str, str | None]] = set()
@@ -246,7 +302,7 @@ def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: Pa
         zip(sheet.iter_rows(max_col=width), raw_sheet.iter_rows(max_col=width), strict=True), 1
     ):
         values = tuple(map(cell_text, cached))
-        if (header := header_columns(values, params.import_type)) is not None:
+        if (header := header_columns(values)) is not None:
             if not header_found:
                 header_found = True
                 rows.clear()
@@ -271,10 +327,7 @@ def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: Pa
             continue
         cells = zip(cached, values, uncached, strict=True)
         if any(
-            cell.data_type == "e"
-            or (value or "").upper() in EXCEL_ERRORS
-            or original.data_type == "f"
-            and value is None
+            has_excel_error(cell, value, original)
             for index, (cell, value, original) in enumerate(cells)
             if index not in ignored
         ):
@@ -290,7 +343,7 @@ def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: Pa
         try:
             if number in invalid_cells:
                 raise InvalidRow("Ошибка Excel или отсутствует сохранённое значение формулы")
-            item = row_item(values, columns, params)
+            item = snapshot_item(values, columns, params)
             key = (item.client.kcr_code, item.snapshot.quarter if item.snapshot else None)
             if key in seen:
                 raise InvalidRow("Дубликат строки в листе")
@@ -327,17 +380,25 @@ def parse_workbook(
             raw = load_workbook(path, read_only=True, keep_links=False)
             try:
                 sheets = cached.worksheets
-                allow_annual = params.import_type is ImportType.SNAPSHOT and len(sheets) == 1
+                if params.import_type is ImportType.REGISTRY:
+                    for sheet in sheets:
+                        if (error := registry_header_error(sheet)) is not None:
+                            result.errors.append(error)
+                    if not result.errors:
+                        for sheet in sheets:
+                            parse_registry_sheet(sheet, raw[sheet.title], result)
+                    return result
+
                 for sheet in sheets:
                     reason = sheet_skip_reason(
-                        sheet.title, params.selected_quarter, allow_annual=allow_annual
+                        sheet.title, params.selected_quarter, allow_annual=len(sheets) == 1
                     )
                     if reason:
                         result.errors.append(
                             ImportErrorRow(sheet=sheet.title, row_number=0, reason=reason)
                         )
                     else:
-                        parse_sheet(sheet, raw[sheet.title], params, result)
+                        parse_snapshot_sheet(sheet, raw[sheet.title], params, result)
             finally:
                 raw.close()
         finally:

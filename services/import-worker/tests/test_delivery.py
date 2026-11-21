@@ -11,7 +11,7 @@ import aio_pika
 import httpx
 import pytest
 from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
-from conftest import WorkbookFactory
+from conftest import REGISTRY_HEADER, WorkbookFactory
 from openpyxl import load_workbook
 from pamqp.commands import Basic
 from sqlalchemy import select
@@ -135,6 +135,7 @@ async def test_postgres_upload_retry_and_report(
         verified = 0
         if envelope["import_type"] == "REGISTRY":
             assert {"selected_quarter", "snapshot_date"}.isdisjoint(envelope)
+            assert len(envelope["items"]) == 1
             assert "is_blocked" not in envelope["items"][0]["client"]
             assert envelope["items"][0]["client"]["manager_name"] is None
             assert "snapshot" not in envelope["items"][0]
@@ -200,7 +201,18 @@ async def test_postgres_upload_retry_and_report(
             registry = xlsx(
                 {
                     "Реестр": [
-                        [kcr, None, "Клиент", None, None, None, None, "001234", None, None, False]
+                        REGISTRY_HEADER,
+                        [kcr, "Клиент", None, None, "001234", None, None, "VIP"],
+                        [
+                            "invalid-status",
+                            "Клиент с ошибкой",
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            "ACTIVE",
+                        ],
                     ]
                 }
             )
@@ -214,6 +226,19 @@ async def test_postgres_upload_retry_and_report(
             first.ack.assert_awaited_once()
             report = (await api.get(f"/internal/v1/imports/{registry_id}")).json()
             assert report["status"] == "COMPLETED" and report["completed_at"]
+            assert (report["total_rows"], report["success_count"], report["error_count"]) == (
+                2,
+                1,
+                1,
+            )
+            assert report["error_log"] == [
+                {
+                    "sheet": "Реестр",
+                    "row_number": 3,
+                    "kcr_code": "invalid-status",
+                    "reason": "H3 — недопустимый статус клиента",
+                }
+            ]
             assert {"selected_quarter", "snapshot_date"}.isdisjoint(report)
             async with sessions() as db:
                 batch = await db.get(ImportBatch, registry_id)
@@ -489,7 +514,12 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
                 return response.json()
 
             registry = xlsx(
-                {"Реестр": [[kcr, None, "Клиент", None, None, None, None, "0000000001"]]}
+                {
+                    "Реестр": [
+                        REGISTRY_HEADER,
+                        [kcr, "Клиент", None, None, "0000000001", None, None, "VIP"],
+                    ]
+                }
             )
             result = await submit(registry, "REGISTRY", "2026-03-30", "2026_Q1")
             assert result["clients_applied_at"]

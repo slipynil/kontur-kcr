@@ -2,19 +2,13 @@ import re
 from decimal import Decimal, InvalidOperation
 
 QUARTER = re.compile(r"[0-9]{4}_Q[1-4]")
-TAGS = {
+REGISTRY_STATUS_TAGS = {
     "vip": "VIP",
     "новичок": "NOVICE",
-    "novice": "NOVICE",
     "интегратор": "INTEGRATOR",
-    "integrator": "INTEGRATOR",
     "техпартнер": "TECH_PARTNER",
-    "tech_partner": "TECH_PARTNER",
     "мпп": "MPP",
-    "общение через мпп": "MPP",
-    "mpp": "MPP",
     "не работать": "DO_NOT_WORK",
-    "do_not_work": "DO_NOT_WORK",
 }
 
 
@@ -36,12 +30,3 @@ def counter(value: str | None, label: str) -> int | None:
     if not number.is_finite() or not 0 <= number <= 2_147_483_647 or number % 1:
         raise InvalidRow(f"{label}: требуется целое неотрицательное число")
     return int(number)
-
-
-def tags(value: str | None) -> list[str] | None:
-    if value is None:
-        return None
-    found = {
-        TAGS[key] for part in re.split(r"[,;/\n]+", value) if (key := normalized_text(part)) in TAGS
-    }
-    return sorted(found) or None
