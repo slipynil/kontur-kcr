@@ -103,6 +103,10 @@ class Repository:
             raise RowError("SNAPSHOT_REQUIRED", "snapshot")
         if envelope.import_type == ImportType.REGISTRY and item.snapshot is not None:
             raise RowError("UNEXPECTED_SNAPSHOT", "snapshot")
+        if item.verify_only:
+            if envelope.import_type != ImportType.SNAPSHOT:
+                raise RowError("INVALID_ROW", "verify_only")
+            return None
         before = self.before(code)
         delta = dict.fromkeys(COUNTERS, 0)
         snapshot_origin = None
@@ -304,10 +308,14 @@ def apply_import(engine: Engine, envelope: ImportEnvelope) -> dict[str, Any]:
             try:
                 item = ImportItem.model_validate(raw)
                 key = (item.client.kcr_code, item.snapshot.quarter if item.snapshot else None)
-                if key in seen:
+                if not item.verify_only and key in seen:
                     raise RowError("DUPLICATE_ROW", "client.kcr_code")
                 with connection.begin_nested():
-                    before, delta, history_id = repo.apply_row(envelope, item)
+                    applied = repo.apply_row(envelope, item)
+                if applied is None:
+                    result["verified_rows"] = result.get("verified_rows", 0) + 1
+                    continue
+                before, delta, history_id = applied
                 seen.add(key)
                 code = item.client.kcr_code
                 state = undo.setdefault(code, {"previous_state": before, "created_history_ids": []})

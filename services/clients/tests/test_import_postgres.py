@@ -125,10 +125,35 @@ def test_partial_errors_savepoint_and_unknown_client(ready_database):
     )
     assert (result["accepted_rows"], result["rejected_rows"]) == (1, 4)
     assert [error["row_number"] for error in result["errors"]] == [1, 2, 4, 5]
+    assert result["errors"][1]["code"] == "UNKNOWN_KCR_CODE"
     assert "must_not_persist" not in str(result)
     with engine.connect() as conn:
         assert conn.scalar(text("SELECT manager_name FROM clients WHERE kcr_code='a'")) == "manager"
         assert conn.scalar(text("SELECT count(*) FROM quarter_snapshots WHERE kcr_code='a'")) == 0
+
+
+def test_recheck_previously_applied_rows_against_current_registry(ready_database):
+    engine, _ = ready_database
+    register(engine)
+    rows = [row("a"), row("b")]
+    apply_import(engine, packet(rows))
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM clients WHERE kcr_code='b'"))
+
+    envelope = packet([{**item, "verify_only": True} for item in rows])
+    result = apply_import(engine, envelope)
+    assert (result["accepted_rows"], result["verified_rows"], result["rejected_rows"]) == (0, 1, 1)
+    assert result["errors"] == [
+        {"row_number": 2, "code": "UNKNOWN_KCR_CODE", "field": "client.kcr_code"}
+    ]
+    assert result["updated_clients"] == result["created_history_records"] == 0
+    assert apply_import(engine, envelope) == result
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM quarter_snapshot_history")) == 1
+        assert not conn.scalar(
+            text("SELECT count(*) FROM clients_import_undo WHERE batch_id=:id"),
+            {"id": envelope.batch_id},
+        )
 
 
 def test_same_date_corrections_history_and_old_date(ready_database):

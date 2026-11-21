@@ -2033,6 +2033,21 @@ components:
           type: integer
         error_count:
           type: integer
+        error_log:
+          type: array
+          description: Ошибки обработки Excel. Код КЦР из среза, отсутствующий в текущем реестре, указывается здесь.
+          items:
+            type: object
+            required: [sheet, row_number, kcr_code, reason]
+            properties:
+              sheet:
+                type: string
+              row_number:
+                type: integer
+              kcr_code:
+                type: [string, 'null']
+              reason:
+                type: string
         created_at:
           type: string
           format: date-time

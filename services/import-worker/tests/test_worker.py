@@ -114,20 +114,62 @@ async def test_retries_same_batch_after_lost_clients_response(
     assert not list(settings.upload_dir.iterdir())
 
 
-async def test_duplicate_observations_complete_without_http(
-    settings: Settings, batch: ImportBatch, db: AsyncMock, sessions: MagicMock
+@pytest.mark.parametrize("clients_removed", [False, True])
+async def test_duplicate_observations_check_current_registry(
+    clients_removed: bool,
+    settings: Settings,
+    batch: ImportBatch,
+    db: AsyncMock,
+    sessions: MagicMock,
 ) -> None:
     path = settings.upload_dir / f"{batch.id}.xlsx"
     assert await consumer.prepare(sessions, batch.id, path)
     params = ImportParameters.model_validate(batch, from_attributes=True)
     parsed = ParsedImport.model_validate(batch.apply_payload)
     db.scalars.return_value = [fingerprint(params, row) for row in parsed.rows]
-    clients = AsyncMock(spec=httpx.AsyncClient)
-    message = delivery(batch)
-    await consumer.process_delivery(message, sessions, settings, clients)
+    errors = (
+        [
+            {"row_number": index, "code": "UNKNOWN_KCR_CODE", "field": "client.kcr_code"}
+            for index in (1, 2)
+        ]
+        if clients_removed
+        else []
+    )
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        items = json.loads(request.content)["items"]
+        assert [(item["client"]["kcr_code"], item["verify_only"]) for item in items] == [
+            ("001", True),
+            ("002", True),
+        ]
+        return httpx.Response(
+            200,
+            json={
+                "batch_id": str(batch.id),
+                "accepted_rows": 0,
+                "verified_rows": len(items) - len(errors),
+                "rejected_rows": len(errors),
+                "errors": errors,
+            },
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(reply), base_url="http://clients"
+    ) as clients:
+        message = delivery(batch)
+        await consumer.process_delivery(message, sessions, settings, clients)
     message.ack.assert_awaited_once()
-    clients.post.assert_not_awaited()
-    assert batch.status == Status.COMPLETED and batch.success_count == 2
+    assert batch.error_count == len(errors)
+    assert batch.success_count == 2 - len(errors)
+    assert batch.status == (Status.FAILED if clients_removed else Status.COMPLETED)
+    if clients_removed:
+        logged = db.add_all.call_args.args[0]
+        assert [(row.sheet, row.row_number, row.kcr_code) for row in logged] == [
+            ("Срез", 1, "001"),
+            ("Срез", 2, "002"),
+        ]
+        assert all("Код КЦР отсутствует в реестре" in row.reason for row in logged)
+    assert batch.clients_applied_at is None
     assert batch.apply_payload is None and not path.exists()
 
 
