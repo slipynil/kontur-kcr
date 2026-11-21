@@ -48,10 +48,10 @@ paths:
       operationId: takeClient
       summary: Взять или перезакрепить клиента на себя
       description: |
-        Свободный опубликованный клиент закрепляется сразу.
-        Для занятого клиента создаётся уведомление ответственному на один час.
-        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
-        и исторический цикл дают 409. После срока CLIENT_BALANCE_UNCONFIRMED
+        Опубликованный клиент закрепляется сразу, включая смену ответственного у занятого клиента.
+        Действующий WAIT_DEADLINE, смена назначения и исторический цикл дают 409.
+        Повтор старого запроса по его request_id может вернуть сохранённый результат обработки.
+        После срока CLIENT_BALANCE_UNCONFIRMED
         действует до подтверждённого возврата в пул.
       parameters:
       - $ref: '#/components/parameters/WorkQuarter'
@@ -60,7 +60,7 @@ paths:
       - name: X-User-Role
         in: header
         required: true
-        schema: { type: string, enum: [ADMIN, OPERATOR] }
+        schema: { type: string, const: OPERATOR }
       requestBody:
         required: true
         content:
@@ -69,7 +69,7 @@ paths:
               $ref: '#/components/schemas/TakeRequest'
       responses:
         '200':
-          description: Клиент закреплён.
+          description: Клиент закреплён либо возвращён результат старого запроса.
           content:
             application/json:
               schema:
@@ -77,7 +77,7 @@ paths:
                 - $ref: '#/components/schemas/TakeResponse'
                 - $ref: '#/components/schemas/ReassignmentRequest'
         '202':
-          description: Запрос ожидает решения ответственного.
+          description: Повтор ранее созданного запроса, который ещё ожидает решения.
           content:
             application/json:
               schema:

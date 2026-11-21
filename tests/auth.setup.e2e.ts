@@ -9,7 +9,7 @@ test.setup('sign in as admin', { sessions: ['admin'] }, async ({ app, screen, se
   await screen.getByLabel('Логин', { exact: true }).fill(admin.username);
   await screen.getByLabel('Пароль', { exact: true }).fill(admin.password);
   await screen.getByRole('button', 'Войти').tap();
-  await expect(screen.getByRole('button', 'Загрузка реестра')).toBeVisible();
+  await expect(screen.getByRole('link', 'Загрузка реестра')).toBeVisible();
   await session.save('admin');
 });
 
@@ -21,7 +21,8 @@ test.setup('sign in as both operators', { sessions: ['operator_a', 'operator_b']
     await screen.getByLabel('Логин', { exact: true }).fill(operator.username);
     await screen.getByLabel('Пароль', { exact: true }).fill(operator.password);
     await screen.getByRole('button', 'Войти').tap();
-    await expect(screen.getByRole('button', 'Запросы')).toBeVisible();
+    await expect(screen.getByRole('link', 'Клиенты')).toBeVisible();
+    await expect(screen.getByRole('button', 'Запросы')).toHaveCount(0);
     await session.save(name);
     await screen.getByRole('button', 'Выйти').tap();
     await expect(screen.getByRole('button', 'Войти')).toBeVisible();

@@ -89,13 +89,37 @@ def owner(api, operator):
     ]
 
 
-def request_transfer(api, a, b):
+def legacy_request(api, database, assigned, owner, requester):
+    request_id = uuid4()
+    with database.begin() as db:
+        db.execute(
+            text("""INSERT INTO client_reassignment_requests
+                       (id, kcr_code, work_quarter, expected_assignment_id, owner_id,
+                        requester_id, created_at, expires_at)
+                   VALUES (:id, :code, :quarter, :assignment, :owner, :requester,
+                           now(), now() + INTERVAL '1 hour')"""),
+            {
+                "id": request_id,
+                "code": assigned["kcr_code"],
+                "quarter": assigned["work_quarter"],
+                "assignment": UUID(assigned["assignment_id"]),
+                "owner": UUID(owner["X-User-Id"]),
+                "requester": UUID(requester["X-User-Id"]),
+            },
+        )
+    return next(
+        item
+        for item in api.get(NOTIFICATIONS, headers=requester).json()["items"]
+        if item["id"] == str(request_id)
+    )
+
+
+def request_transfer(api, database, a, b):
     publish(api)
     taken = take(api, a)
     assert taken.status_code == 200
-    request = take(api, b, taken.json()["assignment_id"])
-    assert request.status_code == 202
-    return taken.json(), request.json()
+    assigned = taken.json()
+    return assigned, legacy_request(api, database, assigned, a, b)
 
 
 def set_due(database, request_id):
@@ -110,10 +134,10 @@ def set_due(database, request_id):
         )
 
 
-def test_scoped_pool_and_reassignment_operations(api, operators):
+def test_scoped_pool_and_reassignment_operations(api, operators, database):
     owner, requester, _ = operators
     assert api.get(f"{BASE}/pool/published-codes", headers=owner).json() == {"codes": []}
-    _, request = request_transfer(api, owner, requester)
+    _, request = request_transfer(api, database, owner, requester)
     assert api.get(f"{BASE}/pool/published-codes", headers=owner).json() == {"codes": [CODE]}
 
     hidden, visible = {"codes": []}, {"codes": [CODE]}
@@ -149,9 +173,30 @@ def test_publish_and_concurrent_take(api, operators, database):
         assert db.scalar(text("SELECT count(*) FROM client_events")) == 1
 
 
+@pytest.mark.parametrize("has_legacy_request", [False, True])
+def test_reassignment_transfers_immediately(api, operators, database, has_legacy_request):
+    a, b, c = operators
+    publish(api)
+    original = take(api, a).json()
+    if has_legacy_request:
+        legacy_request(api, database, original, a, c)
+    request_id = str(uuid4())
+    transferred = take(api, b, original["assignment_id"], request_id)
+    assert transferred.status_code == 200
+    assert transferred.json()["assigned_operator_id"] == b["X-User-Id"]
+    assert take(api, b, original["assignment_id"], request_id).json() == transferred.json()
+    assert take(api, c, original["assignment_id"]).json()["code"] == "ASSIGNMENT_CHANGED"
+    assert owner(api, b) == b["X-User-Id"]
+    with database.connect() as db:
+        assert db.scalar(text("SELECT count(*) FROM client_assignments")) == 2
+        assert db.scalar(text("SELECT count(*) FROM client_events")) == 2
+        statuses = db.execute(text("SELECT status FROM client_reassignment_requests")).scalars()
+        assert list(statuses) == (["CANCELLED"] if has_legacy_request else [])
+
+
 def test_only_owner_can_reject_and_replay_preserves_decision(api, operators, database):
     a, b, c = operators
-    assigned, request = request_transfer(api, a, b)
+    assigned, request = request_transfer(api, database, a, b)
     request_id = request["id"]
     reject = f"{NOTIFICATIONS}/{request_id}/reject"
     inbox = api.get(NOTIFICATIONS, headers=a).json()["items"]
@@ -160,7 +205,6 @@ def test_only_owner_can_reject_and_replay_preserves_decision(api, operators, dat
     assert api.post(reject, headers=b).status_code == 404
     assert api.post(reject, headers=c).status_code == 404
     assert owner(api, a) == a["X-User-Id"]
-    assert take(api, c, assigned["assignment_id"]).json()["code"] == "REASSIGNMENT_PENDING"
     assert api.post(reject, headers=a).json()["status"] == "REJECTED"
     assert api.post(reject, headers=a).json()["status"] == "REJECTED"
     assert take(api, b, assigned["assignment_id"], request_id).json()["status"] == "REJECTED"
@@ -171,7 +215,7 @@ def test_only_owner_can_reject_and_replay_preserves_decision(api, operators, dat
 @pytest.mark.parametrize("settle_with", ["worker", "late_reject"])
 def test_timeout_transfers_once(api, operators, database, settle_with):
     a, b, _ = operators
-    _, request = request_transfer(api, a, b)
+    _, request = request_transfer(api, database, a, b)
     set_due(database, request["id"])
     if settle_with == "worker":
         Assignments(database).settle_due()
@@ -189,7 +233,7 @@ def test_timeout_transfers_once(api, operators, database, settle_with):
 @pytest.mark.parametrize("change", ["wait", "quarter"])
 def test_pending_request_cannot_override_new_protection(api, operators, database, change):
     a, b, _ = operators
-    _, request = request_transfer(api, a, b)
+    _, request = request_transfer(api, database, a, b)
     if change == "wait":
         with database.begin() as db:
             db.execute(text("UPDATE client_work_cycles SET wait_until = CURRENT_DATE + 5"))
@@ -221,7 +265,7 @@ def test_wait_blocks_new_request_and_carries_to_new_quarter(api, operators, data
 
 def test_state_settles_due_request_and_publication_is_idempotent(api, operators, database):
     a, b, c = operators
-    assigned, request = request_transfer(api, a, b)
+    assigned, request = request_transfer(api, database, a, b)
     publish(api)
     assert (
         take(api, a, assigned["assignment_id"]).json()["assignment_id"] == assigned["assignment_id"]
@@ -255,9 +299,9 @@ def record_call(api, actor, payload):
     return api.post(f"{CLIENT}/events", headers=actor, json=payload)
 
 
-def test_call_and_wait_cancel_pending_request_and_replay(api, operators):
+def test_call_and_wait_cancel_pending_request_and_replay(api, operators, database):
     a, b, _ = operators
-    assigned, _ = request_transfer(api, a, b)
+    assigned, _ = request_transfer(api, database, a, b)
     payload = call_payload(assigned)
     response = record_call(api, a, payload)
     assert response.status_code == 201
@@ -297,7 +341,7 @@ def test_call_and_wait_cancel_pending_request_and_replay(api, operators):
 
 def test_stale_form_records_call_without_changing_new_owner_or_wait(api, operators, database):
     a, b, c = operators
-    assigned, request = request_transfer(api, a, b)
+    assigned, request = request_transfer(api, database, a, b)
     set_due(database, request["id"])
     payload = call_payload(assigned)
     response = record_call(api, a, payload)
@@ -600,16 +644,7 @@ def test_batch_publication_replay_preserves_assignment_wait_and_pending(api, ope
         headers=a,
         json={"expected_assignment_id": None, "request_id": str(uuid4())},
     ).json()
-    pending = api.post(
-        f"{BASE}/clients/{other}/take",
-        params=CYCLE,
-        headers=b,
-        json={
-            "expected_assignment_id": other_assignment["assignment_id"],
-            "request_id": str(uuid4()),
-        },
-    )
-    assert pending.status_code == 202
+    pending = legacy_request(api, database, other_assignment, a, b)
 
     before = api.get(f"{CLIENT}/assignment", headers=a, params=CYCLE).json()
     assert before["stage"] == "WAIT_DEADLINE"
@@ -619,7 +654,7 @@ def test_batch_publication_replay_preserves_assignment_wait_and_pending(api, ope
 
     assert publish_batch(api, [CODE, other]).status_code == 204
     assert api.get(f"{CLIENT}/assignment", headers=a, params=CYCLE).json() == before
-    assert api.get(NOTIFICATIONS, headers=b).json()["items"] == [pending.json()]
+    assert api.get(NOTIFICATIONS, headers=b).json()["items"] == [pending]
     assert api.get(f"{BASE}/pool", headers=b, params=CYCLE).json()["items"] == [
         {"kcr_code": CODE, "assigned_operator_id": a["X-User-Id"]},
         {"kcr_code": other, "assigned_operator_id": a["X-User-Id"]},
@@ -666,7 +701,7 @@ def client_work(database, code):
 def test_full_cleanup_is_idempotent_and_leaves_other_clients_intact(api, operators, database):
     a, b, _ = operators
     admin = identity("ADMIN")
-    _, past_request = request_transfer(api, a, b)
+    _, past_request = request_transfer(api, database, a, b)
     quarter = {"work_quarter": "2026_Q4"}
     publish(api, quarter=quarter["work_quarter"])
     assigned = api.post(
@@ -683,13 +718,7 @@ def test_full_cleanup_is_idempotent_and_leaves_other_clients_intact(api, operato
     )
     comment = record_call(api, a, historical_comment())
     assert comment.status_code == 201 and comment.json()["work_quarter"] is None
-    active_request = api.post(
-        f"{CLIENT}/take",
-        params=quarter,
-        headers=b,
-        json={"expected_assignment_id": assigned["assignment_id"], "request_id": str(uuid4())},
-    )
-    assert active_request.status_code == 202
+    active_request = legacy_request(api, database, assigned, a, b)
 
     other = "AAA02210"
     other_path = f"{BASE}/clients/{other}"
@@ -700,23 +729,14 @@ def test_full_cleanup_is_idempotent_and_leaves_other_clients_intact(api, operato
         headers=a,
         json={"expected_assignment_id": None, "request_id": str(uuid4())},
     ).json()
-    other_request = api.post(
-        f"{other_path}/take",
-        params=quarter,
-        headers=b,
-        json={
-            "expected_assignment_id": other_assignment["assignment_id"],
-            "request_id": str(uuid4()),
-        },
-    )
-    assert other_request.status_code == 202
+    other_request = legacy_request(api, database, other_assignment, a, b)
     assert api.post(f"{other_path}/events", headers=a, json=historical_comment()).status_code == 201
     other_before = client_work(database, other)
     target_before = client_work(database, CODE)
     assert len(target_before[0]) == 2 and all(target_before)
     assert {row.id for row in target_before[-1]} == {
         UUID(past_request["id"]),
-        UUID(active_request.json()["id"]),
+        UUID(active_request["id"]),
     }
 
     payload = {"operation_id": str(uuid4()), "kcr_code": CODE, "scope": "CLIENT"}
@@ -730,7 +750,7 @@ def test_full_cleanup_is_idempotent_and_leaves_other_clients_intact(api, operato
     assert client_work(database, other) == other_before
     assert api.get(f"{CLIENT}/events", headers=a).status_code == 404
     assert api.get(f"{CLIENT}/assignment", params=quarter, headers=a).status_code == 404
-    assert api.get(NOTIFICATIONS, headers=b).json()["items"] == [other_request.json()]
+    assert api.get(NOTIFICATIONS, headers=b).json()["items"] == [other_request]
     with database.connect() as db:
         journal = db.execute(text("SELECT * FROM client_cleanup_operations")).mappings().one()
         assert str(journal["operation_id"]) == payload["operation_id"]
@@ -834,7 +854,7 @@ def test_snapshot_prepares_unpublished_cycle_and_replay_preserves_work(api, oper
     assert publish_batch(api, [CODE]).status_code == 204
     assigned = take(api, a)
     assert assigned.status_code == 200
-    assert take(api, b, assigned.json()["assignment_id"]).status_code == 202
+    legacy_request(api, database, assigned.json(), a, b)
     before = client_work(database, CODE)
     assert apply_snapshot(api, balances[::-1], batch_id=batch_id).status_code == 204
     conflict = apply_snapshot(api, [(CODE, 2), (other, 0)], batch_id=batch_id)
