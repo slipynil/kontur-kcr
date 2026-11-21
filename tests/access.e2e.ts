@@ -8,7 +8,7 @@ describe('role-based access', () => {
     await app.open('/users');
     await expect(screen.getByRole('heading', 'Пользователи и роли')).toBeVisible();
     for (const name of ['Клиенты', 'Загрузка реестра', 'Отчёт об импорте', 'Пользователи']) {
-      await expect(screen.getByRole('button', name)).toBeVisible();
+      await expect(screen.getByRole('link', name)).toBeVisible();
     }
 
     await screen.getByRole('button', 'Выйти').tap();
@@ -22,9 +22,9 @@ describe('role-based access', () => {
     test(`denies operator access to ${path} opened directly`, { session: 'operator_a' }, async ({ app, screen }) => {
       await app.open(path);
 
-      await expect(screen.getByRole('button', 'Клиенты')).toBeVisible();
+      await expect(screen.getByRole('link', 'Клиенты')).toBeVisible();
       for (const name of ['Загрузка реестра', 'Отчёт об импорте', 'Пользователи']) {
-        await expect(screen.getByRole('button', name)).toHaveCount(0);
+        await expect(screen.getByRole('link', name)).toHaveCount(0);
       }
       await expect(screen.getByText('Раздел доступен только администратору.', { exact: true })).toBeVisible();
     });

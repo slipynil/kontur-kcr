@@ -99,11 +99,6 @@ def _restore(db: Connection, code: str, quarter: str, restore: RestoreCycle, act
                         'Состояние цикла восстановлено после отката', :stage, :wait, :now)"""),
         {**params, "id": uuid4()},
     )
-    db.execute(
-        text("""UPDATE client_reassignment_requests SET status = 'CANCELLED', resolved_at = :now
-                WHERE kcr_code = :code AND work_quarter = :quarter AND status = 'PENDING'"""),
-        params,
-    )
 
 
 class Cleanup:

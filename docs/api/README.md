@@ -5,7 +5,7 @@
 ## Изменения
 
 - Для загрузки обязательны файл `.xlsx` и тип импорта. `selected_quarter` и `snapshot_date` передаются только для `SNAPSHOT`. Квартал среза выбирает администратор.
-- WAIT_DEADLINE действует до wait_until и сохраняет ответственного через смену квартала. До срока отказ другому оператору — CLIENT_WAIT_DEADLINE_ACTIVE; по сроку при остатке клиент доступен.
+- `/take` сразу меняет ответственного независимо от этапа. При действующем WAIT_DEADLINE срок сохраняется. См. [ADR-0017](../adr/0017-direct-operator-reassignment.md).
 - В ответах клиента есть needs_review, inherited_fields, wait_until и квартальный контекст. Остатки учитываются по исходным периодам без двойного счёта.
 - Rollback только последнего пакета (IMPORT_NOT_LATEST для другого); удаление клиента ADMIN очищает его работу; квартальное удаление сохраняет остальные кварталы и общую историю. Обычное сохранение истории имеет эти исключения.
 - Карточка клиента собирается Gateway из Clients + Operator Work + Identity DB ([ADR-0012](../adr/0012-card-aggregation-on-gateway.md)): новый внутренний `GET /internal/v1/clients/{kcr_code}/work-state` (readClientWorkState) отдаёт рабочие поля текущего цикла; нет цикла — поля null; недоступен Operator Work — публичный ответ 502 BAD_GATEWAY.

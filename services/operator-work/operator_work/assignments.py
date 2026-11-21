@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -56,20 +56,10 @@ def _active_assignment(db: Connection, code: str, quarter: str) -> RowMapping | 
     )
 
 
-def _pending(db: Connection, code: str, quarter: str) -> RowMapping | None:
-    return _one(
-        db,
-        """SELECT * FROM client_reassignment_requests
-           WHERE kcr_code = :code AND work_quarter = :quarter AND status = 'PENDING'""",
-        code=code,
-        quarter=quarter,
-    )
-
-
-def _protected(cycle: RowMapping, now: datetime) -> bool:
+def _wait_expired(cycle: RowMapping, now: datetime) -> bool:
     return (
         cycle["wait_until"] is not None
-        and now.astimezone(BUSINESS_ZONE).date() < cycle["wait_until"]
+        and now.astimezone(BUSINESS_ZONE).date() >= cycle["wait_until"]
     )
 
 
@@ -149,37 +139,6 @@ def _assignment_result(code, quarter, assignment_id, operator, assigned_at) -> d
     }
 
 
-def _resolve(db: Connection, request_id: UUID, status: str, now: datetime) -> RowMapping:
-    return (
-        db.execute(
-            text(
-                """UPDATE client_reassignment_requests
-                   SET status = :status, resolved_at = :now WHERE id = :id RETURNING *"""
-            ),
-            {"id": request_id, "status": status, "now": now},
-        )
-        .mappings()
-        .one()
-    )
-
-
-def _settle(db: Connection, request: RowMapping, now: datetime) -> RowMapping:
-    code, quarter = request["kcr_code"], request["work_quarter"]
-    cycle = _current_cycle(db, code)
-    assignment = _active_assignment(db, code, quarter)
-    if (
-        cycle is None
-        or cycle["work_quarter"] != quarter
-        or cycle["published_at"] is None
-        or assignment is None
-        or assignment["id"] != request["expected_assignment_id"]
-        or cycle["wait_until"] is not None
-    ):
-        return _resolve(db, request["id"], "CANCELLED", now)
-    _assign(db, code, quarter, request["requester_id"], assignment, now)
-    return _resolve(db, request["id"], "TRANSFERRED", now)
-
-
 def _require_cycle(db: Connection, code: str, quarter: str) -> RowMapping:
     cycle = _current_cycle(db, code)
     if cycle is not None and cycle["work_quarter"] != quarter:
@@ -189,15 +148,8 @@ def _require_cycle(db: Connection, code: str, quarter: str) -> RowMapping:
     return cycle
 
 
-def _settle_overdue(db: Connection, code: str, quarter: str, now: datetime) -> None:
-    pending = _pending(db, code, quarter)
-    if pending and pending["expires_at"] <= now:
-        _settle(db, pending, now)
-
-
 def _state(db: Connection, code: str, quarter: str, now: datetime) -> dict:
     cycle = _require_cycle(db, code, quarter)
-    _settle_overdue(db, code, quarter, now)
     assignment = _active_assignment(db, code, quarter)
     stage = db.scalar(
         text("""SELECT stage FROM client_stages
@@ -217,7 +169,7 @@ def _state(db: Connection, code: str, quarter: str, now: datetime) -> dict:
         "stage": stage,
         "wait_until": cycle["wait_until"],
         "wait_source_work_quarter": cycle["wait_source_work_quarter"],
-        "awaiting_balance": cycle["wait_until"] is not None and not _protected(cycle, now),
+        "awaiting_balance": _wait_expired(cycle, now),
     }
 
 
@@ -424,13 +376,6 @@ class Assignments:
             )
         stage = "WAIT_DEADLINE" if previous else "POOL"
         _record_stage(db, code, quarter, actor, stage, now)
-        db.execute(
-            text(
-                """UPDATE client_reassignment_requests SET status = 'CANCELLED', resolved_at = :now
-                   WHERE kcr_code = :code AND work_quarter < :quarter AND status = 'PENDING'"""
-            ),
-            params,
-        )
 
     def cycles(self, code: str) -> dict:
         with self.engine.connect() as db:
@@ -524,133 +469,62 @@ class Assignments:
 
     def take(
         self, code: str, quarter: str, operator: UUID, expected: UUID | None, request_id: UUID
-    ) -> tuple[int, dict]:
+    ) -> dict:
         with self.engine.begin() as db:
             now = _lock(db, code)
             existing = _one(
-                db, "SELECT * FROM client_reassignment_requests WHERE id = :id", id=request_id
+                db,
+                """SELECT a.id AS assignment_id, a.kcr_code, a.work_quarter,
+                          a.operator_id AS assigned_operator_id, a.assigned_at,
+                          op.expected_assignment_id
+                   FROM client_take_operations AS op
+                   JOIN client_assignments AS a ON a.id = op.assignment_id
+                   WHERE op.id = :id""",
+                id=request_id,
             )
-            if existing:
+            if existing is not None:
                 if (
-                    existing["requester_id"] != operator
+                    existing["assigned_operator_id"] != operator
                     or existing["kcr_code"] != code
                     or existing["work_quarter"] != quarter
                     or existing["expected_assignment_id"] != expected
                 ):
-                    raise WorkError(409, "REQUEST_ID_CONFLICT", "ID запроса уже используется")
-                if existing["status"] == "PENDING" and existing["expires_at"] <= now:
-                    existing = _settle(db, existing, now)
-                return (202 if existing["status"] == "PENDING" else 200), dict(existing)
+                    raise WorkError(409, "REQUEST_ID_CONFLICT", "ID операции уже используется")
+                return _assignment_result(
+                    code, quarter, existing["assignment_id"], operator, existing["assigned_at"]
+                )
 
             cycle = _require_cycle(db, code, quarter)
-            pending = _pending(db, code, quarter)
-            if pending and pending["expires_at"] <= now:
-                _settle(db, pending, now)
-                pending = None
             active = _active_assignment(db, code, quarter)
-            if cycle["wait_until"] is not None and not _protected(cycle, now):
-                raise WorkError(
-                    409,
-                    "CLIENT_BALANCE_UNCONFIRMED",
-                    "Срок истёк. Возврат в пул зависит от остатка",
-                )
-            if active and active["operator_id"] == operator:
-                return 200, _assignment_result(
-                    code, quarter, active["id"], operator, active["assigned_at"]
-                )
-            if (active["id"] if active else None) != expected:
+            own = active is not None and active["operator_id"] == operator
+            if not own and expected != (active["id"] if active else None):
                 raise WorkError(
                     409, "ASSIGNMENT_CHANGED", "Ответственный изменился. Обновите карточку"
                 )
-            if active and _protected(cycle, now):
-                raise WorkError(409, "CLIENT_WAIT_DEADLINE_ACTIVE", "Срок ожидания ещё действует")
-            if active is None:
-                return 200, _assign(db, code, quarter, operator, None, now)
-            if pending:
-                raise WorkError(
-                    409, "REASSIGNMENT_PENDING", "Запрос перезакрепления уже ожидает ответа"
+            if _wait_expired(cycle, now):
+                db.execute(
+                    text("""UPDATE client_work_cycles
+                            SET wait_until = NULL, wait_source_work_quarter = NULL
+                            WHERE kcr_code = :code AND work_quarter = :quarter"""),
+                    {"code": code, "quarter": quarter},
                 )
-
-            row = _one(
+                if active is not None:
+                    _record_stage(db, code, quarter, operator, "IN_WORK", now)
+            if own:
+                result = _assignment_result(
+                    code, quarter, active["id"], operator, active["assigned_at"]
+                )
+            else:
+                result = _assign(db, code, quarter, operator, active, now)
+            recorded = _one(
                 db,
-                """INSERT INTO client_reassignment_requests
-                       (id, kcr_code, work_quarter, expected_assignment_id, owner_id,
-                        requester_id, created_at, expires_at)
-                   VALUES (:id, :code, :quarter, :expected, :owner, :requester, :now, :expires_at)
-                   ON CONFLICT (id) DO NOTHING RETURNING *""",
+                """INSERT INTO client_take_operations (id, assignment_id, expected_assignment_id)
+                   VALUES (:id, :assignment, :expected)
+                   ON CONFLICT (id) DO NOTHING RETURNING id""",
                 id=request_id,
-                code=code,
-                quarter=quarter,
+                assignment=result["assignment_id"],
                 expected=expected,
-                owner=active["operator_id"],
-                requester=operator,
-                now=now,
-                expires_at=now + timedelta(hours=1),
             )
-            if row is None:
-                raise WorkError(409, "REQUEST_ID_CONFLICT", "ID запроса уже используется")
-            return 202, dict(row)
-
-    def notifications(
-        self, operator: UUID, limit: int, offset: int, visible_codes: list[str] | None = None
-    ) -> list[dict]:
-        with self.engine.connect() as db:
-            rows = db.execute(
-                text(
-                    """SELECT * FROM client_reassignment_requests
-                       WHERE (owner_id = :operator OR requester_id = :operator)
-                         AND (CAST(:codes AS text[]) IS NULL OR kcr_code = ANY(CAST(:codes AS text[])))
-                       ORDER BY (status = 'PENDING') DESC, created_at DESC, id DESC
-                       LIMIT :limit OFFSET :offset"""
-                ),
-                {"operator": operator, "limit": limit, "offset": offset, "codes": visible_codes},
-            ).mappings()
-            return [dict(row) for row in rows]
-
-    def reject(
-        self, request_id: UUID, operator: UUID, visible_codes: list[str] | None = None
-    ) -> tuple[int, dict]:
-        with self.engine.begin() as db:
-            request = self._owned_request(db, request_id, operator)
-            if visible_codes is not None and request["kcr_code"] not in visible_codes:
-                raise WorkError(404, "REASSIGNMENT_NOT_FOUND", "Запрос не найден")
-            now = _lock(db, request["kcr_code"])
-            request = self._owned_request(db, request_id, operator)
-            if request["status"] == "PENDING":
-                if now < request["expires_at"]:
-                    request = _resolve(db, request_id, "REJECTED", now)
-                else:
-                    request = _settle(db, request, now)
-            if request["status"] == "REJECTED":
-                return 200, dict(request)
-            return 409, {"code": "REASSIGNMENT_RESOLVED", "message": "Срок отказа уже истёк"}
-
-    @staticmethod
-    def _owned_request(db: Connection, request_id: UUID, operator: UUID) -> RowMapping:
-        row = _one(
-            db,
-            "SELECT * FROM client_reassignment_requests WHERE id = :id AND owner_id = :operator",
-            id=request_id,
-            operator=operator,
-        )
-        if row is None:
-            raise WorkError(404, "REASSIGNMENT_NOT_FOUND", "Запрос не найден")
-        return row
-
-    def settle_due(self) -> None:
-        with self.engine.connect() as db:
-            due = db.execute(
-                text(
-                    """SELECT id, kcr_code FROM client_reassignment_requests
-                       WHERE status = 'PENDING' AND expires_at <= clock_timestamp()
-                       ORDER BY expires_at, id LIMIT 100"""
-                )
-            ).all()
-        for request_id, code in due:
-            with self.engine.begin() as db:
-                now = _lock(db, code)
-                request = _one(
-                    db, "SELECT * FROM client_reassignment_requests WHERE id = :id", id=request_id
-                )
-                if request and request["status"] == "PENDING" and request["expires_at"] <= now:
-                    _settle(db, request, now)
+            if recorded is None:
+                raise WorkError(409, "REQUEST_ID_CONFLICT", "ID операции уже используется")
+            return result
