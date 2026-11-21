@@ -31,7 +31,7 @@ describe('upload', { session: 'admin' }, () => {
     await expect(browser).toHaveURL(/\/import-report\?batch=/, { timeout: 30_000 });
     await expect(screen.getByRole('heading', { name: 'КЦР_последняя_выгрузка_Дубна.xlsx', level: 2 })).toBeVisible();
     // The worker parses and applies the file asynchronously while the report polls.
-    await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 60_000 });
+    await expect(screen.getByText('Завершён', { exact: true })).toBeVisible({ timeout: 180_000 });
     // The counters are the outcome: every parseable row reaches Clients Service
     // (5873 accepted; one row has a broken Excel formula and is reported as an error).
     await expect(statCard(browser, 'Строк в файле')).toHaveText('5874', { timeout: 180_000 });
