@@ -209,7 +209,6 @@ def test_registry_profile_warnings_and_update_order(ready_database):
                         "kcr_code": "a",
                         "manager_name": "confirmed",
                         "tags": [],
-                        "is_blocked": False,
                     }
                 }
             ],
@@ -222,7 +221,7 @@ def test_registry_profile_warnings_and_update_order(ready_database):
         client = conn.execute(text("SELECT * FROM clients WHERE kcr_code='a'")).mappings().one()
         assert client["manager_name"] == "manager"
         assert client["field_sources"]["manager_name"] == {"batch_id": str(last.batch_id)}
-        assert not client["needs_review"] and not client["is_blocked"]
+        assert not client["needs_review"]
         assert client["inn"] == "00123"
         assert conn.scalar(text("SELECT count(*) FROM client_tags WHERE kcr_code='a'")) == 0
 

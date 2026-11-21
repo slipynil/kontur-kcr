@@ -66,7 +66,6 @@ export type ClientListItem = {
   inn: string | null;
   kpp?: string | null;
   organization_name: string | null;
-  is_blocked: boolean;
   manager_name?: string | null;
   tags: (Tag)[];
   current_stage: Stage;
@@ -117,7 +116,6 @@ export type ClientCard = {
   inn: string | null;
   kpp?: string | null;
   organization_name: string | null;
-  is_blocked: boolean;
   manager_name?: string | null;
   contacts?: Record<string, unknown> | null;
   tags: (Tag)[];

@@ -38,17 +38,6 @@ def counter(value: str | None, label: str) -> int | None:
     return int(number)
 
 
-def blocked(value: str | None) -> bool | None:
-    if value is None:
-        return None
-    key = normalized_text(value)
-    if key in {"1", "true", "да", "заблокирован", "+"}:
-        return True
-    if key in {"0", "false", "нет", "не заблокирован", "-"}:
-        return False
-    raise InvalidRow("Неизвестное значение блокировки клиента")
-
-
 def tags(value: str | None) -> list[str] | None:
     if value is None:
         return None
