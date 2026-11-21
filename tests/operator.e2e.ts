@@ -239,9 +239,15 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     }), 200, 'Simulate missing balance for test client');
 
     expireWork(code, quarter, 'wait');
-    const blocked = await take(second, code, quarter, original.assignment_id);
+    const hidden = await take(second, code, quarter, original.assignment_id);
+    expect(hidden.status).toBe(404);
 
-    expect(blocked.status).toBe(409);
+    const blocked = internal('operator-work', `/clients/${code}/take?work_quarter=${quarter}`, second, 'POST', {
+      request_id: randomUUID(), expected_assignment_id: original.assignment_id,
+    });
+    expect(requireStatus(blocked, 409, 'Prevent takeover before Clients confirms the balance')).toMatchObject({
+      code: 'CLIENT_BALANCE_UNCONFIRMED',
+    });
     expect(assignment(first, code, quarter)).toMatchObject({
       assigned_operator_id: first.user.id, awaiting_balance: true, stage: 'WAIT_DEADLINE',
     });

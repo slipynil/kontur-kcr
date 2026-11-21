@@ -9,7 +9,7 @@ test.setup('sign in as admin', { sessions: ['admin'] }, async ({ app, screen, se
   await screen.getByLabel('Логин', { exact: true }).fill(admin.username);
   await screen.getByLabel('Пароль', { exact: true }).fill(admin.password);
   await screen.getByRole('button', 'Войти').tap();
-  await expect(screen.getByRole('button', 'Загрузка реестра')).toBeVisible();
+  await expect(screen.getByRole('link', 'Загрузка реестра')).toBeVisible();
   await session.save('admin');
 });
 
