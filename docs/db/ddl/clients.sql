@@ -10,6 +10,7 @@ CREATE TABLE clients (
     inn              TEXT,                              -- один ИНН может иметь несколько кодов КЦР
     kpp              TEXT,
     organization_name TEXT,
+    is_blocked       BOOLEAN     NOT NULL DEFAULT FALSE,
     manager_name     TEXT,
     contacts         JSONB,                             -- контакты для связи (spec.md §2.2)
     needs_review BOOLEAN NOT NULL DEFAULT FALSE,

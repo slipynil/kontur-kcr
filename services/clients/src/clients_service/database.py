@@ -3,7 +3,7 @@ from sqlalchemy.engine import Engine
 
 from clients_service.config import Settings
 
-SCHEMA_REVISION = "0007_remove_client_blocking"
+SCHEMA_REVISION = "0006_registry_provenance"
 
 
 def build_engine(settings: Settings) -> Engine:

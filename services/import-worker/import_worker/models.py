@@ -80,6 +80,7 @@ class ClientInput(BaseModel):
     organization_name: str | None = None
     # Preserve the payload of legacy in-flight batches when retrying delivery.
     status: SkipJsonSchema[str | None] = None
+    is_blocked: bool | None = None
     manager_name: str | None = None
     contacts: dict[str, str] | None = None
     tags: list[str] | None = None

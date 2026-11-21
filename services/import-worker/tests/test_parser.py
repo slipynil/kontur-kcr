@@ -40,8 +40,8 @@ def test_historical_registry(tmp_path: Path, xlsx: WorkbookFactory) -> None:
                         " 001234 ",
                         " 007 ",
                         "Дейсвующий",
-                        "#N/A",
-                        "Менеджер",
+                        False,
+                        None,
                     ],
                 ],
                 "1 кв 2024": [
@@ -59,7 +59,8 @@ def test_historical_registry(tmp_path: Path, xlsx: WorkbookFactory) -> None:
         "organization_name": "Клиент",
         "inn": "001234",
         "kpp": "007",
-        "manager_name": "Менеджер",
+        "is_blocked": False,
+        "manager_name": None,
         "tags": ["VIP"],
         "raw_work_status": "VIP; В работе",
     }
@@ -231,7 +232,7 @@ def test_registry_uses_named_columns_without_reinterpreting_other_fields(
                         "001234",
                         "Общение через МПП",
                         "Действующий",
-                        "=1/0",
+                        "да",
                     ],
                 ]
             }
@@ -241,8 +242,8 @@ def test_registry_uses_named_columns_without_reinterpreting_other_fields(
     assert not result.errors
     client = result.rows[0].item.client
     assert client.kcr_code == "001" and client.inn == "001234"
-    assert client.organization_name == "Клиент"
-    assert {"status", "is_blocked"}.isdisjoint(client.model_dump(exclude_unset=True))
+    assert client.organization_name == "Клиент" and client.is_blocked is True
+    assert "status" not in client.model_dump(exclude_unset=True)
     assert client.tags == ["MPP"] and client.contacts == {"phone": "+7 900 000-00-00"}
 
 

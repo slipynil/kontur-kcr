@@ -219,12 +219,7 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
 
   test('rejects the earlier rollback and removes work created by the latest snapshot', async ({ app, screen, data }) => {
     const { code, admin, quarter } = data;
-    const first = workbook(`${code}-registry.xlsx`, {
-      'Реестр': [
-        ['Код КЦР', 'Название организации', 'Блокировка в сервисе'],
-        [code, `Синтетический реестр ${code}`, 'да'],
-      ],
-    });
+    const first = registry(code);
     const last = workbook(`${code}-rollback.xlsx`, {
       [quarter]: [['Код КЦР', 'Всего', 'Непередано'], [code, 100, 7]],
     });
@@ -241,7 +236,6 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
       expect(cycles.items).toMatchObject([{ work_quarter: quarter, source_import_batch_id: applied.id }]);
       const { first: operator } = await prepareOperators();
       await publish(admin, code, quarter);
-      expect(await card(operator, code)).not.toHaveProperty('is_blocked');
       requireStatus(await take(operator, code, quarter), 200, 'Start operator work on the latest snapshot');
       const historyNote = requireStatus(await api(`/clients/${code}/events`, {
         actor: operator, method: 'POST', body: {

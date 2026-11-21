@@ -23,6 +23,7 @@ from import_worker.models import (
 from import_worker.validation import (
     QUARTER,
     InvalidRow,
+    blocked,
     counter,
     normalized_text,
     tags,
@@ -33,6 +34,7 @@ HEADERS = {
     "organization_name": ("название", "название организации", "organization_name"),
     "inn": ("инн", "inn"),
     "kpp": ("кпп", "kpp"),
+    "is_blocked": ("блокировка", "блокировка в сервисе", "is_blocked"),
     "manager_name": ("менеджер", "фио менеджера", "manager_name"),
     "tags": ("признаки", "специальные признаки", "tags"),
     "raw_work_status": ("рабочие отметки", "raw_work_status"),
@@ -60,10 +62,9 @@ LEGACY_COLUMNS = {
     "raw_work_status": 6,
     "inn": 7,
     "kpp": 8,
+    "is_blocked": 10,
     "manager_name": 11,
 }
-LEGACY_BLOCKING_COLUMN = 10
-IGNORED_HEADERS = {"блокировка", "блокировка в сервисе", "is_blocked"}
 SNAPSHOT_FIELDS = {"kcr_code", "quarter", "total_documents", "unsubmitted_documents"}
 COUNTER_FIELDS = ("total_documents", "unsubmitted_documents")
 ANONYMIZED_CODE_HEADERS = {
@@ -221,6 +222,7 @@ def row_item(
         organization_name=field_value(values, columns, "organization_name"),
         inn=field_value(values, columns, "inn"),
         kpp=field_value(values, columns, "kpp"),
+        is_blocked=blocked(field_value(values, columns, "is_blocked")),
         manager_name=field_value(values, columns, "manager_name"),
         tags=tags(field_value(values, columns, "tags")),
         raw_work_status=field_value(values, columns, "raw_work_status"),
@@ -232,7 +234,6 @@ def row_item(
 
 def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: ParsedImport) -> None:
     columns = LEGACY_COLUMNS.copy()
-    ignored = {LEGACY_BLOCKING_COLUMN}
     seen: set[tuple[str, str | None]] = set()
     rows: list[tuple[str | None, ...]] = []
     row_numbers: list[int] = []
@@ -252,31 +253,21 @@ def parse_sheet(sheet: Any, raw_sheet: Any, params: ImportParameters, result: Pa
                 rows.clear()
                 row_numbers.clear()
                 invalid_cells.clear()
-                ignored = {
-                    index
-                    for index, value in enumerate(values)
-                    if normalized_text(value or "") in IGNORED_HEADERS
-                }
                 if any(
                     LEGACY_COLUMNS.get(field, index) != index for field, index in header.items()
                 ):
                     columns = header
                 else:
                     columns.update(header)
-                    if LEGACY_BLOCKING_COLUMN not in columns.values():
-                        ignored.add(LEGACY_BLOCKING_COLUMN)
             continue
-        values = tuple(None if index in ignored else value for index, value in enumerate(values))
         if is_total(values, uncached, columns):
             continue
-        cells = zip(cached, values, uncached, strict=True)
         if any(
             cell.data_type == "e"
             or (value or "").upper() in EXCEL_ERRORS
             or original.data_type == "f"
             and value is None
-            for index, (cell, value, original) in enumerate(cells)
-            if index not in ignored
+            for cell, value, original in zip(cached, values, uncached, strict=True)
         ):
             invalid_cells.add(number)
         rows.append(values)

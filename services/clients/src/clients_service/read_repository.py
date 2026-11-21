@@ -84,7 +84,7 @@ CANDIDATES_SQL = """
         SELECT c.* FROM clients c
         WHERE (CAST(:code AS text) IS NULL OR c.kcr_code = :code)
           AND (CAST(:visible_codes AS text[]) IS NULL OR
-               c.kcr_code = ANY(CAST(:visible_codes AS text[])))
+               (NOT c.is_blocked AND c.kcr_code = ANY(CAST(:visible_codes AS text[]))))
           AND (CAST(:search AS text) IS NULL
             OR strpos(lower(c.kcr_code), lower(:search)) > 0
             OR strpos(lower(coalesce(c.inn, '')), lower(:search)) > 0)
@@ -97,7 +97,7 @@ CANDIDATES_SQL = """
 
 METRICS_SQL = """
     metrics AS (
-        SELECT c.kcr_code, c.inn, c.kpp, c.organization_name,
+        SELECT c.kcr_code, c.inn, c.kpp, c.organization_name, c.is_blocked,
             c.manager_name, c.contacts, c.needs_review, c.inherited_fields,
             ARRAY(SELECT t.code FROM client_tags ct JOIN tags t ON t.id = ct.tag_id
                   WHERE ct.kcr_code = c.kcr_code ORDER BY t.code) AS tags,
@@ -220,11 +220,14 @@ def list_clients(
         return ClientPage(items=rows, total=total, page=page, page_size=page_size)
 
 
-def registered_codes(engine: Engine, codes: list[str]) -> list[str]:
+def unblocked_codes(engine: Engine, codes: list[str]) -> list[str]:
     with read_transaction(engine) as connection:
         return list(
             connection.execute(
-                text("SELECT kcr_code FROM clients WHERE kcr_code = ANY(CAST(:codes AS text[]))"),
+                text(
+                    "SELECT kcr_code FROM clients WHERE NOT is_blocked "
+                    "AND kcr_code = ANY(CAST(:codes AS text[]))"
+                ),
                 {"codes": codes},
             ).scalars()
         )

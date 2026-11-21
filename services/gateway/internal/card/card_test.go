@@ -130,7 +130,7 @@ func newAggregator(t *testing.T, clients, operator *upstreamStub, users card.Use
 // clientsCard — минимальный профиль Clients: рабочих полей в нём нет, их
 // добавляет агрегатор (ClientCard в Clients их не отдаёт).
 const clientsCard = `{"kcr_code":"` + operatorCode + `","inn":"7701000012","organization_name":"ООО Ромашка",` +
-	`"tags":[],"snapshots":[],"quarter_summary":null}`
+	`"is_blocked":false,"tags":[],"snapshots":[],"quarter_summary":null}`
 
 // operatorState — ответ Operator Work; nil означает свободного клиента.
 func operatorState(operator any) string {
@@ -264,6 +264,23 @@ func TestCardTreatsMissingCycleAsEmptyWorkState(t *testing.T) {
 		if value, present := cardBody[field]; value != nil || !present {
 			t.Errorf("card[%q] = %v (present %t), want null", field, value, present)
 		}
+	}
+}
+
+func TestBlockedPublishedCardIsHiddenFromOperator(t *testing.T) {
+	clients := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, `{"is_blocked":true}`
+	}}
+	operator := &upstreamStub{router: func(recordedCall) (int, string) {
+		return http.StatusOK, operatorState(nil)
+	}}
+	e := newAggregator(t, clients, operator, &fakeUsers{})
+	target := "/api/v1/clients/" + operatorCode
+	if w := e.get(t, target); w.Code != http.StatusNotFound {
+		t.Fatalf("operator status = %d; body %s", w.Code, w.Body.String())
+	}
+	if w := e.getAs(t, target, auth.RoleAdmin); w.Code != http.StatusOK {
+		t.Fatalf("admin status = %d; body %s", w.Code, w.Body.String())
 	}
 }
 

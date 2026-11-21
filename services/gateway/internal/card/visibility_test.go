@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	publishedCodesPath  = "/internal/v1/pool/published-codes"
-	registeredCodesPath = "/internal/v1/clients/registered-codes"
-	registryPath        = "/internal/v1/clients/operator-registry"
-	poolPath            = "/internal/v1/pool"
-	notificationsPath   = "/internal/v1/reassignment-notifications"
-	rejectID            = "11111111-1111-1111-1111-111111111111"
+	publishedCodesPath = "/internal/v1/pool/published-codes"
+	unblockedCodesPath = "/internal/v1/clients/unblocked-codes"
+	registryPath       = "/internal/v1/clients/operator-registry"
+	poolPath           = "/internal/v1/pool"
+	notificationsPath  = "/internal/v1/reassignment-notifications"
+	rejectID           = "11111111-1111-1111-1111-111111111111"
 )
 
 // recordingNext — следующий обработчик после visibility-обёртки.
@@ -86,10 +86,10 @@ func publishedPool(codes string) *upstreamStub {
 	}}
 }
 
-// registeredClients отвечает кодами клиентов, которые есть в реестре.
-func registeredClients(codes string) *upstreamStub {
+// unblockedClients отвечает списком разблокированных клиентов.
+func unblockedClients(codes string) *upstreamStub {
 	return &upstreamStub{router: func(call recordedCall) (int, string) {
-		if call.path != registeredCodesPath {
+		if call.path != unblockedCodesPath {
 			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
 		}
 		return http.StatusOK, codes
@@ -107,9 +107,9 @@ func errorCode(t *testing.T, w *httptest.ResponseRecorder) string {
 	return payload.Code
 }
 
-func TestVisibleClientAllowsPublishedRegisteredOperator(t *testing.T) {
+func TestVisibleClientAllowsPublishedUnblockedOperator(t *testing.T) {
 	operator := publishedPool(`{"codes":["` + operatorCode + `"]}`)
-	clients := registeredClients(`{"codes":["` + operatorCode + `"]}`)
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -134,55 +134,55 @@ func TestVisibleClientAllowsPublishedRegisteredOperator(t *testing.T) {
 		t.Errorf("published X-User-Id = %q", got)
 	}
 
-	registeredCalls := clients.recorded()
-	if len(registeredCalls) != 1 {
-		t.Fatalf("registered calls = %d, want 1", len(registeredCalls))
+	unblockedCalls := clients.recorded()
+	if len(unblockedCalls) != 1 {
+		t.Fatalf("unblocked calls = %d, want 1", len(unblockedCalls))
 	}
-	call := registeredCalls[0]
-	if call.method != http.MethodPost || call.path != registeredCodesPath || call.query != "" {
-		t.Errorf("registered call = %s %s?%s", call.method, call.path, call.query)
+	call := unblockedCalls[0]
+	if call.method != http.MethodPost || call.path != unblockedCodesPath || call.query != "" {
+		t.Errorf("unblocked call = %s %s?%s", call.method, call.path, call.query)
 	}
 	if string(call.body) != `{"codes":["`+operatorCode+`"]}` {
-		t.Errorf("registered body = %s", call.body)
+		t.Errorf("unblocked body = %s", call.body)
 	}
 	if got := call.header.Get("Content-Type"); got != "application/json" {
-		t.Errorf("registered Content-Type = %q", got)
+		t.Errorf("unblocked Content-Type = %q", got)
 	}
 	if got := call.header.Get("X-User-Role"); got != string(auth.RoleOperator) {
-		t.Errorf("registered X-User-Role = %q", got)
+		t.Errorf("unblocked X-User-Role = %q", got)
 	}
 }
 
 func TestVisibleClientHidesClientFromOperator(t *testing.T) {
 	tests := []struct {
-		name           string
-		published      string
-		registered     string
-		wantRegistered int
+		name          string
+		published     string
+		unblocked     string
+		wantUnblocked int
 	}{
 		{
-			name:           "client is not published",
-			published:      `{"codes":[]}`,
-			registered:     `{"codes":["` + operatorCode + `"]}`,
-			wantRegistered: 0,
+			name:          "client is not published",
+			published:     `{"codes":[]}`,
+			unblocked:     `{"codes":["` + operatorCode + `"]}`,
+			wantUnblocked: 0,
 		},
 		{
-			name:           "published client has no profile",
-			published:      `{"codes":["` + operatorCode + `"]}`,
-			registered:     `{"codes":[]}`,
-			wantRegistered: 1,
+			name:          "client is blocked in clients",
+			published:     `{"codes":["` + operatorCode + `"]}`,
+			unblocked:     `{"codes":[]}`,
+			wantUnblocked: 1,
 		},
 		{
-			name:           "clients returned a different code",
-			published:      `{"codes":["` + operatorCode + `"]}`,
-			registered:     `{"codes":["OTHER0001"]}`,
-			wantRegistered: 1,
+			name:          "client is filtered out",
+			published:     `{"codes":["` + operatorCode + `"]}`,
+			unblocked:     `{"codes":["OTHER0001"]}`,
+			wantUnblocked: 1,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			operator := publishedPool(test.published)
-			clients := registeredClients(test.registered)
+			clients := unblockedClients(test.unblocked)
 			called := false
 			e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -197,8 +197,8 @@ func TestVisibleClientHidesClientFromOperator(t *testing.T) {
 			if called {
 				t.Error("hidden client must not reach the next handler")
 			}
-			if got := len(clients.recorded()); got != test.wantRegistered {
-				t.Errorf("registered calls = %d, want %d", got, test.wantRegistered)
+			if got := len(clients.recorded()); got != test.wantUnblocked {
+				t.Errorf("unblocked calls = %d, want %d", got, test.wantUnblocked)
 			}
 		})
 	}
@@ -206,7 +206,7 @@ func TestVisibleClientHidesClientFromOperator(t *testing.T) {
 
 func TestVisibleClientAdminBypassesVisibilityScope(t *testing.T) {
 	operator := publishedPool(`{"codes":[]}`)
-	clients := registeredClients(`{"codes":[]}`)
+	clients := unblockedClients(`{"codes":[]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -223,7 +223,7 @@ func TestVisibleClientAdminBypassesVisibilityScope(t *testing.T) {
 
 func TestVisibleClientRejectsAnonymous(t *testing.T) {
 	operator := publishedPool(`{"codes":["` + operatorCode + `"]}`)
-	clients := registeredClients(`{"codes":["` + operatorCode + `"]}`)
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -287,7 +287,7 @@ func TestVisibleClientUpstreamFailures(t *testing.T) {
 			wantCode:   "INTERNAL_ERROR",
 		},
 		{
-			name:     "registered codes unavailable",
+			name:     "unblocked codes unavailable",
 			operator: func(recordedCall) (int, string) { return http.StatusOK, `{"codes":["` + operatorCode + `"]}` },
 			clients: func(recordedCall) (int, string) {
 				return http.StatusInternalServerError, `<html>boom</html>`
@@ -296,7 +296,7 @@ func TestVisibleClientUpstreamFailures(t *testing.T) {
 			wantCode:   "SERVICE_UNAVAILABLE",
 		},
 		{
-			name:       "registered codes are not json",
+			name:       "unblocked codes are not json",
 			operator:   func(recordedCall) (int, string) { return http.StatusOK, `{"codes":["` + operatorCode + `"]}` },
 			clients:    func(recordedCall) (int, string) { return http.StatusOK, `not-json` },
 			wantStatus: http.StatusBadGateway,
@@ -389,7 +389,7 @@ func TestPoolScopesOperatorCollection(t *testing.T) {
 			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
 		}
 	}}
-	clients := registeredClients(`{"codes":["` + operatorCode + `"]}`)
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -414,7 +414,7 @@ func TestPoolScopesOperatorCollection(t *testing.T) {
 		t.Errorf("pool body = %s", poolCall.body)
 	}
 	if len(clients.recorded()) != 1 {
-		t.Errorf("registered calls = %d, want 1", len(clients.recorded()))
+		t.Errorf("unblocked calls = %d, want 1", len(clients.recorded()))
 	}
 }
 
@@ -429,7 +429,7 @@ func TestNotificationsScopesOperatorCollection(t *testing.T) {
 			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
 		}
 	}}
-	clients := registeredClients(`{"codes":["` + operatorCode + `"]}`)
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -470,7 +470,7 @@ func TestRejectScopesNotification(t *testing.T) {
 			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
 		}
 	}}
-	clients := registeredClients(`{"codes":["` + operatorCode + `"]}`)
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -497,7 +497,7 @@ func TestRejectScopesNotification(t *testing.T) {
 
 func TestRejectValidatesRequestID(t *testing.T) {
 	operator := publishedPool(`{"codes":[]}`)
-	clients := registeredClients(`{"codes":[]}`)
+	clients := unblockedClients(`{"codes":[]}`)
 	called := false
 	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -525,7 +525,7 @@ func TestScopedCollectionsBypassForAdmin(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			operator := publishedPool(`{"codes":[]}`)
-			clients := registeredClients(`{"codes":[]}`)
+			clients := unblockedClients(`{"codes":[]}`)
 			called := false
 			e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -600,7 +600,7 @@ func TestScopedCollectionsRejectAnonymous(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			operator := publishedPool(`{"codes":[]}`)
-			clients := registeredClients(`{"codes":[]}`)
+			clients := unblockedClients(`{"codes":[]}`)
 			called := false
 			e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
 
@@ -648,7 +648,7 @@ func TestScopedCollectionUpstreamFailures(t *testing.T) {
 			wantCode:   "BAD_GATEWAY",
 		},
 		{
-			name:     "registered scope unavailable",
+			name:     "unblocked scope unavailable",
 			operator: func(recordedCall) (int, string) { return http.StatusOK, `{"codes":["` + operatorCode + `"]}` },
 			clients: func(recordedCall) (int, string) {
 				return http.StatusInternalServerError, `<html>boom</html>`

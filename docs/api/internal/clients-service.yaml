@@ -162,7 +162,7 @@ paths:
     post:
       tags: [Registry]
       operationId: listOperatorClients
-      summary: Реестр клиентов в опубликованной области доступа
+      summary: Реестр незаблокированных клиентов в опубликованной области доступа
       parameters: *registryParams
       requestBody:
         required: true
@@ -171,10 +171,10 @@ paths:
             schema:
               $ref: '#/components/schemas/ClientVisibilityScope'
       responses: *registryResponses
-  /clients/registered-codes:
+  /clients/unblocked-codes:
     post:
-      operationId: filterRegisteredClientCodes
-      summary: Оставить коды, для которых есть клиент в реестре
+      operationId: filterUnblockedClientCodes
+      summary: Оставить незаблокированные коды из переданной области доступа
       requestBody:
         required: true
         content:
@@ -183,7 +183,7 @@ paths:
               $ref: '#/components/schemas/ClientVisibilityScope'
       responses:
         '200':
-          description: Коды клиентов, найденных в реестре
+          description: Незаблокированные коды
           content:
             application/json:
               schema:
@@ -802,6 +802,8 @@ components:
           type:
           - string
           - 'null'
+        is_blocked:
+          type: boolean
         manager_name:
           type:
           - string
@@ -825,6 +827,8 @@ components:
       allOf:
       - $ref: '#/components/schemas/Client'
       properties:
+        is_blocked:
+          type: boolean
         snapshots:
           type: array
           description: Актуальные срезы по кварталам, свежие первыми.
@@ -874,6 +878,7 @@ components:
           - $ref: '#/components/schemas/QuarterSummary'
           - type: 'null'
       required:
+      - is_blocked
       - dynamics_quarter
       - dynamics_previous_quarter
       - dynamics_current_documents
@@ -930,6 +935,7 @@ components:
 
         '
       required:
+      - is_blocked
       - kcr_code
       - inn
       - organization_name
@@ -940,6 +946,8 @@ components:
       - dynamics_previous_documents
       - quarter_summary
       properties:
+        is_blocked:
+          type: boolean
         kcr_code:
           type: string
         inn:
@@ -1095,6 +1103,10 @@ components:
                   manager_name:
                     type:
                     - string
+                    - 'null'
+                  is_blocked:
+                    type:
+                    - boolean
                     - 'null'
                   contacts:
                     type:

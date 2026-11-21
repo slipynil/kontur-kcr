@@ -20,7 +20,7 @@ from clients_service.read_repository import (
     get_card,
     get_history,
     list_clients,
-    registered_codes,
+    unblocked_codes,
 )
 
 router = APIRouter(prefix="/internal/v1/clients", tags=["Registry"])
@@ -126,10 +126,10 @@ def operator_registry(request: Request, query: Annotated[ListQuery, Query()], sc
 
 
 @router.post(
-    "/registered-codes", response_model=ClientScope, operation_id="filterRegisteredClientCodes"
+    "/unblocked-codes", response_model=ClientScope, operation_id="filterUnblockedClientCodes"
 )
-def filter_registered_codes(request: Request, scope: ClientScope):
-    return ClientScope(codes=registered_codes(request.app.state.engine, scope.codes))
+def filter_unblocked_codes(request: Request, scope: ClientScope):
+    return ClientScope(codes=unblocked_codes(request.app.state.engine, scope.codes))
 
 
 @router.get("/{kcr_code}", response_model=ClientCard, operation_id="getClient")

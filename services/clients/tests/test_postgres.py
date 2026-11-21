@@ -52,6 +52,7 @@ def test_constraints_and_client_cascade(database):
     for statement in [
         "INSERT INTO clients(kcr_code) VALUES ('a')",
         "INSERT INTO client_tags(kcr_code, tag_id) VALUES ('missing', 1)",
+        "INSERT INTO clients(kcr_code, is_blocked) VALUES ('c', NULL)",
     ]:
         with pytest.raises(IntegrityError), engine.begin() as conn:
             conn.execute(text(statement))
@@ -73,7 +74,7 @@ def test_blocking_migration_preserves_flags_independently_of_old_status(database
         """)
         )
 
-    command.upgrade(config, "0005_client_blocking_only")
+    command.upgrade(config, "head")
     assert "status" not in {column["name"] for column in inspect(engine).get_columns("clients")}
     with engine.connect() as conn:
         assert conn.execute(
