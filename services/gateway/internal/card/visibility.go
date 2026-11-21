@@ -68,11 +68,11 @@ func (a *Aggregator) publishedScope(r *http.Request, who auth.Identity, code str
 	return a.readScope(r, who, a.operatorURL, "/internal/v1/pool/published-codes", query, nil)
 }
 
-func (a *Aggregator) unblockedScope(r *http.Request, who auth.Identity, scope *clientScope) (*clientScope, *upstreamFailure) {
+func (a *Aggregator) registeredScope(r *http.Request, who auth.Identity, scope *clientScope) (*clientScope, *upstreamFailure) {
 	if len(scope.Codes) == 0 {
 		return scope, nil
 	}
-	return a.readScope(r, who, a.clientsURL, "/internal/v1/clients/unblocked-codes", "", scope)
+	return a.readScope(r, who, a.clientsURL, "/internal/v1/clients/registered-codes", "", scope)
 }
 
 func hiddenClient(w http.ResponseWriter) {
@@ -91,7 +91,7 @@ func (a *Aggregator) VisibleClient(next http.HandlerFunc) http.HandlerFunc {
 			code := chi.URLParam(r, "kcr_code")
 			scope, failure := a.publishedScope(r, who, code)
 			if failure == nil {
-				scope, failure = a.unblockedScope(r, who, scope)
+				scope, failure = a.registeredScope(r, who, scope)
 			}
 			if failure != nil {
 				a.respondUpstreamFailure(w, failure, "client visibility")
@@ -144,7 +144,7 @@ func (a *Aggregator) scopedCollection(next http.HandlerFunc, path func(*http.Req
 		}
 		scope, failure := a.publishedScope(r, who, "")
 		if failure == nil {
-			scope, failure = a.unblockedScope(r, who, scope)
+			scope, failure = a.registeredScope(r, who, scope)
 		}
 		if failure != nil {
 			a.respondUpstreamFailure(w, failure, "client visibility")

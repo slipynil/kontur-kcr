@@ -42,7 +42,6 @@ class ClientListItem(BaseModel):
     kcr_code: str
     inn: str | None
     organization_name: str | None
-    is_blocked: bool
     tags: list[Tag]
     needs_review: bool
     inherited_fields: dict[str, Any]
@@ -69,7 +68,6 @@ class ClientCard(BaseModel):
     inn: str | None
     kpp: str | None
     organization_name: str | None
-    is_blocked: bool
     manager_name: str | None
     contacts: dict[str, Any] | None
     tags: list[Tag]

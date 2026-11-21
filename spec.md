@@ -80,7 +80,6 @@
 - `inn`: String (Indexed)
 - `kpp`: String
 - `organization_name`: String
-- `is_blocked`: Boolean
 - `manager_name`: String
 - `contacts`: JSONB
 - `needs_review`: Boolean (есть унаследованные/неполные данные)
@@ -340,4 +339,4 @@ ADR-0008 фиксирует явные document_quarters для звонков �
 
 [Агрегация карточки на Gateway](docs/adr/0012-card-aggregation-on-gateway.md): Gateway параллельно читает карточку Clients и рабочее состояние Operator Work по новому внутреннему `GET /internal/v1/clients/{kcr_code}/work-state` (без квартала — текущий цикл), мержит рабочие поля (`work_quarter`, `assignment_id`, `current_stage`, `assignment`, `wait_until`, `wait_source_work_quarter`) и разрешает `operator_name` по Identity DB. Для администратора при отсутствии действующего цикла рабочие поля равны null. Недоступность Operator Work срывает ответ целиком со статусом 502 BAD_GATEWAY, деградации нет (решение пользователя от 17.11.2026). Для списка клиентов Gateway после фильтрации и пагинации получает активные назначения текущих опубликованных циклов одним запросом к Operator Work по кодам страницы. Он пакетно разрешает логины в Identity DB и заполняет assigned_operator_id и operator_name. Период сравнения документов не влияет на назначение. При недоступности пакетного чтения Operator Work реестр возвращает 502.
 
-В операторском контуре реестр, поиск и карточка ограничены незаблокированными клиентами с текущим опубликованным циклом. Правило и границы доступа описаны в [ADR-0014](docs/adr/0014-operator-client-visibility.md) с уточнением в [ADR-0015](docs/adr/0015-client-blocking-only.md).
+В операторском контуре реестр, поиск и карточка доступны для клиентов реестра с текущим опубликованным циклом. Правила доступа описаны в [ADR-0014](docs/adr/0014-operator-client-visibility.md) с уточнением в [ADR-0018](docs/adr/0018-remove-client-blocking.md).

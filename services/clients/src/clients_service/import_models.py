@@ -48,15 +48,15 @@ class ClientInput(InputModel):
     organization_name: str | None = None
     tags: list[Tag] | None = None
     manager_name: str | None = None
-    is_blocked: StrictBool | None = None
     contacts: dict[str, Any] | None = None
     raw_work_status: str | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def ignore_legacy_status(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "status" in value:
-            return {key: field for key, field in value.items() if key != "status"}
+    def ignore_legacy_profile_fields(cls, value: Any) -> Any:
+        obsolete = {"status", "is_blocked"}
+        if isinstance(value, dict) and obsolete.intersection(value):
+            return {key: field for key, field in value.items() if key not in obsolete}
         return value
 
     @field_validator("kcr_code")

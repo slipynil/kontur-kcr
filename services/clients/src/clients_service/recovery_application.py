@@ -35,19 +35,22 @@ def restore_rows(connection, table, rows, *, upsert_client=False):
         return 0
     if table.name in {"clients", "quarter_snapshot_history"}:
         # Undo made before the migration can still contain obsolete provenance.
+        obsolete = {"status", "is_blocked"}
         rows = [dict(row) for row in rows]
         for row in rows:
             fields = row.get("inherited_fields") or {}
-            if "status" in fields:
+            if obsolete.intersection(fields):
                 row["inherited_fields"] = {
-                    key: value for key, value in fields.items() if key != "status"
+                    key: value for key, value in fields.items() if key not in obsolete
                 }
                 if table.name == "clients":
                     row["needs_review"] = bool(row["inherited_fields"])
-            if table.name == "clients" and "status" in (row.get("field_sources") or {}):
-                row["field_sources"] = {
-                    key: value for key, value in row["field_sources"].items() if key != "status"
-                }
+            if table.name == "clients":
+                sources = row.get("field_sources") or {}
+                if obsolete.intersection(sources):
+                    row["field_sources"] = {
+                        key: value for key, value in sources.items() if key not in obsolete
+                    }
     identity = " OVERRIDING SYSTEM VALUE" if table.name == "quarter_snapshot_history" else ""
     statement = (
         f"INSERT INTO {table.name}{identity} SELECT * FROM "

@@ -135,7 +135,7 @@ async def test_postgres_upload_retry_and_report(
         verified = 0
         if envelope["import_type"] == "REGISTRY":
             assert {"selected_quarter", "snapshot_date"}.isdisjoint(envelope)
-            assert envelope["items"][0]["client"]["is_blocked"] is False
+            assert "is_blocked" not in envelope["items"][0]["client"]
             assert envelope["items"][0]["client"]["manager_name"] is None
             assert "snapshot" not in envelope["items"][0]
             errors = []

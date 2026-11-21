@@ -151,10 +151,6 @@ func (a *Aggregator) Client(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternalError(w)
 		return
 	}
-	if who.Role == auth.RoleOperator && card["is_blocked"] != false {
-		hiddenClient(w)
-		return
-	}
 
 	var state *workState
 	switch {

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 const labels: Record<string, string> = {
-  status: 'Статус', is_blocked: 'Блокировка', quarter: 'Исходный квартал',
+  status: 'Статус', quarter: 'Исходный квартал',
   snapshot_date: 'Дата среза', batch_id: 'Пакет импорта', import_batch_id: 'Пакет импорта',
   inn: 'ИНН', kpp: 'КПП', organization_name: 'Название организации',
   manager_name: 'Менеджер', contacts: 'Контакты', phone: 'Телефон',
