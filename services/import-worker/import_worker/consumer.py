@@ -123,18 +123,11 @@ async def claim_apply(sessions: async_sessionmaker[AsyncSession], batch_id: UUID
             parsed = ParsedImport.model_validate(batch.apply_payload)
             keys = [fingerprint(params, row) for row in parsed.rows]
             already_applied = await applied_fingerprints(db, keys)
-            remaining = [
-                row
-                for row, key in zip(parsed.rows, keys, strict=True)
-                if key not in already_applied
-            ]
-            batch.success_count = len(parsed.rows) - len(remaining)
-            if not remaining:
-                finish(batch, Status.COMPLETED)
-                return None
-            batch.apply_payload = ParsedImport(rows=remaining).model_dump(
-                mode="json", exclude_unset=True
-            )
+            # A saved fingerprint does not prove the client is still in the registry.
+            for row, key in zip(parsed.rows, keys, strict=True):
+                if key in already_applied:
+                    row.verify_only = True
+            batch.apply_payload = parsed.model_dump(mode="json", exclude_unset=True)
         batch.apply_started_at = func.clock_timestamp()
         return batch_id
 
@@ -175,7 +168,7 @@ async def apply_claimed(
             for error in result.errors
         ]
         add_errors(db, batch, errors)
-        batch.success_count += result.accepted_rows
+        batch.success_count += result.accepted_rows + result.verified_rows
         if result.accepted_rows:
             batch.clients_applied_at = func.clock_timestamp()
             batch.apply_payload = None
@@ -184,7 +177,7 @@ async def apply_claimed(
                 accepted = {
                     fingerprint(params, row)
                     for index, row in enumerate(parsed.rows, start=1)
-                    if index not in rejected
+                    if index not in rejected and not row.verify_only
                 }
                 db.add_all(
                     [ImportObservation(batch_id=batch.id, fingerprint=key) for key in accepted]

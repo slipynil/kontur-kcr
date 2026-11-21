@@ -103,6 +103,7 @@ class SourceRow(BaseModel):
     sheet: str
     row_number: int
     item: ImportItem
+    verify_only: bool = False
 
     def error(self, reason: str) -> ImportErrorRow:
         return ImportErrorRow(

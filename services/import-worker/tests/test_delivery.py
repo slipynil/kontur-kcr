@@ -115,6 +115,7 @@ async def test_postgres_upload_retry_and_report(
     calls: list[dict] = []
     work_calls: list[dict] = []
     kcr = f"test-{uuid4()}"
+    in_registry = True
 
     def clients_reply(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -131,6 +132,7 @@ async def test_postgres_upload_retry_and_report(
         assert request.url.path == "/internal/v1/import/apply"
         envelope = json.loads(request.content)
         calls.append(envelope)
+        verified = 0
         if envelope["import_type"] == "REGISTRY":
             assert {"selected_quarter", "snapshot_date"}.isdisjoint(envelope)
             assert envelope["items"][0]["client"]["is_blocked"] is False
@@ -147,12 +149,23 @@ async def test_postgres_upload_retry_and_report(
                 "total_documents": None,
                 "unsubmitted_documents": 0,
             }
-            errors = [{"row_number": 2, "code": "UNKNOWN_KCR_CODE", "field": "client.kcr_code"}]
+            if envelope["items"][0].get("verify_only"):
+                assert len(envelope["items"]) == 1
+                verified = int(in_registry)
+                unknown_indices = [] if in_registry else [1]
+            else:
+                assert len(envelope["items"]) == 2
+                unknown_indices = [2]
+            errors = [
+                {"row_number": index, "code": "UNKNOWN_KCR_CODE", "field": "client.kcr_code"}
+                for index in unknown_indices
+            ]
         return httpx.Response(
             200,
             json={
                 "batch_id": envelope["batch_id"],
-                "accepted_rows": len(envelope["items"]) - len(errors),
+                "accepted_rows": len(envelope["items"]) - len(errors) - verified,
+                "verified_rows": verified,
                 "rejected_rows": len(errors),
                 "errors": errors,
             },
@@ -285,16 +298,30 @@ async def test_postgres_upload_retry_and_report(
             ).status_code == 503
             assert (await api.post(f"/internal/v1/imports/{uuid4()}/rollback")).status_code == 404
 
-            # Same observation in another file is recognized without another HTTP mutation.
+            # Recheck the code for an identical observation without writing a new one.
             copy = xlsx({"Другой лист": [header, [], valid]})
-            duplicate = await upload(api, copy, "SNAPSHOT", "2026-04-10")
-            assert await publish_one(sessions, channel)
-            replay = delivery(exchange.publish.await_args.args[0].body)
-            await consumer.process_delivery(replay, sessions, settings, clients)
-            replay.ack.assert_awaited_once()
-            assert len(calls) == 3
-            result = (await api.get(f"/internal/v1/imports/{duplicate}")).json()
-            assert result["status"] == "COMPLETED" and result["success_count"] == 1
+            for in_registry in (True, False):
+                duplicate = await upload(api, copy, "SNAPSHOT", "2026-04-10")
+                assert await publish_one(sessions, channel)
+                replay = delivery(exchange.publish.await_args.args[0].body)
+                await consumer.process_delivery(replay, sessions, settings, clients)
+                replay.ack.assert_awaited_once()
+                result = (await api.get(f"/internal/v1/imports/{duplicate}")).json()
+                assert result["clients_applied_at"] is None
+                if in_registry:
+                    assert result["status"] == "COMPLETED" and result["success_count"] == 1
+                    assert result["error_log"] == []
+                else:
+                    assert result["status"] == "FAILED" and result["success_count"] == 0
+                    assert result["error_log"] == [
+                        {
+                            "sheet": "Другой лист",
+                            "row_number": 3,
+                            "kcr_code": kcr,
+                            "reason": "Код КЦР отсутствует в реестре (client.kcr_code)",
+                        }
+                    ]
+            assert len(calls) == 5
     finally:
         await engine.dispose()
 

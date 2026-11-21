@@ -77,6 +77,7 @@ class SnapshotInput(InputModel):
 class ImportItem(InputModel):
     client: ClientInput
     snapshot: SnapshotInput | None = None
+    verify_only: StrictBool = False
 
 
 class ImportEnvelope(InputModel):

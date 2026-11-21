@@ -17,6 +17,7 @@ class ClientsRowError(BaseModel):
 class ApplyResult(BaseModel):
     batch_id: UUID
     accepted_rows: int = Field(ge=0)
+    verified_rows: int = Field(default=0, ge=0)
     rejected_rows: int = Field(ge=0)
     errors: list[ClientsRowError]
 
@@ -47,7 +48,11 @@ async def apply_import(
             **params.model_dump(mode="json"),
             "batch_id": str(batch_id),
             "uploaded_by": str(uploaded_by),
-            "items": [row.item.model_dump(mode="json", exclude_unset=True) for row in parsed.rows],
+            "items": [
+                row.item.model_dump(mode="json", exclude_unset=True)
+                | ({"verify_only": True} if row.verify_only else {})
+                for row in parsed.rows
+            ],
         },
     )
     if response.status_code in {400, 422}:
@@ -55,12 +60,16 @@ async def apply_import(
     response.raise_for_status()
     result = ApplyResult.model_validate(response.json())
     indices = {error.row_number for error in result.errors}
+    verified = sum(
+        row.verify_only for index, row in enumerate(parsed.rows, start=1) if index not in indices
+    )
     if (
         result.batch_id != batch_id
-        or result.accepted_rows + result.rejected_rows != len(parsed.rows)
+        or result.accepted_rows + result.verified_rows + result.rejected_rows != len(parsed.rows)
         or result.rejected_rows != len(result.errors)
         or len(indices) != result.rejected_rows
         or max(indices, default=0) > len(parsed.rows)
+        or result.verified_rows != verified
     ):
         raise ValueError("Несогласованный отчёт Clients Service")
     return result

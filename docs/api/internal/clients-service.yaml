@@ -1070,6 +1070,11 @@ components:
             required:
             - client
             properties:
+              verify_only:
+                type: boolean
+                default: false
+                description: Для ранее импортированной строки SNAPSHOT проверяет наличие кода КЦР в текущем реестре.
+                  Допустимая строка учитывается в verified_rows без изменений данных и без записи undo.
               client:
                 type: object
                 required:
@@ -1226,6 +1231,11 @@ components:
         accepted_rows:
           type: integer
           minimum: 0
+        verified_rows:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Число строк с verify_only, коды которых найдены в текущем реестре.
         rejected_rows:
           type: integer
           minimum: 0
