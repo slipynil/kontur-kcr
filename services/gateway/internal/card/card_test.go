@@ -78,6 +78,10 @@ func (f *fakeUsers) GetByID(context.Context, uuid.UUID) (identity.User, error) {
 	return f.user, f.err
 }
 
+func (f *fakeUsers) GetByIDs(context.Context, []uuid.UUID) ([]identity.User, error) {
+	return []identity.User{f.user}, f.err
+}
+
 type env struct {
 	router http.Handler
 }

@@ -141,6 +141,10 @@ func newTestEnv(t *testing.T) *testEnv {
 				}
 			case "/internal/v1/clients/unblocked-codes":
 				body = `{"codes":["6671-0042"]}`
+			case "/internal/v1/clients", "/internal/v1/clients/operator-registry":
+				body = `{"items":[{"kcr_code":"6671-0042"}]}`
+			case "/internal/v1/clients/current-assignees":
+				body = `{"items":[]}`
 			case "/internal/v1/clients/6671-0042":
 				body = `{"is_blocked":false,"kcr_code":"6671-0042"}`
 			case "/internal/v1/clients/6671-0042/work-state":

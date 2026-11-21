@@ -40,6 +40,7 @@ var quarterPattern = regexp.MustCompile(`^\d{4}_Q[1-4]$`)
 // Users находит логин по идентификатору; identity.Store удовлетворяет интерфейсу.
 type Users interface {
 	GetByID(ctx context.Context, id uuid.UUID) (identity.User, error)
+	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]identity.User, error)
 }
 
 // Aggregator агрегирует карточку вместо прозрачного проксирования.

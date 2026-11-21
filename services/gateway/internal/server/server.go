@@ -117,7 +117,7 @@ func New(deps Deps) (http.Handler, error) {
 			// Чтение реестра, карточек, лента событий и ИИ — обе роли.
 			r.Group(func(r chi.Router) {
 				r.Use(middlewares.RequireRole(allRoles...))
-				r.Get("/clients", cardAggregator.Registry(upstreams.HandlerFunc(proxy.ServiceClients)))
+				r.Get("/clients", cardAggregator.Registry)
 				r.Get("/clients/{kcr_code}", cardAggregator.Client)
 				r.Get("/clients/{kcr_code}/snapshots/history", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceClients)))
 				r.Get("/pool", cardAggregator.Pool(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))

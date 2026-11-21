@@ -260,8 +260,8 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
           <td>{client.outstanding_documents ?? '—'}</td>
           <td><Badge tone={client.dynamics ? dynamicsTone[client.dynamics] : 'neutral'}>{client.dynamics ? dynamics[client.dynamics] : 'Не определена'}</Badge></td>
           <td>{client.current_stage ? stages[client.current_stage] : '—'}</td>
-          <td className="mono-data">{client.assigned_operator_id ?
-            <span title={client.assigned_operator_id} aria-label={`ID ответственного: ${client.assigned_operator_id}`}>ID {client.assigned_operator_id.slice(0, 8)}</span> : '—'}</td>
+          <td>{client.operator_name || (client.assigned_operator_id ?
+            <span className="mono-data" title={client.assigned_operator_id}>ID {client.assigned_operator_id.slice(0, 8)}</span> : '—')}</td>
           <td>
             {client.needs_review && <Badge tone="caution">Требует проверки</Badge>}
             {client.tags.length > 0 && <div>{client.tags.map(tag => tags[tag as keyof typeof tags] ?? tag).join(', ')}</div>}

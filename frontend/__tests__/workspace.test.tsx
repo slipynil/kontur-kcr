@@ -166,10 +166,15 @@ const list = (codes: string[]) => ({
   page: 1, page_size: 20, total: codes.length,
 });
 it('publishes the selected registry clients for the chosen quarter', async () => {
+  const page = list(['E2E-1', 'E2E-2']);
   (fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) =>
-    init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json(list(['E2E-1', 'E2E-2']))));
+    init?.method === 'PUT' ? Promise.resolve(json(undefined, 204)) : Promise.resolve(json({
+      ...page,
+      items: [{ ...page.items[0], assigned_operator_id: 'operator-id', operator_name: 'operator-login' }, page.items[1]],
+    })));
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать E2E-1' }));
+  expect(screen.getByRole('cell', { name: 'operator-login' })).toBeVisible();
   expect(screen.getByRole('checkbox', { name: 'Выбрать всех на странице' })).toBePartiallyChecked();
   fireEvent.click(screen.getByRole('button', { name: 'Публикация на обзвон' }));
   fireEvent.change(screen.getByLabelText('Квартал обзвона'), { target: { value: '2026_Q4' } });

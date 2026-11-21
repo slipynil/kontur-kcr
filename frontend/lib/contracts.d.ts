@@ -71,6 +71,7 @@ export type ClientListItem = {
   tags: (Tag)[];
   current_stage: Stage;
   assigned_operator_id: string | null;
+  operator_name?: string | null;
   dynamics: NullableDynamics;
   latest_snapshot: QuarterSnapshotBrief | null;
   needs_review?: boolean;
