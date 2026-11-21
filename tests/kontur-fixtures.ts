@@ -190,19 +190,18 @@ export function cleanupClient(admin: Actor, code: string) {
   }), 200, 'Clean up client fixture');
 }
 
-export function expireWork(code: string, quarter: string, kind: 'reassignment' | 'wait') {
+export function expireWait(code: string, quarter: string) {
   if (!/^E2E-[a-f0-9-]{12}$/.test(code)) throw new Error('Can only advance a generated E2E client');
   const clock = [
     'import json, os, sys',
     'from sqlalchemy import create_engine, text',
-    'code, quarter, kind = json.load(sys.stdin)',
-    'sql = {"reassignment": "UPDATE client_reassignment_requests SET created_at=now() - interval \'2 hours\', expires_at=now() - interval \'1 hour\' WHERE kcr_code=:code AND work_quarter=:quarter AND status=\'PENDING\'",',
-    '       "wait": "UPDATE client_work_cycles SET wait_until=current_date - 1 WHERE kcr_code=:code AND work_quarter=:quarter AND wait_until IS NOT NULL"}',
+    'code, quarter = json.load(sys.stdin)',
+    'sql = "UPDATE client_work_cycles SET wait_until=current_date - 1 WHERE kcr_code=:code AND work_quarter=:quarter AND wait_until IS NOT NULL"',
     'with create_engine(os.environ["OPERATOR_WORK_DATABASE_URL"]).begin() as db:',
-    '    changed = db.execute(text(sql[kind]), dict(code=code, quarter=quarter)).rowcount',
+    '    changed = db.execute(text(sql), dict(code=code, quarter=quarter)).rowcount',
     '    if changed != 1: raise RuntimeError(f"Expected one test row, got {changed}")',
   ].join('\n');
-  containerPython('operator-work', clock, [code, quarter, kind]);
+  containerPython('operator-work', clock, [code, quarter]);
 }
 
 export function workbook(name: string, sheets: Record<string, (string | number | null)[][]>) {

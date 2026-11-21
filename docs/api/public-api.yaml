@@ -418,10 +418,9 @@ paths:
       x-operator-visibility: unblocked-current-published
       summary: Взять или перезакрепить клиента на себя
       description: |
-        Свободный опубликованный клиент закрепляется сразу.
-        Для занятого клиента создаётся уведомление ответственному на один час.
-        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
-        и исторический цикл дают 409.
+        Сразу закрепляет клиента текущего опубликованного цикла за оператором на любом этапе.
+        Действующий срок ожидания сохраняется. При явном взятии после срока цикл переходит в IN_WORK.
+        Повтор с тем же ID и параметрами возвращает сохранённое назначение.
       x-roles:
       - OPERATOR
       parameters:
@@ -439,71 +438,15 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                - $ref: '#/components/schemas/TakeResponse'
-                - $ref: '#/components/schemas/ReassignmentRequest'
-        '202':
-          description: Запрос ожидает решения ответственного.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReassignmentRequest'
+                $ref: '#/components/schemas/TakeResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Конфликт состояния или действующий срок ожидания.
+          description: Назначение или цикл изменились, либо ID операции уже использован с другими параметрами.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/v1/reassignment-notifications:
-    get:
-      operationId: listReassignmentNotifications
-      x-operator-visibility: unblocked-current-published
-      summary: Получить входящие и отправленные запросы
-      x-roles: [OPERATOR]
-      parameters:
-      - name: limit
-        in: query
-        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
-      - name: offset
-        in: query
-        schema: { type: integer, minimum: 0, default: 0 }
-      responses:
-        '200':
-          description: Уведомления текущего оператора.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ReassignmentRequest'
-  /api/v1/reassignment-notifications/{request_id}/reject:
-    post:
-      operationId: rejectReassignment
-      x-operator-visibility: unblocked-current-published
-      summary: Отказать в перезакреплении до истечения часа
-      x-roles: [OPERATOR]
-      parameters:
-      - name: request_id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-      responses:
-        '200':
-          description: Запрос отклонён текущим получателем уведомления.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReassignmentRequest'
-        '404':
-          description: Запрос не найден или недоступен оператору.
-        '409':
-          description: Запрос уже завершён.
   /api/v1/pool/publication:
     put:
       tags:
@@ -1961,20 +1904,6 @@ components:
           type: string
           format: uuid
           description: ID операции, сохраняемый при повторе после сетевого сбоя.
-    ReassignmentRequest:
-      type: object
-      required: [id, kcr_code, work_quarter, expected_assignment_id, owner_id, requester_id, created_at, expires_at, status, resolved_at]
-      properties:
-        id: { type: string, format: uuid }
-        kcr_code: { type: string }
-        work_quarter: { type: string }
-        expected_assignment_id: { type: string, format: uuid }
-        owner_id: { type: string, format: uuid }
-        requester_id: { type: string, format: uuid }
-        created_at: { type: string, format: date-time }
-        expires_at: { type: string, format: date-time }
-        resolved_at: { type: [string, 'null'], format: date-time }
-        status: { type: string, enum: [PENDING, REJECTED, TRANSFERRED, CANCELLED] }
     TakeResponse:
       type: object
       description: Результат атомарного закрепления (`spec.md` §2.7 `ClientAssignment`).

@@ -3,7 +3,7 @@ import { expect } from 'e2e';
 import { randomUUID } from 'node:crypto';
 import {
   addDays, api, applyClient, applyWork, assignment, businessDate, cleanupClient, dateInQuarter,
-  expireWork, internal, newCode, prepareOperators, publish, publishReply, quarterAt, requireStatus, take,
+  expireWait, internal, newCode, prepareOperators, publish, publishReply, quarterAt, requireStatus, take,
   type Actor,
 } from './kontur-fixtures';
 
@@ -78,34 +78,27 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     );
   });
 
-  test('allows the owner to veto reassignment from the notification', async ({ app, browser, screen, work }) => {
+  test('takes over a client assigned to a colleague from the card', { session: 'operator_b' }, async ({ app, screen, work }) => {
     const { admin, first, second, code, quarter } = work;
     await publish(admin, code, quarter);
-    const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
-    const pending = requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
-    expect(pending.status).toBe('PENDING');
-    expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
-    expect(Date.parse(pending.expires_at) - Date.parse(pending.created_at)).toBe(3_600_000);
-    await app.open('/');
-    await screen.getByRole('button', 'Запросы').tap();
-    const notification = browser.locator('[role="dialog"] .notification-list li').filter({ hasText: code });
+    requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
+    await app.open('/client/' + code);
+    await screen.getByText('Клиент закреплён за оператором ' + first.user.login + '.').waitFor();
 
-    await notification.getByRole('button', 'Отклонить запрос').tap();
+    await screen.getByRole('button', 'Перезакрепить на себя').tap();
 
-    await expect(screen.getByText('Запрос отклонён', { exact: true })).toBeVisible();
-    await expect(notification).toContainText('Отклонён');
-    expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
+    await expect(screen.getByRole('button', 'Записать звонок')).toBeVisible();
+    await expect(screen.getByText('Клиент закреплён за вами', { exact: true })).toBeVisible();
+    await expect(screen.getByRole('button', 'Запросы')).toHaveCount(0);
+    expect(assignment(second, code, quarter).assigned_operator_id).toBe(second.user.id);
   });
 
-  test('transfers the client after the veto window and keeps an old-form call without its wait', { session: 'operator_b' },
+  test('preserves the previous operator call without applying its wait after reassignment', { session: 'operator_b' },
     async ({ app, screen, work }) => {
       const { admin, first, second, code, quarter, today } = work;
       await publish(admin, code, quarter);
       const original = requireStatus(await take(first, code, quarter), 200, 'Prepare original assignment');
-      requireStatus(await take(second, code, quarter, original.assignment_id), 202, 'Request reassignment');
-
-      expireWork(code, quarter, 'reassignment');
-      await expect.poll(() => assignment(second, code, quarter).assigned_operator_id, { timeout: 35_000 }).toBe(second.user.id);
+      requireStatus(await take(second, code, quarter, original.assignment_id), 200, 'Take over assignment');
       const recorded = requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
         wait_until: addDays(today, 4),
       })), 201, 'Save stale-form call');
@@ -182,7 +175,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     expect(assignment(first, code, quarter)).toMatchObject({ wait_until: waitUntil });
   });
 
-  test('carries a live wait across quarters and blocks another operator', async ({ work }) => {
+  test('carries a live wait across quarters and allows direct reassignment', { session: 'operator_b' }, async ({ app, screen, work }) => {
     const { admin, first, second, code, quarter, today } = work;
     const next = quarterAt(today, 1);
     const wait = addDays(dateInQuarter(next), 15);
@@ -196,11 +189,17 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
     applyWork(admin, code, next, 7);
     await publish(admin, code, next);
     const carried = assignment(first, code, next);
-    const rejected = await take(second, code, next, carried.assignment_id);
+    await app.open('/client/' + code);
+    const transfer = screen.getByRole('button', 'Перезакрепить на себя');
+    await expect(transfer).toBeEnabled();
+    await transfer.tap();
 
     expect(carried).toMatchObject({ stage: 'WAIT_DEADLINE', wait_until: wait, assigned_operator_id: first.user.id });
-    expect(rejected.status).toBe(409);
-    expect(rejected.body.code).toBe('CLIENT_WAIT_DEADLINE_ACTIVE');
+    await expect(screen.getByRole('button', 'Записать звонок')).toBeVisible();
+    expect(assignment(second, code, next)).toMatchObject({
+      stage: 'WAIT_DEADLINE', wait_until: wait, wait_source_work_quarter: quarter,
+      assigned_operator_id: second.user.id,
+    });
   });
 
   for (const remaining of [7, 0]) {
@@ -213,22 +212,23 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
       })), 201, 'Save wait');
       if (!remaining) applyClient(admin, { code, quarter, remaining: 0, date: dateInQuarter(quarter, 3) });
 
-      expireWork(code, quarter, 'wait');
+      expireWait(code, quarter);
       if (remaining) {
         await expect.poll(() => assignment(first, code, quarter).stage, { timeout: 40_000 }).toBe('POOL');
         expect((await take(second, code, quarter)).status).toBe(200);
       } else {
-        const blocked = await take(second, code, quarter, original.assignment_id);
-        expect(blocked.status).toBe(409);
-        expect(assignment(first, code, quarter).assigned_operator_id).toBe(first.user.id);
-        const cycles = requireStatus(internal('operator-work', `/clients/${code}/cycles`, admin), 200, 'Read current work cycle');
-        expect(cycles.items.some((cycle: { is_current: boolean; stage: string }) => cycle.is_current && cycle.stage === 'POOL')).toBe(false);
+        const before = assignment(first, code, quarter);
+        expect(before).toMatchObject({ assigned_operator_id: first.user.id, stage: 'WAIT_DEADLINE' });
+        requireStatus(await take(second, code, quarter, original.assignment_id), 200, 'Take over expired assignment');
+        expect(assignment(second, code, quarter)).toMatchObject({
+          assigned_operator_id: second.user.id, stage: 'IN_WORK', wait_until: null,
+        });
       }
     });
   }
 
   test('keeps the assignment when Clients cannot confirm the balance at the deadline', async ({ work }) => {
-    const { admin, first, second, code, quarter, today } = work;
+    const { admin, first, code, quarter, today } = work;
     await publish(admin, code, quarter);
     const original = requireStatus(await take(first, code, quarter), 200, 'Prepare assignment');
     requireStatus(await postEvent(first, code, call(quarter, original.assignment_id, {
@@ -238,10 +238,7 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
       operation_id: randomUUID(), requested_by: admin.user.id,
     }), 200, 'Simulate missing balance for test client');
 
-    expireWork(code, quarter, 'wait');
-    const blocked = await take(second, code, quarter, original.assignment_id);
-
-    expect(blocked.status).toBe(409);
+    expireWait(code, quarter);
     expect(assignment(first, code, quarter)).toMatchObject({
       assigned_operator_id: first.user.id, awaiting_balance: true, stage: 'WAIT_DEADLINE',
     });

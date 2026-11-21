@@ -37,7 +37,7 @@ migrations/     golang-migrate (таблица users, docs/db/ddl/identity.sql)
 |---|---|---|
 | `GET /api/v1/clients`, `GET /api/v1/clients/{kcr_code}`, `GET .../snapshots/history` | Clients | ADMIN, OPERATOR |
 | `GET/POST /api/v1/clients/{kcr_code}/events` | Operator Work | ADMIN, OPERATOR |
-| `POST /api/v1/clients/{kcr_code}/take`, `/api/v1/reassignment-notifications*` | Operator Work | OPERATOR |
+| `POST /api/v1/clients/{kcr_code}/take` | Operator Work | OPERATOR |
 | `POST /api/v1/imports`, `GET /api/v1/imports/{batch_id}`, `POST .../rollback` | Import Worker | ADMIN |
 | `/api/v1/assistant/*` | Assistant | ADMIN, OPERATOR |
 

@@ -270,19 +270,6 @@ export type TakeRequest = {
   request_id: string;
 };
 
-export type ReassignmentRequest = {
-  id: string;
-  kcr_code: string;
-  work_quarter: string;
-  expected_assignment_id: string;
-  owner_id: string;
-  requester_id: string;
-  created_at: string;
-  expires_at: string;
-  resolved_at: string | null;
-  status: "PENDING" | "REJECTED" | "TRANSFERRED" | "CANCELLED";
-};
-
 export type CallEventCreate = {
   document_quarters?: (string)[];
   event_type: "CALL_RESULT";

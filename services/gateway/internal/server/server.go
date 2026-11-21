@@ -130,8 +130,6 @@ func New(deps Deps) (http.Handler, error) {
 			r.Group(func(r chi.Router) {
 				r.Use(middlewares.RequireRole(auth.RoleOperator))
 				r.Post("/clients/{kcr_code}/take", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
-				r.Get("/reassignment-notifications", cardAggregator.Notifications(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
-				r.Post("/reassignment-notifications/{request_id}/reject", cardAggregator.Reject(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
 			})
 		})
 	})

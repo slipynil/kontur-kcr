@@ -17,7 +17,6 @@ from operator_work.assignments import (
     _one,
     _record_stage,
     _require_cycle,
-    _settle_overdue,
 )
 from operator_work.contracts import QuarterValue
 
@@ -207,7 +206,6 @@ class ClientEvents:
             if original is None:
                 raise WorkError(409, "ASSIGNMENT_CHANGED", "У вас не было этого назначения")
 
-            _settle_overdue(db, code, quarter, now)
             active = _active_assignment(db, code, quarter)
             wait = call.wait_until if active and active["id"] == original["id"] else None
             if wait is not None and wait <= now.astimezone(BUSINESS_ZONE).date():
@@ -263,12 +261,4 @@ class ClientEvents:
                            'Установлен срок ожидания', 'WAIT_DEADLINE', :wait, :now)"""
             ),
             {**params, "id": uuid4()},
-        )
-        db.execute(
-            text(
-                """UPDATE client_reassignment_requests
-                   SET status = 'CANCELLED', resolved_at = :now
-                   WHERE kcr_code = :code AND work_quarter = :quarter AND status = 'PENDING'"""
-            ),
-            params,
         )

@@ -25,8 +25,8 @@ it('lets the browser generate the multipart boundary', async () => {
   expect((fetch as jest.Mock).mock.calls[0][1].headers.has('Content-Type')).toBe(false);
 });
 it('preserves machine codes and server messages for conflicts', async () => {
-  (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }), { status: 409 }));
-  await expect(request('/clients/AAA/take', { method: 'POST' })).rejects.toMatchObject({ status: 409, code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' });
+  (fetch as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ code: 'ASSIGNMENT_CHANGED', message: 'Ответственный изменился. Обновите карточку' }), { status: 409 }));
+  await expect(request('/clients/AAA/take', { method: 'POST' })).rejects.toMatchObject({ status: 409, code: 'ASSIGNMENT_CHANGED', message: 'Ответственный изменился. Обновите карточку' });
 });
 it('handles empty delete responses and non-JSON gateway errors', async () => {
   (fetch as jest.Mock).mockResolvedValueOnce(new Response(null, { status: 204 })).mockResolvedValueOnce(new Response('<html>unavailable</html>', { status: 502 }));
