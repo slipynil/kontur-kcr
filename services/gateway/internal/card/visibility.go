@@ -3,12 +3,14 @@ package card
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"slices"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/auth"
 	"github.com/slipynil/kontur-kcr/services/identity/internal/httpx"
 )
@@ -105,6 +107,31 @@ func (a *Aggregator) VisibleClient(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (a *Aggregator) Pool(next http.HandlerFunc) http.HandlerFunc {
+	return a.scopedCollection(next, func(_ *http.Request) string {
+		return "/internal/v1/pool"
+	})
+}
+
+func (a *Aggregator) Notifications(next http.HandlerFunc) http.HandlerFunc {
+	return a.scopedCollection(next, func(_ *http.Request) string {
+		return "/internal/v1/reassignment-notifications"
+	})
+}
+
+func (a *Aggregator) Reject(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "request_id"))
+		if err != nil {
+			httpx.WriteValidationError(w)
+			return
+		}
+		a.scopedCollection(next, func(_ *http.Request) string {
+			return fmt.Sprintf("/internal/v1/reassignment-notifications/%s/reject", id)
+		})(w, r)
+	}
+}
+
+func (a *Aggregator) scopedCollection(next http.HandlerFunc, path func(*http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		who, ok := auth.FromContext(r.Context())
 		if !ok {
@@ -123,7 +150,7 @@ func (a *Aggregator) Pool(next http.HandlerFunc) http.HandlerFunc {
 			a.respondUpstreamFailure(w, failure, "client visibility")
 			return
 		}
-		data, failure := a.scopeRequest(r, who, a.operatorURL, "/internal/v1/pool", r.URL.RawQuery, scope)
+		data, failure := a.scopeRequest(r, who, a.operatorURL, path(r), r.URL.RawQuery, scope)
 		if failure != nil {
 			a.respondUpstreamFailure(w, failure, "scoped client data")
 			return

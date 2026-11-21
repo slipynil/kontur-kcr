@@ -3,9 +3,9 @@
 import { ArrowLeft, Phone, Plus, RefreshCw, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ApiError, newRequestId, queryString, request } from '@/lib/api';
-import type { ClientCard, EventListResponse, SnapshotHistoryResponse, TakeRequest, TakeResponse, User } from '@/lib/contracts';
-import { businessTime, displayDate, durations, dynamics, Feedback, Pager, QuarterInput, quarterName, quarterPattern, stages, tags, useAction, useResource } from './api-ui';
+import { newRequestId, queryString, request } from '@/lib/api';
+import type { ClientCard, EventListResponse, ReassignmentRequest, SnapshotHistoryResponse, TakeRequest, TakeResponse, User } from '@/lib/contracts';
+import { businessDate, businessTime, displayDate, durations, dynamics, Feedback, Pager, QuarterInput, quarterName, quarterPattern, stages, tags, useAction, useResource } from './api-ui';
 import { callResults, EventForm } from './event-form';
 import { Badge, ConfirmActions, EmptyState, Metrics, Modal, PageHeader, Tabs } from './presentation';
 import { StructuredDetails } from './structured-details';
@@ -49,6 +49,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
   const eventCard = pendingEventCard ?? c;
   const workQuarter = c?.work_quarter || c?.assignment?.work_quarter;
   const own = c?.assignment?.operator_id === user.id;
+  const protectedWait = c?.current_stage === 'WAIT_DEADLINE' && !!c.wait_until && c.wait_until > businessDate() && !own;
 
   function refresh() { setRevision(value => value + 1); }
 
@@ -75,25 +76,26 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
   }
 
   function take() {
-    if (!c || !workQuarter) return;
+    if (!c || !workQuarter || protectedWait) return;
     void action.run(async () => {
       const expectedAssignment = c.assignment_id ?? null;
       if (c.assignment && !c.assignment_id) throw new Error('Не удалось определить текущее назначение. Обновите карточку.');
       const key = JSON.stringify([workQuarter, expectedAssignment]);
       if (takeAttempt.current?.key !== key) takeAttempt.current = { key, body: { expected_assignment_id: expectedAssignment, request_id: newRequestId() } };
-      try {
-        await request<TakeResponse>(base + '/take' + queryString({ work_quarter: workQuarter }), {
-          method: 'POST', body: JSON.stringify(takeAttempt.current.body),
-        });
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          takeAttempt.current = null;
-          refresh();
-        }
-        throw error;
+      const result = await request<TakeResponse | ReassignmentRequest>(base + '/take' + queryString({ work_quarter: workQuarter }), {
+        method: 'POST', body: JSON.stringify(takeAttempt.current.body),
+      });
+      if ('status' in result) {
+        action.setNotice({
+          PENDING: `Запрос на перезакрепление ожидает решения до ${businessTime(result.expires_at)} МСК`,
+          REJECTED: 'Ответственный отклонил запрос', CANCELLED: 'Запрос отменён из-за изменения состояния',
+          TRANSFERRED: 'Клиент передан вам',
+        }[result.status]);
+        if (result.status !== 'PENDING') takeAttempt.current = null;
+      } else {
+        takeAttempt.current = null;
+        action.setNotice('Клиент закреплён за вами');
       }
-      takeAttempt.current = null;
-      action.setNotice('Клиент закреплён за вами');
       refresh();
     });
   }
@@ -127,15 +129,13 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
             </> : <>
               <button className="button secondary" type="button" aria-haspopup="dialog" onClick={() => openEvent(false)}><Plus aria-hidden="true" />Добавить событие</button>
               {own ? <button className="button primary" type="button" aria-haspopup="dialog" onClick={() => openEvent(true)} disabled={!c.assignment_id || !workQuarter}><Phone aria-hidden="true" />Записать звонок</button>
-                : <button className="button primary" type="button" onClick={take} disabled={action.busy || card.loading || !workQuarter}>
+                : <button className="button primary" type="button" onClick={take} disabled={action.busy || card.loading || protectedWait || !workQuarter}>
                   {c.assignment ? 'Перезакрепить на себя' : 'Взять в работу'}
                 </button>}
             </>}
           </div>
         </div>
-        {!admin && c.assignment && !own && <p className="feedback feedback-caution">
-          {c.assignment.operator_name ? `Клиент закреплён за оператором ${c.assignment.operator_name}.` : 'Клиент закреплён за другим оператором.'}
-        </p>}
+        {!admin && protectedWait && <p className="feedback feedback-caution">Ожидание защищает ответственного до {displayDate(c.wait_until)}.</p>}
         {!admin && !workQuarter && <p className="feedback feedback-info">Для клиента пока нет опубликованного цикла обзвона.</p>}
         <Tabs.Content className="card-section" value="overview">
           <div className="card-overview">

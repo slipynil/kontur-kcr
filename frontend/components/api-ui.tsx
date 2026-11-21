@@ -5,32 +5,52 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { request } from '@/lib/api';
 
 export function message(error: unknown) { return error instanceof Error ? error.message : 'Не удалось выполнить запрос'; }
-export function useResource<T>(path: string | null, revision = 0, poll = false) {
+export function useResource<T>(path: string | null, revision = 0, poll = false, refreshMs = 0) {
   const [state, setState] = useState<{ key: string; path?: string; data?: T; error?: string }>({ key: '' });
   const key = `${path}:${revision}`;
   useEffect(() => {
     if (!path) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let inFlight = false;
+    const scheduleRefresh = () => {
+      if (!controller.signal.aborted && document.visibilityState !== 'hidden') {
+        timer = setTimeout(load, refreshMs);
+      }
+    };
     const load = async () => {
+      if (inFlight || controller.signal.aborted) return;
+      inFlight = true;
       try {
         const data = await request<T>(path, { signal: controller.signal });
         if (!controller.signal.aborted) {
           setState({ key, path, data });
-          if (poll && (data as { status?: string }).status === 'PROCESSING') timer = setTimeout(load, 2000);
+          if (!refreshMs && poll && (data as { status?: string }).status === 'PROCESSING') timer = setTimeout(load, 2000);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
-          setState({ key, path, error: message(error) });
+          setState(previous => ({
+            key, path, error: message(error),
+            data: refreshMs && previous.key === key ? previous.data : undefined,
+          }));
         }
+      } finally {
+        inFlight = false;
+        if (refreshMs) scheduleRefresh();
       }
     };
+    const onVisibilityChange = () => {
+      clearTimeout(timer);
+      if (document.visibilityState !== 'hidden') void load();
+    };
+    if (refreshMs) document.addEventListener('visibilitychange', onVisibilityChange);
     void load();
     return () => {
       controller.abort();
       clearTimeout(timer);
+      if (refreshMs) document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [path, key, poll]);
+  }, [path, key, poll, refreshMs]);
   return { data: state.path === path ? state.data : undefined, error: state.key === key ? state.error : undefined, loading: !!path && state.key !== key };
 }
 export function useAction() {

@@ -48,9 +48,11 @@ paths:
       operationId: takeClient
       summary: Взять или перезакрепить клиента на себя
       description: |
-        Сразу закрепляет клиента текущего опубликованного цикла за оператором на любом этапе.
-        Действующий срок ожидания сохраняется. При явном взятии после срока цикл переходит в IN_WORK.
-        Повтор с тем же ID и параметрами возвращает сохранённое назначение.
+        Свободный опубликованный клиент закрепляется сразу.
+        Для занятого клиента создаётся уведомление ответственному на один час.
+        Действующий WAIT_DEADLINE, смена назначения, чужой ожидающий запрос
+        и исторический цикл дают 409. После срока CLIENT_BALANCE_UNCONFIRMED
+        действует до подтверждённого возврата в пул.
       parameters:
       - $ref: '#/components/parameters/WorkQuarter'
       - $ref: '#/components/parameters/KcrCode'
@@ -71,7 +73,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TakeResponse'
+                oneOf:
+                - $ref: '#/components/schemas/TakeResponse'
+                - $ref: '#/components/schemas/ReassignmentRequest'
+        '202':
+          description: Запрос ожидает решения ответственного.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
         '404':
           description: Клиент не найден.
           content:
@@ -79,7 +89,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: Назначение или цикл изменились, либо ID операции уже использован с другими параметрами.
+          description: Конфликт состояния или действующий срок ожидания.
           content:
             application/json:
               schema:
@@ -390,6 +400,81 @@ paths:
         '409':
           description: Запрошен исторический цикл.
 
+  /reassignment-notifications:
+    get:
+      operationId: listReassignmentNotifications
+      summary: Получить входящие и отправленные запросы
+      x-roles: [OPERATOR]
+      parameters: &notificationsParams
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      responses: &notificationsResponses
+        '200':
+          description: Уведомления текущего оператора.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReassignmentRequest'
+    post:
+      operationId: listScopedReassignmentNotifications
+      summary: Получить входящие и отправленные запросы
+      x-roles: [OPERATOR]
+      parameters: *notificationsParams
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses: *notificationsResponses
+
+  /reassignment-notifications/{request_id}/reject:
+    post:
+      operationId: rejectReassignment
+      summary: Отказать в перезакреплении до истечения часа
+      x-roles: [OPERATOR]
+      parameters:
+      - $ref: '#/components/parameters/UserIdHeader'
+      - name: X-User-Role
+        in: header
+        required: true
+        schema: { type: string, enum: [ADMIN, OPERATOR] }
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientVisibilityScope'
+      responses:
+        '200':
+          description: Запрос отклонён текущим получателем уведомления.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReassignmentRequest'
+        '404':
+          description: Запрос не найден или недоступен оператору.
+        '409':
+          description: Запрос уже завершён.
   /clients/{kcr_code}/events:
     get:
       tags:
@@ -973,6 +1058,20 @@ components:
           type: string
           format: uuid
           description: ID операции, сохраняемый при повторе после сетевого сбоя.
+    ReassignmentRequest:
+      type: object
+      required: [id, kcr_code, work_quarter, expected_assignment_id, owner_id, requester_id, created_at, expires_at, status, resolved_at]
+      properties:
+        id: { type: string, format: uuid }
+        kcr_code: { type: string }
+        work_quarter: { type: string }
+        expected_assignment_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        requester_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [PENDING, REJECTED, TRANSFERRED, CANCELLED] }
     TakeResponse:
       type: object
       required:

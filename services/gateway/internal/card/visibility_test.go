@@ -22,6 +22,8 @@ const (
 	unblockedCodesPath = "/internal/v1/clients/unblocked-codes"
 	registryPath       = "/internal/v1/clients/operator-registry"
 	poolPath           = "/internal/v1/pool"
+	notificationsPath  = "/internal/v1/reassignment-notifications"
+	rejectID           = "11111111-1111-1111-1111-111111111111"
 )
 
 // recordingNext — следующий обработчик после visibility-обёртки.
@@ -58,10 +60,23 @@ func newVisibilityEnv(
 	router.Get("/api/v1/clients", aggregator.Registry)
 	router.Get("/api/v1/clients/{kcr_code}/snapshots/history", aggregator.VisibleClient(next))
 	router.Get("/api/v1/pool", aggregator.Pool(next))
+	router.Get("/api/v1/reassignment-notifications", aggregator.Notifications(next))
+	router.Post("/api/v1/reassignment-notifications/{request_id}/reject", aggregator.Reject(next))
 	return env{router: router}
 }
 
 // postAs отправляет POST с проверенной идентичностью, как middleware аутентификации.
+func (e *env) postAs(t *testing.T, target string, role auth.Role) *httptest.ResponseRecorder {
+	t.Helper()
+	id := auth.Identity{UserID: uuid.MustParse(operatorID), Role: role}
+	request := httptest.NewRequest(http.MethodPost, target, http.NoBody)
+	request = request.WithContext(auth.WithIdentity(request.Context(), id))
+	w := httptest.NewRecorder()
+	e.router.ServeHTTP(w, request)
+	return w
+}
+
+// publishedPool отвечает списком опубликованных клиентов.
 func publishedPool(codes string) *upstreamStub {
 	return &upstreamStub{router: func(call recordedCall) (int, string) {
 		if call.path != publishedCodesPath {
@@ -403,12 +418,109 @@ func TestPoolScopesOperatorCollection(t *testing.T) {
 	}
 }
 
+func TestNotificationsScopesOperatorCollection(t *testing.T) {
+	operator := &upstreamStub{router: func(call recordedCall) (int, string) {
+		switch call.path {
+		case publishedCodesPath:
+			return http.StatusOK, `{"codes":["` + operatorCode + `"]}`
+		case notificationsPath:
+			return http.StatusOK, `{"items":[]}`
+		default:
+			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
+		}
+	}}
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
+	called := false
+	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
+
+	w := e.get(t, "/api/v1/reassignment-notifications?page=1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Error("scoped collection must answer without the proxy handler")
+	}
+	calls := operator.recorded()
+	if len(calls) != 2 {
+		t.Fatalf("operator calls = %d, want published scope and notifications", len(calls))
+	}
+	notificationsCall := calls[1]
+	if notificationsCall.method != http.MethodPost || notificationsCall.path != notificationsPath ||
+		notificationsCall.query != "page=1" {
+		t.Errorf("notifications call = %s %s?%s",
+			notificationsCall.method, notificationsCall.path, notificationsCall.query)
+	}
+	if string(notificationsCall.body) != `{"codes":["`+operatorCode+`"]}` {
+		t.Errorf("notifications body = %s", notificationsCall.body)
+	}
+}
+
+func TestRejectScopesNotification(t *testing.T) {
+	operator := &upstreamStub{router: func(call recordedCall) (int, string) {
+		switch call.path {
+		case publishedCodesPath:
+			return http.StatusOK, `{"codes":["` + operatorCode + `"]}`
+		case notificationsPath + "/" + rejectID + "/reject":
+			if call.method != http.MethodPost {
+				return http.StatusMethodNotAllowed, `{"code":"NOT_FOUND","message":"no route"}`
+			}
+			return http.StatusOK, `{"status":"REJECTED"}`
+		default:
+			return http.StatusNotFound, `{"code":"NOT_FOUND","message":"no route"}`
+		}
+	}}
+	clients := unblockedClients(`{"codes":["` + operatorCode + `"]}`)
+	called := false
+	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
+
+	w := e.postAs(t, "/api/v1/reassignment-notifications/"+rejectID+"/reject", auth.RoleOperator)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Error("reject must answer without the proxy handler")
+	}
+	calls := operator.recorded()
+	if len(calls) != 2 {
+		t.Fatalf("operator calls = %d, want published scope and reject", len(calls))
+	}
+	rejectCall := calls[1]
+	if rejectCall.path != notificationsPath+"/"+rejectID+"/reject" {
+		t.Errorf("reject path = %q", rejectCall.path)
+	}
+	if string(rejectCall.body) != `{"codes":["`+operatorCode+`"]}` {
+		t.Errorf("reject body = %s", rejectCall.body)
+	}
+}
+
+func TestRejectValidatesRequestID(t *testing.T) {
+	operator := publishedPool(`{"codes":[]}`)
+	clients := unblockedClients(`{"codes":[]}`)
+	called := false
+	e := newVisibilityEnv(t, clients, operator, &fakeUsers{}, recordingNext(&called))
+
+	w := e.postAs(t, "/api/v1/reassignment-notifications/not-a-uuid/reject", auth.RoleOperator)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Error("invalid request id must not reach the next handler")
+	}
+	if len(operator.recorded()) != 0 || len(clients.recorded()) != 0 {
+		t.Error("invalid request id must not reach the upstreams")
+	}
+}
+
 func TestScopedCollectionsBypassForAdmin(t *testing.T) {
 	tests := []struct {
 		name   string
 		target string
 	}{
 		{name: "pool", target: "/api/v1/pool"},
+		{name: "notifications", target: "/api/v1/reassignment-notifications"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -478,6 +590,12 @@ func TestScopedCollectionsRejectAnonymous(t *testing.T) {
 	}{
 		{name: "registry", method: http.MethodGet, target: "/api/v1/clients"},
 		{name: "pool", method: http.MethodGet, target: "/api/v1/pool"},
+		{name: "notifications", method: http.MethodGet, target: "/api/v1/reassignment-notifications"},
+		{
+			name:   "reject notification",
+			method: http.MethodPost,
+			target: "/api/v1/reassignment-notifications/" + rejectID + "/reject",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
