@@ -8,6 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 type WorkbookFactory = Callable[[dict[str, list[list[object]]]], bytes]
 
+REGISTRY_HEADER = [
+    "Код КЦР",
+    "Название",
+    "СЦ",
+    "КПП",
+    "ИНН",
+    "ФИО менеджера",
+    "ФИО менеджера КП",
+    "статус клиента",
+]
+
 
 @pytest.fixture
 def db() -> AsyncMock:

@@ -10,7 +10,7 @@ import aio_pika
 import httpx
 import pytest
 from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
-from conftest import WorkbookFactory
+from conftest import REGISTRY_HEADER, WorkbookFactory
 from pamqp.commands import Basic
 
 from import_worker import broker, consumer, operator_work
@@ -62,7 +62,15 @@ async def test_retries_same_batch_after_lost_clients_response(
     xlsx: WorkbookFactory,
 ) -> None:
     monkeypatch.setattr(consumer, "RETRY_DELAY", 0)
-    registry = xlsx({"Реестр": [["001", None, "Организация 1"], ["002", None, "Организация 2"]]})
+    registry = xlsx(
+        {
+            "Реестр": [
+                REGISTRY_HEADER,
+                ["001", "Организация 1", None, None, None, None, None, "VIP"],
+                ["002", "Организация 2", None, None, None, None, None, "Новичок"],
+            ]
+        }
+    )
     batch.import_type = "REGISTRY"
     batch.selected_quarter = batch.snapshot_date = None
     batch.file_sha256 = hashlib.sha256(registry).hexdigest()
@@ -107,7 +115,7 @@ async def test_retries_same_batch_after_lost_clients_response(
     assert [item["client"]["kcr_code"] for item in requests[0]["items"]] == ["001", "002"]
     assert (batch.total_rows, batch.success_count, batch.error_count) == (2, 1, 1)
     error = db.add_all.call_args.args[0][0]
-    assert (error.sheet, error.row_number, error.kcr_code) == ("Реестр", 2, "002")
+    assert (error.sheet, error.row_number, error.kcr_code) == ("Реестр", 3, "002")
     db.scalars.assert_not_awaited()
     assert batch.apply_payload is None and batch.clients_applied_at is not None
     assert batch.status == Status.COMPLETED and batch.completed_at is not None

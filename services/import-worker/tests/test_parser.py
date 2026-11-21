@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from conftest import WorkbookFactory
+from conftest import REGISTRY_HEADER, WorkbookFactory
 from openpyxl import Workbook
 
 from import_worker.clients import fingerprint
@@ -21,49 +21,20 @@ def params(import_type: ImportType = ImportType.SNAPSHOT) -> ImportParameters:
     )
 
 
-def test_historical_registry(tmp_path: Path, xlsx: WorkbookFactory) -> None:
+def test_registry_requires_header_in_first_row(tmp_path: Path, xlsx: WorkbookFactory) -> None:
     path = tmp_path / "registry.xlsx"
     path.write_bytes(
         xlsx(
             {
-                "Реестр": [
-                    ["Отчёт"],
-                    [None, "Код КЦР", "Название"],
-                    [
-                        " 0012 ",
-                        None,
-                        " Клиент ",
-                        None,
-                        None,
-                        None,
-                        "VIP; В работе",
-                        " 001234 ",
-                        " 007 ",
-                        "Дейсвующий",
-                        "#N/A",
-                        "Менеджер",
-                    ],
-                ],
-                "1 кв 2024": [
-                    ["0013", None, "Другой клиент", None, None, None, None, "001234"],
-                ],
+                "Реестр": [["Отчёт"], REGISTRY_HEADER],
             }
         )
     )
     result = parse_workbook(path, params(ImportType.REGISTRY))
-    assert result.total_rows == 2 and not result.errors
-    first, second = [row.item for row in result.rows]
-    assert first.snapshot is None and second.snapshot is None
-    assert first.client.model_dump(exclude_unset=True) == {
-        "kcr_code": "0012",
-        "organization_name": "Клиент",
-        "inn": "001234",
-        "kpp": "007",
-        "manager_name": "Менеджер",
-        "tags": ["VIP"],
-        "raw_work_status": "VIP; В работе",
-    }
-    assert second.client.inn == first.client.inn
+    assert result.total_rows == 0 and not result.rows
+    assert [(error.sheet, error.row_number, error.reason) for error in result.errors] == [
+        ("Реестр", 1, "A1 — ожидается заголовок «Код КЦР»")
+    ]
 
 
 @pytest.mark.parametrize("annual_sheet", ["2026 год", "весь 2026 год", "Весь 2025 ГОД"])
@@ -207,43 +178,81 @@ def test_anonymized_snapshot_recognizes_legacy_header_without_counting_it_as_row
     assert result.rows[0].item.snapshot.unsubmitted_documents == 0
 
 
-def test_registry_uses_named_columns_without_reinterpreting_other_fields(
+@pytest.mark.parametrize(
+    ("headers", "reason"),
+    [
+        (
+            [*REGISTRY_HEADER[:3], "ИНН", "КПП", *REGISTRY_HEADER[5:]],
+            "D1 — ожидается заголовок «КПП»",
+        ),
+        (REGISTRY_HEADER[:-1], "H1 — ожидается заголовок «статус клиента»"),
+        ([*REGISTRY_HEADER, "Примечание"], "I1 — лишний столбец в реестре"),
+    ],
+)
+def test_registry_rejects_workbook_when_a_header_is_wrong(
+    tmp_path: Path, xlsx: WorkbookFactory, headers: list[str], reason: str
+) -> None:
+    path = tmp_path / "wrong-headers.xlsx"
+    row = ["001", "Клиент", None, "007", "001234", "Менеджер", None, "Новичок"]
+    path.write_bytes(xlsx({"Первый": [REGISTRY_HEADER, row], "Второй": [headers, row]}))
+    result = parse_workbook(path, params(ImportType.REGISTRY))
+    assert result.total_rows == 0 and not result.rows
+    assert [(error.sheet, error.row_number, error.reason) for error in result.errors] == [
+        ("Второй", 1, reason)
+    ]
+
+
+def test_registry_matches_statuses_without_case_and_reports_rejected_rows(
     tmp_path: Path, xlsx: WorkbookFactory
 ) -> None:
-    path = tmp_path / "named-registry.xlsx"
+    path = tmp_path / "registry.xlsx"
+    profile = ["Клиент", "СЦ", "007", "001234", "Менеджер", "Менеджер КП"]
+    good_statuses = ["ViP", "НОВИЧОК", "интегратор", "ТЕХПАРТНЕР", "мПп", "Не Работать"]
     path.write_bytes(
         xlsx(
             {
                 "Реестр": [
-                    [
-                        "Название организации",
-                        "Код КЦР",
-                        "Телефон",
-                        "ИНН",
-                        "Признаки",
-                        "Действует ли КЦР",
-                        "Блокировка в сервисе",
+                    [header.upper() for header in REGISTRY_HEADER],
+                    *[
+                        [f"A{index}", *profile, status]
+                        for index, status in enumerate(good_statuses)
                     ],
-                    [
-                        "Клиент",
-                        "001",
-                        "+7 900 000-00-00",
-                        "001234",
-                        "Общение через МПП",
-                        "Действующий",
-                        "=1/0",
-                    ],
+                    [],
+                    ["B0", *profile, "ACTIVE"],
+                    ["B1", *profile],
+                    ["B2", *profile, "VIP; Новичок"],
+                    ["a0", *profile, "VIP"],
+                    ["B3", *profile, "=1/0"],
                 ]
             }
         )
     )
     result = parse_workbook(path, params(ImportType.REGISTRY))
-    assert not result.errors
-    client = result.rows[0].item.client
-    assert client.kcr_code == "001" and client.inn == "001234"
-    assert client.organization_name == "Клиент"
-    assert {"status", "is_blocked"}.isdisjoint(client.model_dump(exclude_unset=True))
-    assert client.tags == ["MPP"] and client.contacts == {"phone": "+7 900 000-00-00"}
+    assert result.total_rows == 11
+    assert [row.item.client.tags for row in result.rows] == [
+        ["VIP"],
+        ["NOVICE"],
+        ["INTEGRATOR"],
+        ["TECH_PARTNER"],
+        ["MPP"],
+        ["DO_NOT_WORK"],
+    ]
+    assert result.rows[0].item.client.model_dump(exclude_unset=True) == {
+        "kcr_code": "A0",
+        "organization_name": "Клиент",
+        "kpp": "007",
+        "inn": "001234",
+        "manager_name": "Менеджер",
+        "tags": ["VIP"],
+        "raw_work_status": "ViP",
+    }
+    assert [(error.row_number, error.kcr_code, error.reason) for error in result.errors] == [
+        (9, "B0", "H9 — недопустимый статус клиента"),
+        (10, "B1", "H10 — недопустимый статус клиента"),
+        (11, "B2", "H11 — недопустимый статус клиента"),
+        (12, "a0", "A12 — дубликат кода КЦР в листе"),
+        (13, "B3", "H13 — «статус клиента» содержит ошибку Excel или формулу без результата"),
+    ]
 
 
 def test_id_format_and_fingerprint(tmp_path: Path) -> None:

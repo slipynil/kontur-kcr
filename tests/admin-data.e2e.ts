@@ -20,7 +20,10 @@ const test = base.extend<{ data: { admin: Actor; code: string; quarter: string; 
 });
 
 const registry = (code: string) => workbook(`${code}-registry.xlsx`, {
-  'Реестр': [['Код КЦР', 'Название организации', 'Телефон'], [code, `Синтетический реестр ${code}`, '+70000000001']],
+  'Реестр': [
+    ['Код КЦР', 'Название', 'СЦ', 'КПП', 'ИНН', 'ФИО менеджера', 'ФИО менеджера КП', 'статус клиента'],
+    [code, `Синтетический реестр ${code}`, 'Тестовый СЦ', null, null, null, null, 'VIP'],
+  ],
 });
 
 const snapshotHeadings = ['Код КЦР', 'Всего документов', 'Непереданные документы', 'Исходный квартал'];
@@ -67,15 +70,11 @@ const card = async (admin: Actor, code: string) =>
 
 describe('administrator imports and recovery', { session: 'admin', timeout: 100_000 }, () => {
   test('loads a registry workbook through the browser and reports its accepted row', async ({ app, browser, screen, data }) => {
-    const { code, admin, quarter } = data;
-    const date = dateInQuarter(quarter, 2);
+    const { code, admin } = data;
     const file = registry(code);
     try {
       await app.open('/upload');
       await screen.getByLabel('Файл реестра .xlsx').setInputFiles(file.path);
-      await screen.getByLabel('Квартал', { exact: true }).fill(quarter);
-      await screen.getByLabel('Дата среза').fill(date);
-
       await screen.getByRole('button', 'Загрузить').tap();
 
       await expect(browser).toHaveURL(/\/import-report\?batch=/);
@@ -219,12 +218,7 @@ describe('administrator imports and recovery', { session: 'admin', timeout: 100_
 
   test('rejects the earlier rollback and removes work created by the latest snapshot', async ({ app, screen, data }) => {
     const { code, admin, quarter } = data;
-    const first = workbook(`${code}-registry.xlsx`, {
-      'Реестр': [
-        ['Код КЦР', 'Название организации', 'Блокировка в сервисе'],
-        [code, `Синтетический реестр ${code}`, 'да'],
-      ],
-    });
+    const first = registry(code);
     const last = workbook(`${code}-rollback.xlsx`, {
       [quarter]: [['Код КЦР', 'Всего', 'Непередано'], [code, 100, 7]],
     });
