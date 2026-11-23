@@ -714,12 +714,17 @@ paths:
       - OperatorWork
       operationId: listClientEvents
       x-operator-visibility: current-published
-      summary: Лента событий клиента
+      summary: Хроника взаимодействия клиента
       description: 'История взаимодействия (звонки, комментарии, письма, смены этапов,
 
-        закрепления), свежие первыми (`spec.md` §3.3, §4.4). Включает события
+        закрепления, передача в обзвон), от новых к старым по дате события (`spec.md` §3.3, §4.4). Комментарий
+        с прошлой датой стоит на своей дате.
 
-        прошлых дат (`historical_event_date`).
+        Чтение выполняет Client History через Gateway (ADR-0020). Поля author_id, created_at, historical_event_date,
+        comment_text, call_result, promised_date, wait_until и stage сохранены для совместимости и помечены
+        устаревшими: они выводятся из полей хроники.
+
+        Отсутствующий в реестре код возвращает 404; клиент без истории — пустую страницу.
 
 
         История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем
@@ -753,14 +758,16 @@ paths:
       - OperatorWork
       operationId: createClientEvent
       x-operator-visibility: current-published
-      summary: Добавить звонок или прошлый комментарий
+      summary: Добавить звонок, комментарий или прошлый комментарий
       description: |
         Сохранить звонок по назначению из формы. После перезакрепления автор может
         записать факт звонка в текущем цикле, без изменения этапа и срока.
         Если назначение актуально, будущий срок ожидания применяется вместе со звонком.
         Прошлый комментарий хранит время события отдельно от времени записи.
+        Комментарий текущего цикла (COMMENT) сохраняется без прошедшей даты.
         Назначение, этап и срок ожидания при этом сохраняются.
         Повтор с тем же request_id и данными возвращает сохранённое событие.
+        Запись обрабатывает Operator Work; в хронике карточки факт появляется после сохранения (ADR-0020).
       x-roles:
       - ADMIN
       - OPERATOR
@@ -774,11 +781,13 @@ paths:
               oneOf:
               - $ref: '#/components/schemas/CallEventCreate'
               - $ref: '#/components/schemas/HistoricalCommentCreate'
+              - $ref: '#/components/schemas/CommentCreate'
               discriminator:
                 propertyName: event_type
                 mapping:
                   CALL_RESULT: '#/components/schemas/CallEventCreate'
                   HISTORICAL_COMMENT: '#/components/schemas/HistoricalCommentCreate'
+                  COMMENT: '#/components/schemas/CommentCreate'
             example:
               event_type: CALL_RESULT
               work_quarter: 2026_Q1
@@ -794,6 +803,7 @@ paths:
                 oneOf:
                 - $ref: '#/components/schemas/SavedCallEvent'
                 - $ref: '#/components/schemas/SavedHistoricalComment'
+                - $ref: '#/components/schemas/SavedCommentEvent'
         '201':
           description: Событие сохранено. Для звонка в ответе также есть wait_applied.
           content:
@@ -802,6 +812,7 @@ paths:
                 oneOf:
                 - $ref: '#/components/schemas/SavedCallEvent'
                 - $ref: '#/components/schemas/SavedHistoricalComment'
+                - $ref: '#/components/schemas/SavedCommentEvent'
         '403':
           description: Запись доступна только оператору.
         '404':
@@ -1622,6 +1633,7 @@ components:
           - type: 'null'
     EventListResponse:
       type: object
+      description: Страница хроники взаимодействия клиента.
       required:
       - items
       - page
@@ -1631,7 +1643,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ClientEvent'
+            $ref: '#/components/schemas/HistoryEvent'
         page:
           type: integer
         page_size:
@@ -1708,10 +1720,12 @@ components:
           maximum: 100000000
     EventType:
       type: string
-      description: Тип события ленты (`spec.md` §2.4).
+      description: Тип события (`spec.md` §2.5, §2.10). `EMAIL_SENT` и `CLAIM_UPDATE` зарезервированы до согласования UC-14–19.
       enum:
       - CALL_RESULT
       - HISTORICAL_COMMENT
+      - COMMENT
+      - PUBLICATION
       - EMAIL_SENT
       - STAGE_CHANGE
       - CLAIM_UPDATE
@@ -1778,6 +1792,24 @@ components:
           type: [string, 'null']
           pattern: '^[0-9]{4}_Q[1-4]$'
           description: Текущий квартал работы или null для общей истории клиента.
+    CommentCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, work_quarter, comment_text]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: COMMENT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторе запроса.
+        work_quarter: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        comment_text: { type: string, minLength: 1, maxLength: 4000 }
     SavedCallEvent:
       allOf:
       - $ref: '#/components/schemas/ClientEvent'
@@ -1794,6 +1826,13 @@ components:
         properties:
           event_type: { const: HISTORICAL_COMMENT }
           historical_event_date: { type: string, format: date-time }
+    SavedCommentEvent:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        properties:
+          event_type: { const: COMMENT }
+          historical_event_date: { type: 'null' }
     ClientEventCreate:
       type: object
       description: Создание события (`spec.md` §3.3).
@@ -1806,6 +1845,7 @@ components:
             event_type:
               enum:
               - CALL_RESULT
+              - COMMENT
               - EMAIL_SENT
               - STAGE_CHANGE
               - CLAIM_UPDATE
@@ -1881,9 +1921,187 @@ components:
           - CLAIM
           - CLOSED
           description: Новый этап для STAGE_CHANGE; WAIT_DEADLINE требует wait_until.
+    HistoryEvent:
+      type: object
+      description: Запись хроники взаимодействия клиента (`spec.md` §2.10, ADR-0020). Отдаётся от новых к старым по `occurred_at`.
+      required:
+      - id
+      - kcr_code
+      - event_type
+      - work_quarter
+      - cycle_id
+      - document_quarters
+      - actor_id
+      - actor_name
+      - occurred_at
+      - recorded_at
+      - seq
+      - payload
+      - author_id
+      - comment_text
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        kcr_code:
+          type: string
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        work_quarter:
+          type:
+          - string
+          - 'null'
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал цикла обзвона; может отличаться от кварталов документов.
+        cycle_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: ID цикла обзвона; null у общей записи без цикла.
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        actor_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Пользователь, чья команда вызвала событие. null у событий, порождённых правилами без команды (истечение срока, перенос ожидания).
+        actor_name:
+          type:
+          - string
+          - 'null'
+          description: Логин автора на момент записи; пуст, если пользователь не найден.
+        occurred_at:
+          type: string
+          format: date-time
+          description: Когда событие произошло; для прошлого комментария — указанная дата.
+        recorded_at:
+          type: string
+          format: date-time
+          description: Когда событие записано.
+        seq:
+          type: integer
+          format: int64
+          description: Порядок событий с одной датой.
+        payload:
+          $ref: '#/components/schemas/EventPayload'
+        author_id:
+          type: string
+          format: uuid
+          deprecated: true
+          description: 'Совпадает с actor_id; у события без автора — нулевой UUID. Используйте actor_id.'
+        comment_text:
+          type: string
+          deprecated: true
+          description: 'Для звонка и комментариев совпадает с payload.comment_text; для системных событий — готовый заголовок.'
+        created_at:
+          type: string
+          format: date-time
+          deprecated: true
+          description: Совпадает с recorded_at. Используйте recorded_at.
+        historical_event_date:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          deprecated: true
+          description: 'Для HISTORICAL_COMMENT совпадает с occurred_at, иначе null. Используйте occurred_at.'
+        call_result:
+          deprecated: true
+          oneOf:
+          - $ref: '#/components/schemas/CallResult'
+          - type: 'null'
+          description: Совпадает с payload.call_result.
+        promised_date:
+          type:
+          - string
+          - 'null'
+          format: date
+          deprecated: true
+          description: Совпадает с payload.promised_date.
+        wait_until:
+          type:
+          - string
+          - 'null'
+          format: date
+          deprecated: true
+          description: Совпадает с payload.wait_until.
+        stage:
+          type:
+          - string
+          - 'null'
+          deprecated: true
+          description: 'Для STAGE_CHANGE совпадает с payload.to_stage; для звонка с применённым сроком — WAIT_DEADLINE.'
+    EventPayload:
+      type: object
+      additionalProperties: false
+      description: Детали события; состав ключей зависит от `event_type`. PUBLICATION — без деталей.
+      properties:
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+          description: CALL_RESULT — результат звонка.
+        comment_text:
+          type: string
+          description: CALL_RESULT, HISTORICAL_COMMENT, COMMENT — текст.
+        promised_date:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: CALL_RESULT — обещанный срок передачи оригиналов.
+        wait_until:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: CALL_RESULT — применённый срок ожидания; STAGE_CHANGE — срок на момент смены этапа.
+        assignment_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: CALL_RESULT — назначение, под которым записан звонок; OPERATOR_ASSIGN — новое назначение.
+        operator_id:
+          type: string
+          format: uuid
+          description: OPERATOR_ASSIGN — новый ответственный.
+        previous_operator_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: OPERATOR_ASSIGN — прежний ответственный; null, если клиент был свободен.
+        kind:
+          type: string
+          enum: [TAKE, REASSIGN, INHERITED]
+          description: OPERATOR_ASSIGN — взят в работу, перезакреплён, ожидание перенесено в новый цикл.
+        from_stage:
+          oneOf:
+          - $ref: '#/components/schemas/Stage'
+          - type: 'null'
+          description: STAGE_CHANGE — прежний этап; null для первого этапа цикла.
+        to_stage:
+          $ref: '#/components/schemas/Stage'
+          description: STAGE_CHANGE — новый этап.
+        reason:
+          type: string
+          enum: [TAKE, SNAPSHOT, WAIT_SET, WAIT_EXPIRED, RESTORE]
+          description: STAGE_CHANGE — первое взятие в работу, цикл создан по срезу, установлен срок ожидания, срок истёк и клиент возвращён в пул, состояние восстановлено после отката.
+        import_batch_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: STAGE_CHANGE с reason SNAPSHOT — пакет среза, создавший цикл.
     ClientEvent:
       type: object
-      description: Событие ленты клиента (`spec.md` §2.4).
+      description: Событие, сохранённое Operator Work (`spec.md` §2.5), — ответ на создание звонка или комментария. Хронику карточки отдаёт HistoryEvent.
       required:
       - id
       - kcr_code

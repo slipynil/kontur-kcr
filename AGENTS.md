@@ -1,9 +1,9 @@
  - Сначала читай spec.md и docs/adr/
- - Микросервисы на Python: Assistant service, Operator Work Service, Import Worker, Clients Service
+ - Микросервисы на Python: Assistant service, Operator Work Service, Import Worker, Clients Service, Client History Service
  - Микросервисы на Go: Gateway/Identity
  - Архитектура взаимодействия сервиса на C4 Model L2 в docs/c4-l2-container-diagram.html
  - API-спеки (OpenAPI 3.1): публичный контур — docs/api/public-api.yaml, внутренние контракты микросервисов — docs/api/internal/ (по одному файлу на сервис)
- - Модель данных: таблицы и связи БД — docs/db/README.md, DDL — docs/db/ddl/ (identity.sql, clients.sql, import.sql, operator_work.sql)
+ - Модель данных: таблицы и связи БД — docs/db/README.md, DDL — docs/db/ddl/ (identity.sql, clients.sql, import.sql, operator_work.sql, client_history.sql)
  - Схема БД синхронизирована с spec.md: изменения сущностей — сначала в spec.md и docs/db/, потом в коде
  - Бизнес-ТЗ: docs/requirements/ТЗ.md; при любом изменении docs/requirements/ТЗ.docx обязательно регенерируется ТЗ.md (скрипт docs/requirements/docx2md.py), рассинхрон не допускается
  - До нового кода найди готовую функцию

@@ -17,6 +17,8 @@ COMMENT ON TABLE client_work_cycles IS 'Участие клиента в ква�
 
 -- ---------------------------------------------------------------------------
 -- Лента событий клиента (append-only)
+-- Операционный журнал рабочих правил, защиты от повторов и плана очистки.
+-- Публичная лента карточки формируется в Client History (ADR-0020, history_outbox ниже).
 -- ---------------------------------------------------------------------------
 CREATE TABLE client_events (
     id                     UUID        PRIMARY KEY,
@@ -24,7 +26,7 @@ CREATE TABLE client_events (
     work_quarter           TEXT, -- NULL для старого комментария без установленного цикла
     author_id              UUID        NOT NULL,
     event_type             TEXT        NOT NULL CHECK (event_type IN (
-                                           'CALL_RESULT', 'HISTORICAL_COMMENT', 'EMAIL_SENT',
+                                           'CALL_RESULT', 'HISTORICAL_COMMENT', 'COMMENT', 'EMAIL_SENT',
                                            'STAGE_CHANGE', 'CLAIM_UPDATE', 'OPERATOR_ASSIGN')),
     call_result            TEXT        CHECK (
                                            (event_type = 'CALL_RESULT' AND call_result IN
@@ -178,3 +180,22 @@ CREATE TABLE applied_work_snapshot_parts (
     PRIMARY KEY (batch_id, delivery_id),
     UNIQUE (batch_id, part_number)
 );
+
+-- Комментарий текущего цикла без прошедшей даты (ADR-0020): occurred_at равен времени записи.
+ALTER TABLE client_events
+    ADD CONSTRAINT ck_comment_without_past_date
+    CHECK (event_type <> 'COMMENT' OR historical_event_date IS NULL);
+
+-- ---------------------------------------------------------------------------
+-- Исходящие записи в Client History (ADR-0020)
+-- Запись создаётся в одной транзакции с изменением операторских данных и удаляется после доставки.
+-- ---------------------------------------------------------------------------
+CREATE TABLE history_outbox (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    kcr_code   TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('EVENT', 'CLEANUP')), -- EVENT — факт хроники, CLEANUP — команда очистки
+    payload    JSONB NOT NULL,                                    -- запись контракта Client History
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE history_outbox IS 'Исходящие записи в Client History (ADR-0020). Отправка идёт строго по порядку id одним отправителем, при ошибке возобновляется с той же записи. Для CLEANUP операция очистки считается выполненной после доставки.';
