@@ -7,7 +7,6 @@ from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile, ZipFile
 from zlib import error as ZlibError
 
-import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils.cell import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
@@ -56,14 +55,12 @@ HEADERS = {
     "quarter": ("quarter", "исходный квартал"),
 }
 HEADER_FIELDS = {alias: field for field, aliases in HEADERS.items() for alias in aliases}
-LEGACY_COLUMNS = {
-    "kcr_code": 0,
-    "total_documents": 3,
-    "unsubmitted_documents": 4,
-}
-LEGACY_BLOCKING_COLUMN = 10
 IGNORED_HEADERS = {"блокировка", "блокировка в сервисе", "is_blocked"}
-COUNTER_FIELDS = ("total_documents", "unsubmitted_documents")
+COUNTER_HEADERS = {
+    "total_documents": "Документов всего",
+    "unsubmitted_documents": "Всего не отправлено документов",
+}
+REQUIRED_SNAPSHOT_HEADERS = {"kcr_code": "Код КЦР", **COUNTER_HEADERS}
 ANONYMIZED_CODE_HEADERS = {
     "уникальный обезличенный идентификатор",
     "уникальны обезличинный идентификатор",
@@ -214,29 +211,53 @@ def parse_registry_sheet(sheet: Any, raw_sheet: Any, result: ParsedImport) -> No
         )
 
 
-def header_columns(values: tuple[str | None, ...]) -> dict[str, int] | None:
-    columns = {
-        field: index
-        for index, value in enumerate(values)
-        if (field := HEADER_FIELDS.get(normalized_text(value or ""))) is not None
-    }
-    if "kcr_code" not in columns and any(field in columns for field in COUNTER_FIELDS):
-        identifiers = [
-            index
-            for index, value in enumerate(values)
-            if normalized_text(value or "") in ANONYMIZED_CODE_HEADERS
-        ]
-        if len(identifiers) == 1:
-            columns["kcr_code"] = identifiers[0]
-    code = columns.get("kcr_code")
-    if code is None or code > 1 and len(columns) == 1:
-        return None
+def snapshot_header_columns(headers: tuple[str, ...]) -> dict[str, list[int]]:
+    columns: dict[str, list[int]] = {}
+    identifiers = []
+    for index, header in enumerate(headers):
+        if (field := HEADER_FIELDS.get(header)) is not None:
+            columns.setdefault(field, []).append(index)
+        elif header in ANONYMIZED_CODE_HEADERS:
+            identifiers.append(index)
+    if identifiers:
+        columns.setdefault("kcr_code", identifiers)
     return columns
 
 
-def field_value(values: tuple[str | None, ...], columns: dict[str, int], field: str) -> str | None:
-    index = columns.get(field)
-    return values[index] if index is not None else None
+def find_snapshot_header(
+    sheet: Any, filename: str, result: ParsedImport
+) -> tuple[int, tuple[str, ...], dict[str, int]] | None:
+    first_populated_row = 0
+    for number, cells in enumerate(sheet.iter_rows(), 1):
+        headers = tuple(normalized_text(cell_text(cell) or "") for cell in cells)
+        if any(headers) and not first_populated_row:
+            first_populated_row = number
+        columns = snapshot_header_columns(headers)
+        if not columns:
+            continue
+
+        missing = [
+            label for field, label in REQUIRED_SNAPSHOT_HEADERS.items() if field not in columns
+        ]
+        reasons = [f"отсутствует заголовок «{label}»" for label in missing]
+        reasons.extend(
+            f"{get_column_letter(index + 1)}{number} — повторяется заголовок «{headers[index]}»"
+            for indices in columns.values()
+            for index in indices[1:]
+        )
+        if not reasons:
+            return number, headers, {field: indices[0] for field, indices in columns.items()}
+        break
+    else:
+        number = first_populated_row or 1
+        expected = ", ".join(REQUIRED_SNAPSHOT_HEADERS.values())
+        reasons = [f"не найдена строка заголовков. Ожидаются «{expected}»"]
+
+    result.errors.extend(
+        ImportErrorRow(sheet=sheet.title, row_number=number, reason=f"Файл «{filename}» — {reason}")
+        for reason in reasons
+    )
+    return None
 
 
 def is_total(
@@ -249,8 +270,9 @@ def is_total(
         any(TOTAL_LABEL.match(normalized_text(value or "")) for value in values[:3])
         or any(
             cell.data_type == "f"
+            and isinstance(cell.value, str)
             and re.match(r"=\s*(?:sum|subtotal|aggregate)\(", cell.value, re.I)
-            for cell in (uncached[columns[field]] for field in COUNTER_FIELDS if field in columns)
+            for cell in (uncached[columns[field]] for field in COUNTER_HEADERS)
         )
     )
 
@@ -259,6 +281,7 @@ def snapshot_item(
     values: tuple[str | None, ...],
     columns: dict[str, int],
     params: ImportParameters,
+    counters: dict[str, int | None],
 ) -> ImportItem:
     code = values[columns["kcr_code"]]
     if code is None:
@@ -274,95 +297,99 @@ def snapshot_item(
         snapshot=SnapshotInput(
             quarter=original,
             snapshot_date=params.snapshot_date,
-            total_documents=counter(
-                field_value(values, columns, "total_documents"), "Всего документов"
-            ),
-            unsubmitted_documents=counter(
-                field_value(values, columns, "unsubmitted_documents"), "Непереданные документы"
-            ),
+            **counters,
         ),
     )
 
 
 def parse_snapshot_sheet(
-    sheet: Any, raw_sheet: Any, params: ImportParameters, result: ParsedImport
+    sheet: Any, raw_sheet: Any, params: ImportParameters, result: ParsedImport, filename: str
 ) -> None:
-    columns = LEGACY_COLUMNS.copy()
-    ignored = {LEGACY_BLOCKING_COLUMN}
-    seen: set[tuple[str, str | None]] = set()
-    rows: list[tuple[str | None, ...]] = []
-    row_numbers: list[int] = []
-    invalid_cells: set[int] = set()
-    header_found = False
-    width = max(12, sheet.max_column or 0)
-    # Pandas drops empty records while preserving physical Excel row numbers and object values.
+    width = sheet.max_column or 0
     sheet.reset_dimensions()
+    header = find_snapshot_header(sheet, filename, result)
+    if header is None:
+        return
+    header_row, headers, columns = header
+    width = max(width, len(headers))
+    ignored = {index for index, name in enumerate(headers) if name in IGNORED_HEADERS}
+    seen: set[tuple[str, str]] = set()
     raw_sheet.reset_dimensions()
+    start_row = header_row + 1
     for number, (cached, uncached) in enumerate(
-        zip(sheet.iter_rows(max_col=width), raw_sheet.iter_rows(max_col=width), strict=True), 1
+        zip(
+            sheet.iter_rows(min_row=start_row, max_col=width),
+            raw_sheet.iter_rows(min_row=start_row, max_col=width),
+            strict=True,
+        ),
+        start_row,
     ):
         values = tuple(map(cell_text, cached))
-        if (header := header_columns(values)) is not None:
-            if not header_found:
-                header_found = True
-                rows.clear()
-                row_numbers.clear()
-                invalid_cells.clear()
-                ignored = {
-                    index
-                    for index, value in enumerate(values)
-                    if normalized_text(value or "") in IGNORED_HEADERS
-                }
-                if any(
-                    LEGACY_COLUMNS.get(field, index) != index for field, index in header.items()
-                ):
-                    columns = header
-                else:
-                    columns.update(header)
-                    if LEGACY_BLOCKING_COLUMN not in columns.values():
-                        ignored.add(LEGACY_BLOCKING_COLUMN)
-            continue
         values = tuple(None if index in ignored else value for index, value in enumerate(values))
         if is_total(values, uncached, columns):
             continue
-        cells = zip(cached, values, uncached, strict=True)
-        if any(
-            has_excel_error(cell, value, original)
-            for index, (cell, value, original) in enumerate(cells)
-            if index not in ignored
+        code_index = columns["kcr_code"]
+        if normalized_text(values[code_index] or "") == headers[code_index] and all(
+            normalized_text(values[i] or "") == headers[i] for i in columns.values()
         ):
-            invalid_cells.add(number)
-        rows.append(values)
-        row_numbers.append(number)
-
-    frame = pd.DataFrame(rows, index=row_numbers, dtype=object)
-    populated = frame.notna().any(axis=1) | frame.index.isin(invalid_cells)
-    for number, *cells in frame.loc[populated].itertuples(name=None):
-        values = tuple(cells)
+            continue
+        invalid_cells = {
+            index
+            for index, (cell, value, original) in enumerate(
+                zip(cached, values, uncached, strict=True)
+            )
+            if index not in ignored and has_excel_error(cell, value, original)
+        }
+        if not any(values) and not invalid_cells:
+            continue
         result.total_rows += 1
+        code = values[code_index] if code_index not in invalid_cells else None
+        counters: dict[str, int | None] = {}
+        for field, label in COUNTER_HEADERS.items():
+            index = columns[field]
+            try:
+                if index in invalid_cells:
+                    raise InvalidRow(f"{label} содержит ошибку Excel или формулу без результата")
+                counters[field] = counter(cached[index].value, label)
+            except InvalidRow as exc:
+                address = f"{get_column_letter(index + 1)}{number}"
+                result.errors.append(
+                    ImportErrorRow(
+                        sheet=sheet.title,
+                        row_number=number,
+                        kcr_code=code,
+                        reason=f"Файл «{filename}», {address} — {exc}",
+                    )
+                )
+        if len(counters) != len(COUNTER_HEADERS):
+            continue
         try:
-            if number in invalid_cells:
+            if invalid_cells:
                 raise InvalidRow("Ошибка Excel или отсутствует сохранённое значение формулы")
-            item = snapshot_item(values, columns, params)
-            key = (item.client.kcr_code, item.snapshot.quarter if item.snapshot else None)
+            item = snapshot_item(values, columns, params, counters)
+            assert item.snapshot is not None
+            key = (item.client.kcr_code, item.snapshot.quarter)
             if key in seen:
                 raise InvalidRow("Дубликат строки в листе")
             seen.add(key)
             result.rows.append(SourceRow(sheet=sheet.title, row_number=number, item=item))
         except InvalidRow as exc:
-            code = values[columns["kcr_code"]]
             result.errors.append(
                 ImportErrorRow(
                     sheet=sheet.title,
                     row_number=number,
-                    kcr_code=code if code and code.upper() not in EXCEL_ERRORS else None,
+                    kcr_code=code,
                     reason=str(exc),
                 )
             )
 
 
 def parse_workbook(
-    path: Path, params: ImportParameters, expected_digest: str | None = None
+    path: Path,
+    params: ImportParameters,
+    expected_digest: str | None = None,
+    *,
+    filename: str | None = None,
 ) -> ParsedImport:
     result = ParsedImport()
     try:
@@ -398,7 +425,9 @@ def parse_workbook(
                             ImportErrorRow(sheet=sheet.title, row_number=0, reason=reason)
                         )
                     else:
-                        parse_snapshot_sheet(sheet, raw[sheet.title], params, result)
+                        parse_snapshot_sheet(
+                            sheet, raw[sheet.title], params, result, filename or path.name
+                        )
             finally:
                 raw.close()
         finally:

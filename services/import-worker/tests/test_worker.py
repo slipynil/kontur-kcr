@@ -10,7 +10,7 @@ import aio_pika
 import httpx
 import pytest
 from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
-from conftest import REGISTRY_HEADER, WorkbookFactory
+from conftest import REGISTRY_HEADER, SNAPSHOT_HEADER, WorkbookFactory
 from pamqp.commands import Basic
 
 from import_worker import broker, consumer, operator_work
@@ -28,10 +28,11 @@ def settings(tmp_path: Path) -> Settings:
 
 @pytest.fixture
 def batch(db: AsyncMock, settings: Settings, xlsx: WorkbookFactory) -> ImportBatch:
-    content = xlsx({"Срез": [["001", None, None, 8, 2], ["002", None, None, 5, 0]]})
+    content = xlsx({"Срез": [SNAPSHOT_HEADER, ["001", 8, 2], ["002", 5, 0]]})
     batch = ImportBatch(
         id=uuid4(),
         uploaded_by=uuid4(),
+        filename="test-snapshot.xlsx",
         selected_quarter="2026_Q2",
         import_type="SNAPSHOT",
         snapshot_date=date(2026, 4, 10),
@@ -173,8 +174,8 @@ async def test_duplicate_observations_check_current_registry(
     if clients_removed:
         logged = db.add_all.call_args.args[0]
         assert [(row.sheet, row.row_number, row.kcr_code) for row in logged] == [
-            ("Срез", 1, "001"),
-            ("Срез", 2, "002"),
+            ("Срез", 2, "001"),
+            ("Срез", 3, "002"),
         ]
         assert all("Код КЦР отсутствует в реестре" in row.reason for row in logged)
     assert batch.clients_applied_at is None
