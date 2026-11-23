@@ -1,0 +1,52 @@
+x-errors-history-environment: &errors-history-environment
+  ERRORS_HISTORY_DATABASE_URL: postgresql+psycopg://errors_history:${ERRORS_HISTORY_POSTGRES_PASSWORD:-errors-history-dev}@errors-history-db:5432/errors_history
+
+services:
+  errors-history-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: errors_history
+      POSTGRES_USER: errors_history
+      POSTGRES_PASSWORD: ${ERRORS_HISTORY_POSTGRES_PASSWORD:-errors-history-dev}
+    volumes:
+      - errors-history-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U errors_history -d errors_history"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  errors-history-migrate:
+    build:
+      context: .
+      target: runtime
+    environment: *errors-history-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      errors-history-db:
+        condition: service_healthy
+
+  errors-history:
+    build:
+      context: .
+      target: runtime
+    environment:
+      <<: *errors-history-environment
+      ERRORS_HISTORY_PORT: ${ERRORS_HISTORY_PORT:-8000}
+    ports:
+      - "127.0.0.1:${ERRORS_HISTORY_HOST_PORT:-8006}:${ERRORS_HISTORY_PORT:-8000}"
+    depends_on:
+      errors-history-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['ERRORS_HISTORY_PORT'] + '/health/ready', timeout=5)"
+      interval: 10s
+      timeout: 6s
+      retries: 3
+
+volumes:
+  errors-history-db:

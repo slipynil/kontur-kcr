@@ -1,0 +1,11 @@
+services:
+  errors-history-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      ERRORS_HISTORY_TEST_ADMIN_URL: postgresql+psycopg://errors_history:${ERRORS_HISTORY_POSTGRES_PASSWORD:-errors-history-dev}@errors-history-db:5432/postgres
+    depends_on:
+      errors-history-db:
+        condition: service_healthy

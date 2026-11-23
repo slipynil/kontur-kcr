@@ -1,0 +1,8 @@
+*
+!pyproject.toml
+!poetry.lock
+!errors_history
+!migrations
+!alembic.ini
+!tests
+**/__pycache__
