@@ -125,6 +125,7 @@ flowchart TB
             clients["Clients Service<br/>(Python · реестр, срезы, динамика)"]
             oper["Operator Work Service<br/>(Python · обзвон, закрепления, этапы)"]
             history["Client History Service<br/>(Python · хроника взаимодействия)"]
+            errors["Errors History Service<br/>(Python · ошибки импорта)"]
             assist["Assistant Service<br/>(Python · чат ИИ-ассистента)"]
         end
 
@@ -140,6 +141,7 @@ flowchart TB
             cdb[("Clients DB<br/>PostgreSQL · клиенты, срезы, журнал")]
             odb[("Operator Work DB<br/>PostgreSQL · события, закрепления, этапы")]
             hdb[("Client History DB<br/>PostgreSQL · хроника взаимодействия")]
+            edb[("Errors History DB<br/>PostgreSQL · ошибки импорта")]
         end
     end
 
@@ -154,11 +156,13 @@ flowchart TB
     gw -- "реестр, карточка (прокси)" --> clients
     gw -- "обзвон, запись событий (агрегация)" --> oper
     gw -- "хроника клиента (прокси)" --> history
+    gw -. "чтение для ADMIN (план)" .-> errors
     gw -- "чат ассистента (прокси)" --> assist
 
     importapi -. "задача импорта (AMQP)" .-> mq
     mq -. "задача" .-> worker
     worker -- "клиенты и срезы (HTTP)" --> clients
+    worker -. "ошибки импорта (HTTP, outbox, план)" .-> errors
     oper -- "данные клиентов (HTTP)" --> clients
 
     oper -- "факты и очистка (HTTP, outbox)" --> history
@@ -170,6 +174,7 @@ flowchart TB
     clients -- "SQL" --> cdb
     oper -- "SQL" --> odb
     history -- "SQL" --> hdb
+    errors -- "SQL" --> edb
 
     assist -- "промпт" --> llm
     assist -- "вызов инструментов (MCP)" --> mcp
@@ -188,8 +193,8 @@ flowchart TB
     class web frontCls;
     class nginx infraCls;
     class gw goCls;
-    class importapi,worker,clients,oper,history,assist pyCls;
-    class idb,impdb,cdb,odb,hdb dbCls;
+    class importapi,worker,clients,oper,history,errors,assist pyCls;
+    class idb,impdb,cdb,odb,hdb,edb dbCls;
     class mq queueCls;
     class llm,mcp extCls;
 

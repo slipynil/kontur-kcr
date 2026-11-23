@@ -24,3 +24,5 @@ Gateway — вход и роли; Clients — профили, остатки, п
 Import Worker координирует применение и откат пакетов. См. [контракт с Operator Work](import-operator-work-contract.md) и [решение о координаторе](../adr/0007-import-worker-coordinator.md).
 
 Внутренний контракт Client History приведён в [OpenAPI](internal/client-history.yaml): приём фактов и команд очистки, чтение хроники.
+
+[OpenAPI Errors History](internal/errors-history.yaml) описывает атомарный приём ошибок от Import Worker и чтение по КЦР или пакету. По [ADR-0021](../adr/0021-errors-history-service.md) чтение через Gateway предназначено для роли `ADMIN` и подключается отдельным этапом.

@@ -26,6 +26,7 @@
 | Import API | `IMPORT_API_PORT` | `8000` | `IMPORT_API_HOST_PORT` | `8002` | `IMPORT_API_ENDPOINT=http://127.0.0.1:8002` |
 | Operator Work | `OPERATOR_WORK_PORT` | `8000` | `OPERATOR_WORK_HOST_PORT` | `8003` | `OPERATOR_WORK_ENDPOINT=http://127.0.0.1:8003` |
 | Client History | `CLIENT_HISTORY_PORT` | `8000` | `CLIENT_HISTORY_HOST_PORT` | `8005` | `CLIENT_HISTORY_ENDPOINT=http://127.0.0.1:8005` |
+| Errors History | `ERRORS_HISTORY_PORT` | `8000` | `ERRORS_HISTORY_HOST_PORT` | `8006` (loopback) | Подключение отдельным этапом |
 | Assistant | `ASSISTANT_PORT` | `8000` | `ASSISTANT_HOST_PORT` | `8004` | `ASSISTANT_ENDPOINT=http://127.0.0.1:8004` |
 
 ## Как поднять локально

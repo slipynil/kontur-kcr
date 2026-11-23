@@ -35,9 +35,11 @@
    - **Зона ответственности:** ИИ-ассистент через облачный API стороннего провайдера. Конкретные функции и критерии приёмки согласуются отдельно; ответы опираются на факты сервиса.
 6. **Client History Service (Python):**
    - **Зона ответственности:** Хроника взаимодействия клиента: звонки, комментарии, смены ответственного, передача в обзвон и смены этапов. Хранит записи хроники, отдаёт их для карточки клиента и очищает вместе с данными клиента; рабочих правил не содержит ([ADR-0020](docs/adr/0020-client-history-service.md)).
+7. **Errors History Service (Python):**
+   - **Зона ответственности:** История сохранённых ошибок импорта реестров и срезов. Источник — Import Worker. Чтение через Gateway по КЦР предназначено для роли `ADMIN` ([ADR-0021](docs/adr/0021-errors-history-service.md)).
 
 **Стек разработки:**
-- Python-сервисы (Clients, Import Worker, Operator Work, Client History, Assistant): Python 3.14, Poetry, pytest, Ruff, Alembic, docker-compose.
+- Python-сервисы (Clients, Import Worker, Operator Work, Client History, Errors History, Assistant): Python 3.14, Poetry, pytest, Ruff, Alembic, docker-compose.
 - Frontend: Node.js 26.12, Next.js 16.4, Jest, ESLint, docker-compose.
 - Gateway / Identity (Go): Go 1.27, golangci-lint, golang-migrate, docker-compose.
 
@@ -195,6 +197,18 @@
 - `payload`: JSONB (детали типа: результат звонка, текст комментария, прежний и новый ответственный, смена этапа и её повод, пакет среза)
 
 Лента сортируется по `occurred_at`, затем `seq`, от новых к старым. События данных (реестр, срезы, удаление, откат) в хронике не хранятся. Каталог типов и правила доставки — [ADR-0020](docs/adr/0020-client-history-service.md).
+
+### 2.11 Сущность `ImportErrorEvent` (История ошибок импорта) — Errors History DB
+
+- `id`: UUID (PK).
+- `source_error_id`: Bigint, уникальный ID строки `import_errors` в Import DB.
+- `batch_id`: UUID исходного пакета, логическая ссылка на `ImportBatch`.
+- `import_type`: `REGISTRY` или `SNAPSHOT`.
+- `kcr_code`: Text / Nullable, исходный код с ведущими нулями. Пустое значение при неизвестном коде передаётся как `null`.
+- `sheet`, `row_number`, `reason`: исходные название листа, номер строки и причина. Строка `0` допустима для ошибок книги и листа, название листа может быть пустым.
+- `recorded_at`: Timestamp with time zone / Nullable, время записи у источника. Для прежних строк без времени остаётся `null`.
+
+История читается по КЦР или пакету по убыванию `recorded_at` с `null` в конце, затем по убыванию `source_error_id`. Повторная доставка тех же данных идемпотентна. HTTP 409 означает конфликт содержимого. Порядок подключения и хранения определяет [ADR-0021](docs/adr/0021-errors-history-service.md).
 
 ---
 

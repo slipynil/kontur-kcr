@@ -1,0 +1,274 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API Errors History
+  version: 1.0.0
+  description: История сохранённых ошибок импорта реестров и срезов. Доверенный источник записи — Import Worker, доступ ограничен внутренней сетью.
+servers:
+  - url: http://errors-history:8000
+  - url: http://127.0.0.1:8006
+security: []
+paths:
+  /internal/v1/import-errors/bulk:
+    post:
+      operationId: bulkImportErrors
+      summary: Принять порцию ошибок импорта
+      description: |
+        Все записи проверяются и сохраняются атомарно. Идентичные записи с одним source_error_id
+        учитываются один раз. Если существующая запись или запись в том же запросе
+        отличается содержимым при равном ID, весь запрос возвращает 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorBulk'
+            examples:
+              registryAndSnapshot:
+                value:
+                  errors:
+                    - source_error_id: 701
+                      batch_id: 019aab49-2300-7000-8000-000000000001
+                      import_type: REGISTRY
+                      kcr_code: '000123'
+                      sheet: Реестр
+                      row_number: 12
+                      reason: A12 — дубликат кода КЦР
+                      recorded_at: '2026-11-23T12:00:00Z'
+                    - source_error_id: 702
+                      batch_id: 019aab49-2300-7000-8000-000000000002
+                      import_type: SNAPSHOT
+                      kcr_code: null
+                      sheet: ''
+                      row_number: 0
+                      reason: Не удалось прочитать книгу XLSX
+                      recorded_at: null
+      responses:
+        '200':
+          description: Число добавленных и ранее сохранённых уникальных ID в этой порции
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBulkResult'
+              example: {inserted: 2, existing: 0}
+        '409':
+          description: Конфликт содержимого. Ни одна запись порции не добавлена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [detail]
+                properties:
+                  detail:
+                    type: object
+                    required: [code, source_error_id]
+                    properties:
+                      code: {const: IMPORT_ERROR_CONFLICT}
+                      source_error_id:
+                        $ref: '#/components/schemas/SourceErrorId'
+              example: {detail: {code: IMPORT_ERROR_CONFLICT, source_error_id: 701}}
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+  /internal/v1/clients/{kcr_code}/import-errors:
+    get:
+      operationId: listClientImportErrors
+      summary: История ошибок по точному коду КЦР
+      parameters:
+        - name: kcr_code
+          in: path
+          required: true
+          description: Текстовый код КЦР с ведущими нулями
+          schema: {type: string, minLength: 1, pattern: '^[^\x00]+$'}
+          example: '000123'
+        - name: import_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ImportType'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/ErrorPage'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+  /internal/v1/imports/{batch_id}/errors:
+    get:
+      operationId: listBatchImportErrors
+      summary: Ошибки пакета, включая записи без КЦР
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/ErrorPage'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+  /health/live:
+    get:
+      operationId: errorsHistoryLiveness
+      summary: HTTP-процесс отвечает
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOK'
+  /health/ready:
+    get:
+      operationId: errorsHistoryReadiness
+      summary: База доступна и применена текущая миграция
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOK'
+        '503':
+          description: База недоступна или ревизия Alembic не совпадает
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {const: not_ready}
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 1000000, default: 1}
+    PageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+  responses:
+    HealthOK:
+      description: Проверка прошла
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: {const: ok}
+    ErrorPage:
+      description: |
+        Страница по убыванию recorded_at (null в конце), затем по убыванию source_error_id.
+        При отсутствии совпадений items пуст. Поступление новых событий может сдвинуть границы страниц.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPage'
+          example: {items: [], page: 1, page_size: 20, has_more: false}
+    ValidationError:
+      description: Ошибка валидации параметров или тела запроса
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [detail]
+            properties:
+              detail:
+                type: array
+                items:
+                  type: object
+                  required: [loc, msg, type]
+                  properties:
+                    loc:
+                      type: array
+                      items: {type: [string, integer]}
+                    msg: {type: string}
+                    type: {type: string}
+    DatabaseUnavailable:
+      description: База Errors History временно недоступна
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [detail]
+            properties:
+              detail:
+                type: object
+                required: [code]
+                properties:
+                  code: {const: ERRORS_HISTORY_UNAVAILABLE}
+  schemas:
+    ImportType:
+      type: string
+      enum: [REGISTRY, SNAPSHOT]
+    SourceErrorId:
+      type: integer
+      format: int64
+      minimum: 1
+      maximum: 9223372036854775807
+    ErrorFields:
+      type: object
+      required: [source_error_id, batch_id, import_type, sheet, row_number, reason, recorded_at]
+      properties:
+        source_error_id:
+          $ref: '#/components/schemas/SourceErrorId'
+        batch_id: {type: string, format: uuid}
+        import_type:
+          $ref: '#/components/schemas/ImportType'
+        kcr_code:
+          type: [string, 'null']
+          pattern: '^[^\x00]*$'
+          description: Код с исходными ведущими нулями. Если код неизвестен, передаётся null.
+        sheet:
+          type: string
+          pattern: '^[^\x00]*$'
+          description: Название листа. Для ошибки всей книги может быть пустым.
+        row_number:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: Номер строки Excel. Ноль допустим для ошибки книги или листа.
+        reason: {type: string, pattern: '^[^\x00]*$'}
+        recorded_at:
+          type: [string, 'null']
+          format: date-time
+          description: Время записи ошибки у источника с часовым поясом. Для старой строки без даты — null.
+    ErrorInput:
+      allOf:
+        - $ref: '#/components/schemas/ErrorFields'
+      unevaluatedProperties: false
+    ErrorBulk:
+      type: object
+      additionalProperties: false
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/ErrorInput'
+    ErrorBulkResult:
+      type: object
+      required: [inserted, existing]
+      properties:
+        inserted: {type: integer, minimum: 0}
+        existing: {type: integer, minimum: 0}
+    ErrorItem:
+      allOf:
+        - $ref: '#/components/schemas/ErrorFields'
+        - type: object
+          required: [id, kcr_code]
+          properties:
+            id: {type: string, format: uuid}
+    ErrorPage:
+      type: object
+      required: [items, page, page_size, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorItem'
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 100}
+        has_more: {type: boolean}
