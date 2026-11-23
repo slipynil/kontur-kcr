@@ -41,6 +41,7 @@
 | clients-service-pr-checks | `services/clients` | Python 3.14, Poetry, Ruff |
 | import-worker-pr-checks | `services/import-worker` | Python 3.14, Poetry, Ruff |
 | operator-work-service-pr-checks | `services/operator-work` | Python 3.14, Poetry, Ruff |
+| client-history-service-pr-checks | `services/client-history` | Python 3.14, Poetry, Ruff |
 | assistant-service-pr-checks | `services/assistant` | Python 3.14, Poetry, Ruff |
 | frontend-pr-checks | `frontend` | Node.js 26.12, Next.js, ESLint, Jest |
 | deploy | `server/compose.yaml` | ручной деплой стека на dev-сервер по кнопке (`workflow_dispatch`) |
