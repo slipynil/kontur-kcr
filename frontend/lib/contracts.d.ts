@@ -137,10 +137,32 @@ export type ClientCard = {
 };
 
 export type EventListResponse = {
-  items: (ClientEvent)[];
+  items: (ClientEvent | HistoryEvent)[];
   page: number;
   page_size: number;
   total: number;
+};
+
+export type HistoryEvent = ClientEvent & {
+  work_quarter: string | null;
+  cycle_id: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  occurred_at: string;
+  recorded_at: string;
+  seq: number;
+  payload: {
+    comment_text?: string;
+    call_result?: CallResult;
+    promised_date?: string | null;
+    wait_until?: string | null;
+    operator_id?: string;
+    previous_operator_id?: string | null;
+    kind?: 'TAKE' | 'REASSIGN' | 'INHERITED';
+    from_stage?: Stage | null;
+    to_stage?: Stage;
+    reason?: 'TAKE' | 'SNAPSHOT' | 'WAIT_SET' | 'WAIT_EXPIRED' | 'RESTORE';
+  };
 };
 
 export type SnapshotHistoryRecord = {
@@ -163,7 +185,7 @@ export type SnapshotHistoryResponse = {
   total: number;
 };
 
-export type EventType = "CALL_RESULT" | "HISTORICAL_COMMENT" | "EMAIL_SENT" | "STAGE_CHANGE" | "CLAIM_UPDATE" | "OPERATOR_ASSIGN";
+export type EventType = "CALL_RESULT" | "HISTORICAL_COMMENT" | "COMMENT" | "PUBLICATION" | "EMAIL_SENT" | "STAGE_CHANGE" | "CLAIM_UPDATE" | "OPERATOR_ASSIGN";
 
 export type CallResult = "AGREEMENT" | "REFUSAL" | "NO_ANSWER" | "WRONG_NUMBER";
 
@@ -175,6 +197,7 @@ export type ClientEvent = {
   id: string;
   kcr_code: string;
   author_id: string;
+  actor_name?: string | null;
   event_type: EventType;
   call_result?: CallResult | null;
   promised_date?: string | null;

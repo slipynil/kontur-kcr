@@ -121,7 +121,7 @@ func New(deps Deps) (http.Handler, error) {
 				r.Get("/clients/{kcr_code}", cardAggregator.Client)
 				r.Get("/clients/{kcr_code}/snapshots/history", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceClients)))
 				r.Get("/pool", cardAggregator.Pool(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
-				r.Get("/clients/{kcr_code}/events", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
+				r.Get("/clients/{kcr_code}/events", cardAggregator.VisibleClient(cardAggregator.EventFeed))
 				r.Post("/clients/{kcr_code}/events", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceOperatorWork)))
 				r.Get("/assistant/summary/{kcr_code}", cardAggregator.VisibleClient(upstreams.HandlerFunc(proxy.ServiceAssistant)))
 			})

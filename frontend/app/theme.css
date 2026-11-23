@@ -280,6 +280,9 @@ textarea { resize: vertical; min-height: 86px; }
 .badge-bad, .feedback-bad { color: var(--bad-ink); background: var(--bad); }
 .feedback { display: flex; align-items: flex-start; gap: 9px; border-radius: 6px; padding: 10px 13px; margin-block: 9px; font-size: 13px; overflow-wrap: anywhere; }
 .feedback svg { flex: none; margin-top: 2px; }
+.feedback-spinner { animation: feedback-spin 900ms linear infinite; }
+@keyframes feedback-spin { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .feedback-spinner { animation: none; } }
 .feedback-info { background: var(--accent); color: var(--ink); }
 .empty-state { display: grid; gap: 9px; justify-items: center; text-align: center; padding: 55px 16px; color: var(--muted); }
 .empty-state h2 { color: var(--ink); }
@@ -340,8 +343,12 @@ textarea { resize: vertical; min-height: 86px; }
 .inline-form > .feedback { flex: 1 0 100%; margin-block: 0; }
 .comparison-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-block: 12px; color: var(--muted); border-block: 1px solid var(--line); }
 .summary-text { margin-top: 12px; }
-.event-list { list-style: none; margin: 12px 0; padding: 0; }
-.event-list li { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; padding: 14px 10px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.event-cycle { margin-block: 18px; }
+.event-list { list-style: none; margin: 10px 0 0 5px; padding: 0 0 0 16px; border-left: 1px solid var(--edge); }
+.event-list > li { position: relative; display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; padding: 14px; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }
+.event-list > li + li { margin-top: 8px; }
+.event-list > li::before { content: ''; position: absolute; top: 20px; left: -22px; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.event-list h4 { margin: 0; font-size: 1rem; font-weight: 600; }
 .event-main { flex: 1 1 270px; min-width: 0; }
 .event-main p { margin-top: 5px; white-space: pre-wrap; }
 .event-list time { color: var(--muted); font-size: 12px; }

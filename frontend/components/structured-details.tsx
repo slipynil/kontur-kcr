@@ -6,7 +6,7 @@ const labels: Record<string, string> = {
   inn: 'ИНН', kpp: 'КПП', organization_name: 'Название организации',
   manager_name: 'Менеджер', contacts: 'Контакты', phone: 'Телефон',
   email: 'Электронная почта', name: 'Имя', total_documents: 'Всего документов',
-  unsubmitted_documents: 'Непереданные документы', tags: 'Признаки',
+  unsubmitted_documents: 'Непереданные документы', tags: 'Статус клиента',
 };
 
 function renderValue(value: unknown): ReactNode {

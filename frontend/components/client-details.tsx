@@ -5,16 +5,11 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { newRequestId, queryString, request } from '@/lib/api';
 import type { ClientCard, EventListResponse, SnapshotHistoryResponse, TakeRequest, TakeResponse, User } from '@/lib/contracts';
-import { businessDate, businessTime, displayDate, durations, dynamics, Feedback, Pager, QuarterInput, quarterName, quarterPattern, stages, tags, useAction, useResource } from './api-ui';
-import { callResults, EventForm } from './event-form';
+import { businessDate, displayDate, durations, dynamics, Feedback, Pager, QuarterInput, quarterName, quarterPattern, stages, tags, useAction, useResource } from './api-ui';
+import { EventForm } from './event-form';
+import { ClientHistory } from './client-history';
 import { Badge, ConfirmActions, EmptyState, Metrics, Modal, PageHeader, Tabs } from './presentation';
 import { StructuredDetails } from './structured-details';
-
-const eventLabels = {
-  CALL_RESULT: 'Результат звонка', HISTORICAL_COMMENT: 'Комментарий прошлой даты',
-  EMAIL_SENT: 'Письмо отправлено', STAGE_CHANGE: 'Изменение этапа',
-  CLAIM_UPDATE: 'Обновление претензии', OPERATOR_ASSIGN: 'Изменение ответственного',
-};
 
 type RemoveTarget = { quarter?: string; href: string };
 
@@ -140,7 +135,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
                 <div><dt>ИНН</dt><dd>{c.inn ?? '—'}</dd></div>
                 <div><dt>КПП</dt><dd>{c.kpp ?? '—'}</dd></div>
                 <div><dt>Менеджер</dt><dd>{c.manager_name ?? '—'}</dd></div>
-                <div><dt>Признаки</dt><dd>{c.tags.map(tag => tags[tag] ?? tag).join(', ') || '—'}</dd></div>
+                <div><dt>Статус клиента</dt><dd>{c.tags.map(tag => tags[tag] ?? tag).join(', ') || '—'}</dd></div>
                 {c.duration && <div><dt>Длительность</dt><dd><Badge tone={c.duration === 'FIRST_TIME' ? 'caution' : 'bad'}>{durations[c.duration]}</Badge></dd></div>}
               </dl>
               <div className="contact-block"><h2>Контакты</h2><StructuredDetails values={c.contacts} /></div>
@@ -207,21 +202,7 @@ export function ClientDetails({ code, user, call }: { code: string; user: User; 
           </div>
           <Feedback {...events} />
           {events.data && (events.data.items.length ? <>
-            <ul className="event-list">{events.data.items.map(event => {
-              const date = event.historical_event_date ?? event.created_at;
-              const knownAuthor = event.author_id === user.id ? user.login
-                : event.author_id === c.assignment?.operator_id ? c.assignment.operator_name : null;
-              return <li key={event.id}><div className="event-main">
-                <h3>{eventLabels[event.event_type] ?? event.event_type}</h3>
-                {event.comment_text && <p>{event.comment_text}</p>}
-                <div className="meta">
-                  {event.call_result && <span>{callResults[event.call_result]}</span>}
-                  {event.document_quarters?.length ? <span>Документы: {event.document_quarters.map(quarterName).join(', ')}</span> : null}
-                  {event.promised_date && <span>Обещанный срок: {displayDate(event.promised_date)}</span>}
-                  {event.wait_until && <span>Ожидание до: {displayDate(event.wait_until)}</span>}
-                </div>
-              </div><div><time dateTime={date}>{businessTime(date)} МСК</time><div className="meta mono-data">{knownAuthor || (event.author_id ? `ID автора: ${event.author_id}` : '—')}</div></div></li>;
-            })}</ul>
+            <ClientHistory events={events.data.items} user={user} assignment={c.assignment} />
             <Pager page={eventPage} total={events.data.total} pageSize={events.data.page_size} onChange={setEventPage} />
           </> : <EmptyState title="Событий нет" />)}
         </Tabs.Content>

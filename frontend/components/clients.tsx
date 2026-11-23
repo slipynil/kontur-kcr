@@ -182,8 +182,8 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
         <label>Длительность<select value={draft.duration || ''} onChange={event => change('duration', event.target.value)}>
           <option value="">Любая</option>{Object.entries(durations).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
-        <label>Признак<select value={draft.tags || ''} onChange={event => change('tags', event.target.value)}>
-          <option value="">Все признаки</option>{Object.entries(tags).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        <label>Статус клиента<select value={draft.tags || ''} onChange={event => change('tags', event.target.value)}>
+          <option value="">Все статусы</option>{Object.entries(tags).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
         <fieldset><legend>Остаток за квартал</legend>
           <div className="stack">
@@ -246,7 +246,7 @@ export function Clients({ user, side, top }: { user: User; side?: ReactNode; top
             ref={checkbox => { if (checkbox) checkbox.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
             checked={allOnPageSelected} disabled={selectionDisabled || !rows.length}
             onChange={event => updateSelection(rows.map(row => row.kcr_code), event.target.checked)} /></th>}
-          {['Код КЦР', 'Клиент / ИНН', 'За квартал', 'Всего', 'Динамика', 'Этап', 'Ответственный', 'Признаки'].map(label => <th scope="col" key={label}>{label}</th>)}
+          {['Код КЦР', 'Клиент / ИНН', 'За квартал', 'Всего', 'Динамика', 'Этап', 'Ответственный', 'Статус клиента'].map(label => <th scope="col" key={label}>{label}</th>)}
         </tr></thead><tbody>{rows.map(client => <tr key={client.kcr_code} className="client-row" onClick={event => {
           if (!(event.target as HTMLElement).closest('button, input, label, a') && !window.getSelection()?.toString()) showClient(client.kcr_code);
         }}>

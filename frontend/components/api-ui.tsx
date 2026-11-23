@@ -67,8 +67,12 @@ export function useAction() {
   function reset() { setError(''); setNotice(''); }
   return { busy, error, notice, setNotice, run, reset };
 }
-export function Feedback({ error, loading, notice }: { error?: string; loading?: boolean; notice?: string }) {
-  return <>{loading && <p className="feedback feedback-info" role="status"><LoaderCircle size={16} aria-hidden="true" />Загрузка…</p>}
+export function Feedback({ error, loading, loadingText = 'Загрузка…', notice }: {
+  error?: string; loading?: boolean; loadingText?: string; notice?: string;
+}) {
+  return <>{loading && <p className="feedback feedback-info" role="status">
+    <LoaderCircle className="feedback-spinner" size={16} aria-hidden="true" />{loadingText}
+  </p>}
     {error && <p className="feedback feedback-bad" role="alert"><AlertCircle size={16} aria-hidden="true" />{error}</p>}
     {notice && <p className="feedback feedback-good" role="status"><CheckCircle2 size={16} aria-hidden="true" />{notice}</p>}</>;
 }

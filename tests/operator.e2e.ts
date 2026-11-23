@@ -93,6 +93,10 @@ describe('operator work', { session: 'operator_a', timeout: 75_000 }, () => {
       await api('/reassignment-notifications', { actor: second }), 200, 'Read existing requests',
     );
     expect(notifications.items.some((item: { kcr_code: string }) => item.kcr_code === code)).toBe(false);
+
+    await screen.getByRole('tab', 'Лента событий').tap();
+    await expect(screen.getByRole('listitem').filter({ hasText: /взят в работу/i })).toContainText(first.user.login);
+    await expect(screen.getByRole('listitem').filter({ hasText: /перезакрепл[её]н/i })).toContainText(second.user.login);
   });
 
   test('keeps an old-form call without its wait after immediate reassignment', { session: 'operator_b' },

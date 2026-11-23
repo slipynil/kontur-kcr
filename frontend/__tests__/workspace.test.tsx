@@ -65,6 +65,27 @@ it('remembers an opened import report and shows its link on a later visit', asyn
   expect(screen.getByRole('link', { name: batch.filename }))
     .toHaveAttribute('href', `/import-report?batch=${batch.id}`);
 });
+
+it.each(['REGISTRY', 'SNAPSHOT'])('shows the spinner while a %s import is processing', async importType => {
+  signIn('ADMIN');
+  const batch = {
+    id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301', filename: 'clients.xlsx',
+    import_type: importType, selected_quarter: '2026_Q4', snapshot_date: '2026-11-18',
+    status: 'PROCESSING', total_rows: 1, success_count: 1, error_count: 0,
+  };
+  search = `?batch=${batch.id}`;
+  (fetch as jest.Mock).mockResolvedValueOnce(json(batch)).mockResolvedValue(json({ ...batch, status: 'COMPLETED' }));
+
+  render(<Imports reportOnly />);
+
+  const processing = await screen.findByText(/Файл обрабатывается/);
+  expect(processing).toHaveAttribute('role', 'status');
+  expect(processing.querySelector('.feedback-spinner')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Обновить отчёт' }));
+  expect(await screen.findByText('Завершён')).toBeVisible();
+  expect(screen.queryByText(/Файл обрабатывается/)).not.toBeInTheDocument();
+});
+
 it('logs in with contract field names and no demo credentials', async () => {
   (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.endsWith('/auth/login') ? { token: 'jwt', token_type: 'Bearer', expires_in: 3600, user } : page)));
   render(<Workspace />);
@@ -120,6 +141,72 @@ function clientFetch(input: string, init?: RequestInit) {
   if (init?.method === 'POST') return Promise.resolve(json({ code: 'CLIENT_WAIT_DEADLINE_ACTIVE', message: 'Срок ещё не наступил' }, 409));
   return Promise.resolve(json(input.includes('/events') || input.includes('/history') ? page : card));
 }
+
+it('shows the Client History event date, author and details in API order', async () => {
+  const occurredAt = '2026-08-15T09:30:00Z';
+  const recordedAt = '2026-11-22T12:00:00Z';
+  const event = {
+    kcr_code: card.kcr_code, cycle_id: 'cycle-a', work_quarter: '2026_Q3',
+    actor_id: null, actor_name: null, recorded_at: recordedAt,
+    created_at: recordedAt, author_id: '00000000-0000-0000-0000-000000000000',
+    comment_text: 'Устаревший текст', document_quarters: [],
+  };
+  const items = [
+    { ...event, id: 'stage', seq: 4, event_type: 'STAGE_CHANGE', occurred_at: '2026-11-20T10:00:00Z',
+      payload: { from_stage: 'WAIT_DEADLINE', to_stage: 'POOL', reason: 'WAIT_EXPIRED' } },
+    { ...event, id: 'assignment', seq: 3, event_type: 'OPERATOR_ASSIGN', occurred_at: '2026-11-20T10:00:00Z',
+      actor_id: card.assignment.operator_id, actor_name: card.assignment.operator_name,
+      payload: { kind: 'REASSIGN', previous_operator_id: user.id, operator_id: card.assignment.operator_id } },
+    { ...event, id: 'publication', seq: 2, event_type: 'PUBLICATION', occurred_at: '2026-10-01T10:00:00Z',
+      work_quarter: '2026_Q4', cycle_id: 'cycle-b', actor_id: 'admin-id', actor_name: 'admin_at_publication', payload: {} },
+    { ...event, id: 'note', seq: 1, event_type: 'HISTORICAL_COMMENT', occurred_at: occurredAt,
+      actor_id: user.id, actor_name: 'historical_login', payload: { comment_text: 'Текст из хроники' } },
+  ];
+  (fetch as jest.Mock).mockImplementation(async (url: string) =>
+    json(url.includes('/events') ? { ...page, items, total: items.length } : card));
+
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Лента событий' }), { button: 0 });
+
+  expect(await screen.findByText('Текст из хроники')).toBeVisible();
+  const rows = within(screen.getByRole('tabpanel')).getAllByRole('listitem');
+  expect(rows).toHaveLength(4);
+  expect(rows[0]).toHaveTextContent('Этап: Ожидание срока → Пул');
+  expect(rows[0]).not.toHaveTextContent(event.author_id);
+  expect(rows[1]).toHaveTextContent(`Прежний ответственный: ${user.login}`);
+  expect(rows[1]).toHaveTextContent(`Новый ответственный: ${card.assignment.operator_name}`);
+  expect(rows[2]).toHaveTextContent('Передан в обзвон');
+  expect(rows[2]).toHaveTextContent('admin_at_publication');
+  expect(rows[3]).toHaveTextContent('historical_login');
+  expect(within(rows[3]).getByText(/12:30 МСК/)).toHaveAttribute('datetime', occurredAt);
+  expect(screen.getByRole('heading', { name: 'IV квартал 2026' })).toBeVisible();
+  expect(screen.queryByText('Устаревший текст')).not.toBeInTheDocument();
+});
+
+it('still shows call details from the Operator Work event format', async () => {
+  const item = { id: 'legacy-call', event_type: 'CALL_RESULT', work_quarter: '2026_Q3',
+    comment_text: 'Приняли звонок', author_id: user.id, call_result: 'AGREEMENT', created_at: '2026-08-15T09:30:00Z' };
+  const unknownAuthor = 'e78832bc-f2a2-4bef-9c5d-407d0334380b';
+  const items = [item,
+    { ...item, id: 'legacy-previous', author_id: 'previous-id', actor_name: 'previous_operator', comment_text: 'Предыдущий звонок' },
+    { ...item, id: 'legacy-other', author_id: unknownAuthor, comment_text: 'Звонок без имени автора' },
+  ];
+  (fetch as jest.Mock).mockImplementation(async (url: string) =>
+    json(url.includes('/events') ? { ...page, items, total: items.length } : card));
+
+  render(<ClientDetails code="A/B" user={user} call={false} />);
+  fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Лента событий' }), { button: 0 });
+
+  const [row, older, unknown] = await within(screen.getByRole('tabpanel')).findAllByRole('listitem');
+  expect(row).toHaveTextContent('Приняли звонок');
+  expect(row).toHaveTextContent('Есть договорённость');
+  expect(row).toHaveTextContent(user.login);
+  expect(within(row).getByRole('heading', { name: 'Результат звонка' })).toBeVisible();
+  expect(older).toHaveTextContent('Предыдущий звонок');
+  expect(older).toHaveTextContent('previous_operator');
+  expect(unknown).not.toHaveTextContent(unknownAuthor);
+});
+
 it('takes a free client using the work cycle returned by Gateway', async () => {
   const workQuarter = '2025_Q3';
   const assignedAt = '2025-09-01T00:00:00Z';
@@ -198,7 +285,7 @@ it('selects and publishes filtered clients across pages, except manually uncheck
     }));
   });
   render(<Clients user={{ ...user, role: 'ADMIN' }} />);
-  fireEvent.change(screen.getByLabelText('Признак'), { target: { value: 'VIP' } });
+  fireEvent.change(screen.getByLabelText('Статус клиента'), { target: { value: 'VIP' } });
   fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
   await screen.findByRole('checkbox', { name: 'Выбрать VIP-0' });
   fireEvent.click(screen.getByRole('button', { name: 'Выбрать всех по фильтрам' }));
