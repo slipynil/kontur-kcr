@@ -123,7 +123,8 @@ flowchart TB
             importapi["Import API<br/>(Python · приём .xlsx)"]
             worker["Import Worker<br/>(Python · парсинг, срезы)"]
             clients["Clients Service<br/>(Python · реестр, срезы, динамика)"]
-            oper["Operator Work Service<br/>(Python · обзвон, закрепления, лента)"]
+            oper["Operator Work Service<br/>(Python · обзвон, закрепления, этапы)"]
+            history["Client History Service<br/>(Python · хроника взаимодействия)"]
             assist["Assistant Service<br/>(Python · чат ИИ-ассистента)"]
         end
 
@@ -138,6 +139,7 @@ flowchart TB
             impdb[("Import DB<br/>PostgreSQL · пакеты, ошибки, undo")]
             cdb[("Clients DB<br/>PostgreSQL · клиенты, срезы, журнал")]
             odb[("Operator Work DB<br/>PostgreSQL · события, закрепления, этапы")]
+            hdb[("Client History DB<br/>PostgreSQL · хроника взаимодействия")]
         end
     end
 
@@ -150,7 +152,8 @@ flowchart TB
 
     gw -- "импорт (прокси)" --> importapi
     gw -- "реестр, карточка (прокси)" --> clients
-    gw -- "обзвон, лента (агрегация)" --> oper
+    gw -- "обзвон, запись событий (агрегация)" --> oper
+    gw -- "хроника клиента (прокси)" --> history
     gw -- "чат ассистента (прокси)" --> assist
 
     importapi -. "задача импорта (AMQP)" .-> mq
@@ -158,11 +161,15 @@ flowchart TB
     worker -- "клиенты и срезы (HTTP)" --> clients
     oper -- "данные клиентов (HTTP)" --> clients
 
+    oper -- "факты и очистка (HTTP, outbox)" --> history
+    history -- "наличие клиента (HTTP)" --> clients
+
     gw -- "users (SQL)" --> idb
     importapi -- "пакеты (SQL)" --> impdb
     worker -- "статусы пакетов (SQL)" --> impdb
     clients -- "SQL" --> cdb
     oper -- "SQL" --> odb
+    history -- "SQL" --> hdb
 
     assist -- "промпт" --> llm
     assist -- "вызов инструментов (MCP)" --> mcp
@@ -181,8 +188,8 @@ flowchart TB
     class web frontCls;
     class nginx infraCls;
     class gw goCls;
-    class importapi,worker,clients,oper,assist pyCls;
-    class idb,impdb,cdb,odb dbCls;
+    class importapi,worker,clients,oper,history,assist pyCls;
+    class idb,impdb,cdb,odb,hdb dbCls;
     class mq queueCls;
     class llm,mcp extCls;
 
@@ -234,6 +241,7 @@ flowchart TB
           <dt>MCP</dt><dd>Model Context Protocol</dd>
           <dt>LLM</dt><dd>большая языковая модель</dd>
           <dt>AMQP</dt><dd>протокол обмена с RabbitMQ</dd>
+          <dt>Outbox</dt><dd>таблица исходящих записей в БД источника: запись создаётся в одной транзакции с изменением и отправляется позже с повторами</dd>
           <dt>SPA</dt><dd>одностраничное веб-приложение</dd>
         </dl>
       </section>
@@ -248,6 +256,7 @@ flowchart TB
       <li>Администратор загружает Excel в Import API. Import API кладёт задачу в RabbitMQ (слой Persistence) и сразу отвечает. Import Worker забирает задачу, разбирает файл и загружает клиентов и срезы в Clients Service.</li>
       <li>Clients Service хранит реестр в своей БД и отвечает на поиск по КЦР/ИНН, карточку, журнал изменений и динамику.</li>
       <li>Operator Work Service ведёт квартальные циклы обзвона, закрепления и этапы. Квартал выбирается при загрузке. WAIT_DEADLINE сохраняет ответственного до срока оператора, включая смену квартала; после срока при остатке клиент доступен в пуле. История прежних циклов сохраняется. Данные документов поступают из Clients Service. Полное удаление клиента очищает его работу; удаление исходного квартала сохраняет остальные кварталы и общую историю.</li>
+      <li>Client History Service хранит хронику взаимодействия клиента: звонки, комментарии, смены ответственного, передачу в обзвон и смены этапов. Operator Work передаёт ему факты и команды очистки через outbox, а Gateway читает хронику для карточки клиента. При приёме записей сервис уточняет имена авторов в Gateway / Identity, а для клиента без записей — его наличие в Clients Service.</li>
       <li>Assistant Service использует облачный API стороннего ИИ-провайдера. Конкретные функции, MCP-инструменты и изменяющие действия ещё не утверждены; соответствующие связи являются предложением.</li>
     </ol>
   </section>
