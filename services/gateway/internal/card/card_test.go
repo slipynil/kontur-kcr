@@ -124,6 +124,7 @@ func newAggregator(t *testing.T, clients, operator *upstreamStub, users card.Use
 	// Тот же маршрут, что собирает server.New (server.go, обе роли).
 	router := chi.NewRouter()
 	router.Get("/api/v1/clients/{kcr_code}", aggregator.Client)
+	router.Get("/api/v1/clients/{kcr_code}/events", aggregator.EventFeed)
 	return env{router: router}
 }
 

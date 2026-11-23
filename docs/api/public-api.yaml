@@ -1643,7 +1643,16 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/HistoryEvent'
+            anyOf:
+            - $ref: '#/components/schemas/HistoryEvent'
+            - title: Событие из Operator Work на время перехода на Client History
+              allOf:
+              - $ref: '#/components/schemas/ClientEvent'
+              - type: object
+                properties:
+                  actor_name:
+                    type: string
+                    description: Логин автора из Identity, если он найден.
         page:
           type: integer
         page_size:

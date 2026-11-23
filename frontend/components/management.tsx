@@ -187,6 +187,7 @@ function ImportReports() {
   const operations = useRef<Record<string, string>>({});
   const report = useResource<ImportBatch>(batchId ? `/imports/${encodeURIComponent(batchId)}` : null, revision, true);
   const batch = report.data;
+  const processing = batch?.status === 'PROCESSING';
   const showRollback = !!batch && batch.id === rollbackId;
   const id = draft.batch === batchId ? draft.value : batchId;
   function refresh() { setRevision(value => value + 1); }
@@ -231,15 +232,15 @@ function ImportReports() {
         </>}</div>
         <button type="button" className="button secondary" onClick={refresh}><RefreshCw aria-hidden="true" />Обновить отчёт</button>
       </div>
-      <Feedback {...report} />
+      <Feedback error={report.error} loading={report.loading || processing}
+        loadingText={processing ? 'Файл обрабатывается. Статистика появится после завершения импорта.' : undefined} />
       {batch && <>
         <Badge tone={reportStatus[batch.status][1]}>{reportStatus[batch.status][0]}</Badge>
         <Metrics items={[
-          ['Строк в файле', batch.status === 'PROCESSING' ? '—' : batch.total_rows],
-          ['Принято', batch.status === 'PROCESSING' ? '—' : batch.success_count],
-          ['Ошибок', batch.status === 'PROCESSING' ? '—' : batch.error_count],
+          ['Строк в файле', processing ? '—' : batch.total_rows],
+          ['Принято', processing ? '—' : batch.success_count],
+          ['Ошибок', processing ? '—' : batch.error_count],
         ]} />
-        {batch.status === 'PROCESSING' && <p className="feedback feedback-info" role="status">Файл обрабатывается. Статистика появится после завершения импорта.</p>}
         {batch.status === 'FAILED' && <p className="feedback feedback-bad" role="alert">Импорт завершился с ошибкой.</p>}
         {batch.status === 'ROLLED_BACK' && <p className="feedback feedback-good" role="status">Данные восстановлены до состояния перед загрузкой.</p>}
         {!showRollback && <Feedback notice={action.notice} />}

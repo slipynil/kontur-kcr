@@ -95,9 +95,10 @@ func (s *fakeStore) Create(_ context.Context, login, passwordHash string, role a
 
 // upstreamSpy фиксирует обращения прокси к внутреннему сервису.
 type upstreamSpy struct {
-	mu     sync.Mutex
-	paths  []string
-	header http.Header
+	mu             sync.Mutex
+	paths          []string
+	header         http.Header
+	eventsResponse string
 }
 
 func (s *upstreamSpy) record(r *http.Request) {
@@ -149,6 +150,15 @@ func newTestEnv(t *testing.T) *testEnv {
 				body = `{"kcr_code":"6671-0042"}`
 			case "/internal/v1/clients/6671-0042/work-state":
 				body = `{"work_quarter":"2026_Q4","stage":"POOL"}`
+			case "/internal/v1/clients/6671-0042/events":
+				if r.Method == http.MethodGet {
+					spy.mu.Lock()
+					body = spy.eventsResponse
+					spy.mu.Unlock()
+					if body == "" {
+						body = `{"items":[],"page":1,"page_size":20,"total":0}`
+					}
+				}
 			}
 			_, _ = w.Write([]byte(body))
 		}))
@@ -463,6 +473,36 @@ func TestProxyRoutingTable(t *testing.T) {
 				t.Fatalf("upstream got %v, want last %q", paths, tt.wantPath)
 			}
 		})
+	}
+}
+
+func TestEventFeedResolvesAuthorsAfterReassignment(t *testing.T) {
+	env := newTestEnv(t)
+	first := addUser(t, env.store, "previous", "password123", auth.RoleOperator)
+	second, err := env.store.GetByLogin(context.Background(), "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.operator.mu.Lock()
+	env.operator.eventsResponse = fmt.Sprintf(`{"page":1,"page_size":20,"total":4,"items":[
+		{"id":"reassigned","author_id":%q},{"id":"taken","author_id":%q},
+		{"id":"historical","author_id":%q,"actor_name":"saved-login"},{"id":"deleted","author_id":%q}
+	]}`, second.ID, first.ID, first.ID, uuid.New())
+	env.operator.mu.Unlock()
+	w := env.do(http.MethodGet, "/api/v1/clients/6671-0042/events?work_quarter=2026_Q4", env.login(t, second.Login))
+	var page struct {
+		Total int `json:"total"`
+		Items []struct {
+			ID        string `json:"id"`
+			ActorName string `json:"actor_name"`
+		} `json:"items"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 4 || len(page.Items) != 4 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if page.Items[0].ActorName != second.Login || page.Items[1].ID != "taken" || page.Items[1].ActorName != first.Login ||
+		page.Items[2].ActorName != "saved-login" || page.Items[3].ActorName != "" {
+		t.Fatalf("unexpected event authors: %+v", page.Items)
 	}
 }
 
