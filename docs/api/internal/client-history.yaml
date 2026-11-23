@@ -1,0 +1,516 @@
+openapi: 3.1.0
+info:
+  title: Внутреннее API — Client History Service (Python)
+  version: 0.1.0-draft
+  summary: 'Хроника взаимодействия клиента: приём фактов, чтение и очистка.'
+  description: 'Решение — ADR-0020 (от 23.11.2026); модель записи — spec.md §2.10.
+
+    Client History хранит хронику взаимодействия клиента и не содержит рабочих правил: циклы, закрепления, этапы и сроки остаются в Operator Work.
+
+    Операционные записи остаются у владельцев. Operator Work передаёт факты и команды очистки через свою таблицу history_outbox: запись создаётся в одной транзакции с изменением и отправляется по порядку id с повторами.
+
+    Приём идемпотентен по id: повтор с тем же содержимым не создаёт копию, с иным содержимым даёт 409.
+
+    Очистка считается выполненной, когда команда доставлена. Повтор команды с тем же operation_id возвращает прежний результат.
+
+    События данных (реестр, срезы, удаление, откат) в хронике не хранятся.
+
+    Проверка сервисных токенов между сервисами не выполняется (ADR-0010): внутренний контур изолируется на уровне сети. Видимость оператора для публичной ленты Gateway проверяет до обращения к сервису.
+
+    '
+servers:
+- url: http://client-history:8000/internal/v1
+  description: Внутренняя сеть (пример адреса; итоговый зависит от инфраструктуры развертывания).
+tags:
+- name: Ingest
+  description: Приём фактов хроники от сервисов-источников.
+- name: History
+  description: Чтение хроники клиента.
+- name: Cleanup
+  description: Очистка хроники вместе с данными клиента.
+paths:
+  /history/events:
+    post:
+      tags:
+      - Ingest
+      operationId: ingestHistoryEvents
+      summary: Принять факты хроники
+      description: |
+        Пакет применяется целиком: сохраняются либо все новые записи, либо ни одна.
+        Запись с уже известным `id` и тем же содержимым пропускается.
+        Если источник не передал `actor_name`, сервис читает логин во внутреннем API Gateway
+        (`GET /internal/v1/users?ids=`). При недоступности Gateway пакет не принимается,
+        и источник повторяет отправку.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HistoryEventBatch'
+      responses:
+        '200':
+          description: Пакет принят.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResult'
+        '409':
+          description: '`HISTORY_EVENT_CONFLICT` — запись с таким `id` уже существует с иным содержимым. Пакет не сохранён; источник останавливает отправку и фиксирует инцидент.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректная запись или состав пакета. Пакет не сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`HISTORY_UNAVAILABLE` — база данных или внутренний API Gateway временно недоступны. Ничего не сохранено; повторить отправку.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /history/cleanup:
+    post:
+      tags:
+      - Cleanup
+      operationId: cleanupHistory
+      summary: Очистить хронику клиента
+      description: |
+        Operator Work передаёт команду в одной транзакции со своим удалением — с теми же ID
+        событий и циклов, что удалены у него. `CLIENT` удаляет все записи клиента,
+        `TARGETED` — записи из `event_ids` и записи циклов из `cycle_ids`.
+        Удаление и запись результата выполняются одной транзакцией. Повтор с тем же
+        `operation_id` и содержимым возвращает сохранённый результат и не затрагивает записи,
+        созданные после очистки.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HistoryCleanupRequest'
+      responses:
+        '200':
+          description: Команда выполнена или уже была выполнена ранее.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryCleanupResult'
+        '409':
+          description: '`OPERATION_ID_CONFLICT` — `operation_id` уже использован с иным содержимым.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Некорректная команда.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`HISTORY_UNAVAILABLE` — база данных временно недоступна. Ничего не удалено; повторить команду.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /clients/{kcr_code}/events:
+    get:
+      tags:
+      - History
+      operationId: listHistoryEvents
+      summary: Хроника взаимодействия клиента
+      description: |
+        Записи от новых к старым: по `occurred_at`, затем по `seq`.
+        Если у кода нет ни одной записи, сервис уточняет наличие клиента в Clients Service:
+        отсутствующий код даёт `404`, клиент реестра без истории — пустую страницу.
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
+      - $ref: '#/components/parameters/WorkQuarter'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница хроники.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryEventListResponse'
+        '404':
+          description: '`CLIENT_NOT_FOUND` — кода нет в реестре.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`HISTORY_UNAVAILABLE` — база данных или Clients Service временно недоступны.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    KcrCode:
+      name: kcr_code
+      in: path
+      required: true
+      description: Код КЦР — первичный бизнес-ключ клиента (`spec.md` §1.2).
+      schema:
+        type: string
+      example: 6671-0042
+    WorkQuarter:
+      name: work_quarter
+      in: query
+      required: false
+      description: Квартал цикла обзвона. Без фильтра хроника объединяет все циклы.
+      schema:
+        type: string
+        pattern: ^\d{4}_Q[1-4]$
+      example: 2026_Q4
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  schemas:
+    Error:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    Quarter:
+      type: string
+      pattern: ^\d{4}_Q[1-4]$
+      example: 2026_Q4
+    Stage:
+      type: string
+      enum:
+      - POOL
+      - IN_WORK
+      - WAIT_DEADLINE
+      - CLAIM
+      - CLOSED
+    CallResult:
+      type: string
+      enum:
+      - AGREEMENT
+      - REFUSAL
+      - NO_ANSWER
+      - WRONG_NUMBER
+    DocumentQuarters:
+      type: array
+      maxItems: 100
+      uniqueItems: true
+      description: Исходные кварталы документов (ADR-0008). Пустой список — общее событие без подтверждённой привязки.
+      items:
+        $ref: '#/components/schemas/Quarter'
+    HistoryEventBase:
+      type: object
+      description: Общие поля записи хроники (`spec.md` §2.10). Тип события добавляет `event_type`, `payload` и, для событий цикла, `work_quarter`.
+      required:
+      - id
+      - kcr_code
+      - occurred_at
+      - recorded_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID записи-источника; для звонков и комментариев — `request_id`. Повтор отправки использует тот же `id`.
+        kcr_code:
+          type: string
+        actor_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Пользователь, чья команда вызвала событие; null для событий, порождённых правилами.
+        actor_name:
+          type:
+          - string
+          - 'null'
+          description: Снимок логина. Если не передан, сервис заполняет его сам.
+        work_quarter:
+          oneOf:
+          - $ref: '#/components/schemas/Quarter'
+          - type: 'null'
+        cycle_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: ID цикла обзвона Operator Work.
+        document_quarters:
+          $ref: '#/components/schemas/DocumentQuarters'
+        occurred_at:
+          type: string
+          format: date-time
+          description: Когда событие произошло; для прошлого комментария — указанная дата.
+        recorded_at:
+          type: string
+          format: date-time
+          description: Когда событие записано у источника.
+    HistoryEvent:
+      oneOf:
+      - $ref: '#/components/schemas/CallHistoryEvent'
+      - $ref: '#/components/schemas/HistoricalCommentHistoryEvent'
+      - $ref: '#/components/schemas/CommentHistoryEvent'
+      - $ref: '#/components/schemas/AssignmentHistoryEvent'
+      - $ref: '#/components/schemas/PublicationHistoryEvent'
+      - $ref: '#/components/schemas/StageChangeHistoryEvent'
+      - $ref: '#/components/schemas/ReservedHistoryEvent'
+      discriminator:
+        propertyName: event_type
+        mapping:
+          CALL_RESULT: '#/components/schemas/CallHistoryEvent'
+          HISTORICAL_COMMENT: '#/components/schemas/HistoricalCommentHistoryEvent'
+          COMMENT: '#/components/schemas/CommentHistoryEvent'
+          OPERATOR_ASSIGN: '#/components/schemas/AssignmentHistoryEvent'
+          PUBLICATION: '#/components/schemas/PublicationHistoryEvent'
+          STAGE_CHANGE: '#/components/schemas/StageChangeHistoryEvent'
+          EMAIL_SENT: '#/components/schemas/ReservedHistoryEvent'
+          CLAIM_UPDATE: '#/components/schemas/ReservedHistoryEvent'
+    CallHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { const: CALL_RESULT }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/CallPayload'
+    CallPayload:
+      type: object
+      additionalProperties: false
+      required: [call_result, comment_text]
+      properties:
+        call_result:
+          $ref: '#/components/schemas/CallResult'
+        comment_text: { type: string, maxLength: 4000 }
+        promised_date: { type: [string, 'null'], format: date }
+        wait_until:
+          type: [string, 'null']
+          format: date
+          description: Применённый срок ожидания; null, если звонок срок не менял.
+        assignment_id:
+          type: [string, 'null']
+          format: uuid
+          description: Назначение, под которым записан звонок.
+    HistoricalCommentHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, payload]
+        properties:
+          event_type: { const: HISTORICAL_COMMENT }
+          payload:
+            $ref: '#/components/schemas/CommentPayload'
+    CommentHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { const: COMMENT }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/CommentPayload'
+    CommentPayload:
+      type: object
+      additionalProperties: false
+      required: [comment_text]
+      properties:
+        comment_text: { type: string, minLength: 1, maxLength: 4000 }
+    AssignmentHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { const: OPERATOR_ASSIGN }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/AssignmentPayload'
+    AssignmentPayload:
+      type: object
+      additionalProperties: false
+      required: [operator_id, kind]
+      properties:
+        operator_id:
+          type: string
+          format: uuid
+          description: Новый ответственный.
+        previous_operator_id:
+          type: [string, 'null']
+          format: uuid
+          description: Прежний ответственный; null, если клиент был свободен.
+        assignment_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [TAKE, REASSIGN, INHERITED]
+          description: TAKE — взят в работу; REASSIGN — перезакреплён; INHERITED — ожидание перенесено в новый цикл.
+    PublicationHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { const: PUBLICATION }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/PublicationPayload'
+    PublicationPayload:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Без деталей — квартал и администратор передаются в общих полях записи.
+    StageChangeHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { const: STAGE_CHANGE }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/StageChangePayload'
+    StageChangePayload:
+      type: object
+      additionalProperties: false
+      required: [to_stage, reason]
+      properties:
+        from_stage:
+          oneOf:
+          - $ref: '#/components/schemas/Stage'
+          - type: 'null'
+          description: null для первого этапа цикла.
+        to_stage:
+          $ref: '#/components/schemas/Stage'
+        reason:
+          type: string
+          enum: [TAKE, SNAPSHOT, WAIT_SET, WAIT_EXPIRED, RESTORE]
+          description: TAKE — первое взятие в работу; SNAPSHOT — цикл создан по срезу; WAIT_SET — установлен срок ожидания; WAIT_EXPIRED — срок истёк, клиент возвращён в пул; RESTORE — состояние восстановлено после отката.
+        wait_until: { type: [string, 'null'], format: date }
+        import_batch_id:
+          type: [string, 'null']
+          format: uuid
+          description: Пакет среза, создавший цикл; только для reason = SNAPSHOT.
+    ReservedHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEventBase'
+      - type: object
+        required: [event_type, work_quarter, payload]
+        properties:
+          event_type: { enum: [EMAIL_SENT, CLAIM_UPDATE] }
+          work_quarter: { $ref: '#/components/schemas/Quarter' }
+          payload:
+            $ref: '#/components/schemas/ReservedPayload'
+    ReservedPayload:
+      type: object
+      additionalProperties: true
+      description: EMAIL_SENT и CLAIM_UPDATE зарезервированы; состав деталей согласуется вместе с UC-14–19.
+    HistoryEventBatch:
+      type: object
+      required:
+      - source
+      - events
+      properties:
+        source:
+          type: string
+          enum: [OPERATOR_WORK]
+          description: Сервис-источник фактов.
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/HistoryEvent'
+    IngestResult:
+      type: object
+      required: [accepted, duplicates]
+      properties:
+        accepted:
+          type: integer
+          minimum: 0
+          description: Сохранённые новые записи.
+        duplicates:
+          type: integer
+          minimum: 0
+          description: Записи, уже сохранённые с тем же содержимым.
+    HistoryCleanupRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kcr_code, scope]
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+          description: ID операции очистки координатора.
+        kcr_code:
+          type: string
+        scope:
+          type: string
+          enum: [CLIENT, TARGETED]
+        event_ids:
+          type: array
+          maxItems: 5000
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: ID удалённых записей событий.
+        cycle_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: ID удалённых циклов обзвона; записи хроники этих циклов удаляются.
+      allOf:
+      - if:
+          properties:
+            scope: { const: TARGETED }
+          required: [scope]
+        then:
+          anyOf:
+          - required: [event_ids]
+          - required: [cycle_ids]
+    HistoryCleanupResult:
+      type: object
+      required: [operation_id, kcr_code, scope, deleted]
+      properties:
+        operation_id: { type: string, format: uuid }
+        kcr_code: { type: string }
+        scope: { type: string, enum: [CLIENT, TARGETED] }
+        deleted:
+          type: integer
+          minimum: 0
+          description: Число записей, удалённых первым применением команды.
+    HistoryEventListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryEvent'
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }

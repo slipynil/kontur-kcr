@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Внутреннее API — Operator Work Service (Python)
   version: 0.4.0-draft
-  summary: 'Процесс обзвона: взятие и перезакрепление клиентов, лента событий.'
+  summary: 'Процесс обзвона: взятие и перезакрепление клиентов, операционные события — источник хроники в Client History.'
   description: 'Актуальные правила — spec.md 1.5 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
     Квартал выбирается пользователем при загрузке; дата файла и имя листа не назначают его автоматически.
@@ -31,6 +31,10 @@ info:
     авторизацию отвечает Gateway: он проверяет JWT пользователя и передаёт личность и роль в заголовках X-User-Id и
     X-User-Role, которым сервис доверяет безусловно. Внутренний контур изолируется на уровне сети.
 
+    Уточнение 23.11.2026: ADR-0020 — публичную ленту карточки формирует Client History. Operator Work остаётся
+    владельцем операционных событий и передаёт каждый факт и команду очистки через свою таблицу history_outbox в той
+    же транзакции. Новый тип события COMMENT — комментарий текущего цикла без прошедшей даты.
+
     '
 servers:
 - url: http://operator-work-service:8000/internal/v1
@@ -39,7 +43,7 @@ tags:
 - name: Assignment
   description: Закрепление клиентов за операторами.
 - name: Events
-  description: Лента событий клиента.
+  description: Операционные события клиента — источник хроники в Client History.
 paths:
   /clients/{kcr_code}/take:
     post:
@@ -480,12 +484,15 @@ paths:
       tags:
       - Events
       operationId: listClientEvents
-      summary: Лента событий клиента [Предложение]
-      description: 'История событий клиента: используется карточкой клиента (`spec.md` §4.3),
+      summary: Операционные события клиента [Предложение]
+      description: 'Внутренний журнал событий клиента. Публичную ленту карточки формирует
+        Client History (ADR-0020): Operator Work передаёт каждый факт и команду
+        очистки через свою таблицу history_outbox.
 
-        Assistant Service (контекст для сводки и чата) и MCP-инструментом
 
-        `get_client_events`.
+        Журнал остаётся источником плана выборочной очистки для Import Worker, а
+        также доступен Assistant Service (контекст для сводки и чата) и
+        MCP-инструменту `get_client_events`.
 
 
         История обычно сохраняется, но удаляется вместе с явно удалёнными данными клиента/квартала и при последнем
@@ -536,14 +543,16 @@ paths:
       tags:
       - Events
       operationId: createClientEvent
-      summary: Добавить звонок или прошлый комментарий
+      summary: Добавить звонок, комментарий или прошлый комментарий
       description: |
         Сохранить звонок по назначению из формы. После перезакрепления автор может
         записать факт звонка в текущем цикле, без изменения этапа и срока.
         Если назначение актуально, будущий срок ожидания применяется вместе со звонком.
         Прошлый комментарий хранит время события отдельно от времени записи.
+        Комментарий текущего цикла (COMMENT) сохраняется без прошедшей даты.
         Назначение, этап и срок ожидания при этом сохраняются.
         Повтор с тем же request_id и данными возвращает сохранённое событие.
+        Каждый факт и команда очистки передаются в Client History через history_outbox (ADR-0020).
       parameters:
       - $ref: '#/components/parameters/KcrCode'
       - $ref: '#/components/parameters/UserIdHeader'
@@ -559,11 +568,13 @@ paths:
               oneOf:
               - $ref: '#/components/schemas/CallEventCreate'
               - $ref: '#/components/schemas/HistoricalCommentCreate'
+              - $ref: '#/components/schemas/CommentCreate'
               discriminator:
                 propertyName: event_type
                 mapping:
                   CALL_RESULT: '#/components/schemas/CallEventCreate'
                   HISTORICAL_COMMENT: '#/components/schemas/HistoricalCommentCreate'
+                  COMMENT: '#/components/schemas/CommentCreate'
       responses:
         '200':
           description: Событие уже было сохранено.
@@ -573,6 +584,7 @@ paths:
                 oneOf:
                 - $ref: '#/components/schemas/SavedCallEvent'
                 - $ref: '#/components/schemas/SavedHistoricalComment'
+                - $ref: '#/components/schemas/SavedCommentEvent'
         '201':
           description: Событие сохранено. Для звонка в ответе также есть wait_applied.
           content:
@@ -581,6 +593,7 @@ paths:
                 oneOf:
                 - $ref: '#/components/schemas/SavedCallEvent'
                 - $ref: '#/components/schemas/SavedHistoricalComment'
+                - $ref: '#/components/schemas/SavedCommentEvent'
         '403':
           description: Запись доступна только оператору.
         '404':
@@ -801,6 +814,7 @@ components:
       enum:
       - CALL_RESULT
       - HISTORICAL_COMMENT
+      - COMMENT
       - EMAIL_SENT
       - STAGE_CHANGE
       - CLAIM_UPDATE
@@ -866,6 +880,27 @@ components:
           type: [string, 'null']
           pattern: '^[0-9]{4}_Q[1-4]$'
           description: Текущий квартал работы или null для общей истории клиента.
+    CommentCreate:
+      type: object
+      additionalProperties: false
+      required: [event_type, request_id, work_quarter, comment_text]
+      properties:
+        document_quarters:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Явно выбранные исходные кварталы документов. Пустой список означает общее событие или отсутствие подтверждённой привязки.
+          items: { type: string, pattern: '^[0-9]{4}_Q[1-4]$' }
+        event_type: { const: COMMENT }
+        request_id:
+          type: string
+          format: uuid
+          description: Сохраняется при повторе запроса.
+        work_quarter:
+          type: string
+          pattern: '^[0-9]{4}_Q[1-4]$'
+          description: Квартал текущего цикла работы.
+        comment_text: { type: string, minLength: 1, maxLength: 4000 }
     SavedCallEvent:
       allOf:
       - $ref: '#/components/schemas/ClientEvent'
@@ -882,6 +917,13 @@ components:
         properties:
           event_type: { const: HISTORICAL_COMMENT }
           historical_event_date: { type: string, format: date-time }
+    SavedCommentEvent:
+      allOf:
+      - $ref: '#/components/schemas/ClientEvent'
+      - type: object
+        properties:
+          event_type: { const: COMMENT }
+          historical_event_date: { type: 'null' }
     ClientEventCreate:
       type: object
       required:
@@ -893,6 +935,7 @@ components:
             event_type:
               enum:
               - CALL_RESULT
+              - COMMENT
               - EMAIL_SENT
               - STAGE_CHANGE
               - CLAIM_UPDATE

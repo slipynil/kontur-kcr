@@ -25,6 +25,7 @@
 | Clients | `CLIENTS_PORT` | `8000` | `CLIENTS_HOST_PORT` | `8001` | `CLIENTS_ENDPOINT=http://127.0.0.1:8001` |
 | Import API | `IMPORT_API_PORT` | `8000` | `IMPORT_API_HOST_PORT` | `8002` | `IMPORT_API_ENDPOINT=http://127.0.0.1:8002` |
 | Operator Work | `OPERATOR_WORK_PORT` | `8000` | `OPERATOR_WORK_HOST_PORT` | `8003` | `OPERATOR_WORK_ENDPOINT=http://127.0.0.1:8003` |
+| Client History | `CLIENT_HISTORY_PORT` | `8000` | `CLIENT_HISTORY_HOST_PORT` | `8005` | `CLIENT_HISTORY_ENDPOINT=http://127.0.0.1:8005` |
 | Assistant | `ASSISTANT_PORT` | `8000` | `ASSISTANT_HOST_PORT` | `8004` | `ASSISTANT_ENDPOINT=http://127.0.0.1:8004` |
 
 ## Как поднять локально
@@ -46,7 +47,11 @@ cp .env.example .env
   порта обновляйте оба места по этой таблице.
 - Import Worker — это два процесса: `import-api` (слушает порт) и consumer
   очереди RabbitMQ (портов не имеет).
-- Assistant Service ещё не реализован; его значения зарезервированы.
+- Assistant Service и Client History Service ([ADR-0020](adr/0020-client-history-service.md))
+  ещё не реализованы; их значения зарезервированы.
+- Client History обращается к внутреннему API Gateway за именами авторов и к Clients
+  Service за наличием клиента. Адреса задаёт переменными своего `.env`; их имена
+  фиксируются в таблице при реализации сервиса.
 - `EXPOSE` в Dockerfile документирует дефолт; фактический порт определяет
   env-переменная в runtime (CMD в shell-форме раскрывает `${...}`).
 - Переменные окружения процесса имеют приоритет над `.env`-файлами.
