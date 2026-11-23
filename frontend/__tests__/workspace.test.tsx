@@ -86,6 +86,45 @@ it.each(['REGISTRY', 'SNAPSHOT'])('shows the spinner while a %s import is proces
   expect(screen.queryByText(/Файл обрабатывается/)).not.toBeInTheDocument();
 });
 
+it('shows why a registry workbook was rejected when the error has no client or row', async () => {
+  signIn('ADMIN');
+  search = '?batch=3f2504e0-4f89-41d4-9a0c-0305e82c3301';
+  (fetch as jest.Mock).mockResolvedValue(json({
+    id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301', filename: 'registry.xlsx',
+    import_type: 'REGISTRY', status: 'FAILED', total_rows: 0, success_count: 0, error_count: 1,
+    error_log: [{ sheet: '', row_number: 0, kcr_code: null, reason: 'Файл не удалось прочитать' }],
+  }));
+
+  render(<Imports reportOnly />);
+
+  expect(await screen.findByText('Импорт завершился с ошибкой.')).toBeVisible();
+  const table = screen.getByRole('table', { name: 'Ошибки импорта' });
+  const row = within(table).getByRole('row', { name: /Файл не удалось прочитать/ });
+  expect(within(row).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['—', '—', '—', 'Файл не удалось прочитать']);
+});
+
+it('shows snapshot row errors even when other rows were imported', async () => {
+  signIn('ADMIN');
+  search = '?batch=3f2504e0-4f89-41d4-9a0c-0305e82c3301';
+  const reason = 'Код КЦР отсутствует в реестре (client.kcr_code)';
+  const errors = Array.from({ length: 21 }, (_, index) => ({
+    sheet: '4 кв 2026', row_number: index + 2, kcr_code: String(index).padStart(5, '0'), reason,
+  }));
+  (fetch as jest.Mock).mockResolvedValue(json({
+    id: '3f2504e0-4f89-41d4-9a0c-0305e82c3301', filename: 'snapshot.xlsx', selected_quarter: '2026_Q4', snapshot_date: '2026-11-18',
+    import_type: 'SNAPSHOT', status: 'COMPLETED', total_rows: 22, success_count: 1, error_count: errors.length, error_log: errors,
+  }));
+
+  render(<Imports reportOnly />);
+
+  expect(await screen.findByText('Завершён')).toBeVisible();
+  const table = screen.getByRole('table', { name: 'Ошибки импорта' });
+  expect(within(table).getByRole('row', { name: `4 кв 2026 2 00000 ${reason}` })).toBeVisible();
+  expect(within(table).queryByText('00020')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Страница 2' }));
+  expect(within(table).getByRole('row', { name: `4 кв 2026 22 00020 ${reason}` })).toBeVisible();
+});
+
 it('logs in with contract field names and no demo credentials', async () => {
   (fetch as jest.Mock).mockImplementation((url: string) => Promise.resolve(json(url.endsWith('/auth/login') ? { token: 'jwt', token_type: 'Bearer', expires_in: 3600, user } : page)));
   render(<Workspace />);
