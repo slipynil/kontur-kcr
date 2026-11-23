@@ -12,6 +12,7 @@ class Settings:
     max_upload_bytes: int = 32 * 1024**2
     clients_url: str | None = None
     operator_work_url: str | None = None
+    errors_history_url: str | None = None
 
     @classmethod
     def from_env(cls) -> Self:
@@ -22,4 +23,5 @@ class Settings:
             max_upload_bytes=int(os.environ.get("IMPORT_MAX_UPLOAD_BYTES", 32 * 1024**2)),
             clients_url=os.environ.get("IMPORT_LOCAL_CLIENTS_URL") or None,
             operator_work_url=os.environ.get("IMPORT_OPERATOR_WORK_URL") or None,
+            errors_history_url=os.environ.get("IMPORT_ERRORS_HISTORY_URL") or None,
         )

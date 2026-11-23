@@ -21,7 +21,7 @@ from import_worker import consumer
 from import_worker.api import create_app
 from import_worker.broker import QUEUE_ARGUMENTS, QUEUE_NAME, Job, publish_one
 from import_worker.config import Settings
-from import_worker.database import ImportBatch, OperatorDelivery
+from import_worker.database import ImportBatch, ImportError, ImportErrorDelivery, OperatorDelivery
 from import_worker.error_report import XLSX_MEDIA_TYPE
 
 
@@ -44,6 +44,28 @@ async def upload(
 
 def delivery(body: bytes) -> AsyncMock:
     return AsyncMock(spec=AbstractIncomingMessage, body=body)
+
+
+async def assert_outbox(sessions, batch_id: UUID, import_type: str, errors: list[dict]) -> None:
+    async with sessions() as db:
+        rows = await db.execute(
+            select(ImportError, ImportErrorDelivery)
+            .join(ImportErrorDelivery, ImportErrorDelivery.source_error_id == ImportError.id)
+            .where(ImportError.batch_id == batch_id)
+            .order_by(ImportError.id)
+        )
+        for (row, delivery), error in zip(rows, errors, strict=True):
+            assert json.loads(delivery.payload) == {
+                "errors": [
+                    {
+                        "source_error_id": row.id,
+                        "batch_id": str(batch_id),
+                        "import_type": import_type,
+                        "recorded_at": row.recorded_at.isoformat(),
+                        **error,
+                    }
+                ]
+            }
 
 
 async def test_invalid_delivery(tmp_path: Path) -> None:
@@ -255,6 +277,7 @@ async def test_postgres_upload_retry_and_report(
                 }
             ]
             assert {"selected_quarter", "snapshot_date"}.isdisjoint(report)
+            await assert_outbox(sessions, registry_id, "REGISTRY", report["error_log"])
             async with sessions() as db:
                 batch = await db.get(ImportBatch, registry_id)
                 assert batch.selected_quarter is None and batch.snapshot_date is None
@@ -314,6 +337,7 @@ async def test_postgres_upload_retry_and_report(
                 (4, "404"),
             ]
             assert "отсутствует в реестре" in report["error_log"][1]["reason"]
+            await assert_outbox(sessions, snapshot_id, "SNAPSHOT", report["error_log"])
             download = await api.get(f"/internal/v1/imports/{snapshot_id}/errors.xlsx")
             assert (
                 download.status_code == 200 and download.headers["content-type"] == XLSX_MEDIA_TYPE

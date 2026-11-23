@@ -23,6 +23,20 @@ API доступен на `http://import-api:8000` внутри сети Compose
 
 Откат последнего применённого пакета фиксирует план в Import DB. API последовательно подтверждает восстановление в Clients, очистку Operator Work и завершение отката в Clients. Если запрос прервался, повтор с исходным `operation_id` продолжает неподтверждённые шаги. Отсутствующий пакет возвращает `404`, более ранний — `409 IMPORT_NOT_LATEST`. Если набор целей очистки изменился, конфликт требует сверки сохранённой команды. См. [контракт отката](../../docs/api/import-operator-work-contract.md#откат-и-выборочная-очистка).
 
+## Доставка ошибок в Errors History
+
+Перед обновлением остановите старый Worker, примените миграцию `0006_errors_outbox` и запустите новый Worker. Новые ошибки сохраняются вместе с готовым запросом в `import_errors_outbox`. У прежних строк время остаётся пустым, их перенос выполняется отдельно.
+
+Установите `IMPORT_ERRORS_HISTORY_URL` в окружении Worker или в его локальном `.env`. Укажите базовый URL, например `http://errors-history:8000`, доступный из контейнера Worker. При пустой переменной исходящие запросы остаются в очереди и будут отправлены после запуска Worker с настроенным URL.
+
+Для локального запуска двух Compose-проектов используйте следующий пример.
+
+1. Из `services/errors-history` запустите `docker compose -p kontur-errors-history up --build -d --wait`.
+2. В `services/import-worker/.env` задайте `IMPORT_ERRORS_HISTORY_URL=http://errors-history:8000`. Из каталога Import Worker запустите `docker compose -p kontur-import up --build -d`.
+3. Подключите контейнер Worker к сети Errors History командой `docker network connect kontur-errors-history_default $(docker compose -p kontur-import ps -q import-worker)`. После пересоздания контейнера подключите его снова.
+
+После коммита отправитель передаёт одну ошибку за запрос. Повторы используют то же тело с тем же `source_error_id` и датой. При временном сбое интервал повторов растёт до 60 секунд. Состояние видно в `import_errors_outbox` по `attempt_count`, `next_attempt_at` и `delivered_at`. HTTP 409 сохраняется в `rejected_status`. Такая запись остаётся для сверки по `source_error_id`, остальные продолжают доставляться.
+
 ## Проверки
 
 ```sh
@@ -35,5 +49,7 @@ docker compose -p kontur-import-test -f compose.yaml -f compose.test.yaml run --
 ```
 
 Последняя команда запускает интеграционные тесты на отдельном стенде с PostgreSQL и RabbitMQ. Clients Service в этих тестах заменён HTTP-имитацией. Для запуска проверок с уже поднятыми тестовыми службами задайте `IMPORT_TEST_DATABASE_URL` и `IMPORT_TEST_AMQP_URL`. Перед тестами примените миграции к пустой тестовой Import DB. Тест RabbitMQ использует ту же очередь, что и Worker, поэтому запускайте его на отдельном брокере.
+
+Для проверок outbox отдельно запустите `poetry run python -m pytest tests/test_errors_history.py` с `IMPORT_TEST_DATABASE_URL`. Тесты создают временные БД, поэтому тестовой роли нужно право `CREATE DATABASE`. Они проверяют миграцию, атомарную запись, недоступность и конфликт Errors History через HTTP-имитацию.
 
 Переменные `IMPORT_TEST_CLIENTS_URL` и `IMPORT_TEST_OPERATOR_WORK_URL` включают проверку истории и переноса остатков через HTTP с настоящими сервисами. Используйте отдельные тестовые БД.

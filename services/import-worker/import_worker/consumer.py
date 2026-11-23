@@ -25,6 +25,7 @@ from import_worker.database import (
     applied_fingerprints,
     lock_imports,
 )
+from import_worker.errors_history import HTTP_TIMEOUT, deliver_errors
 from import_worker.models import ImportErrorRow, ImportParameters, ImportType, ParsedImport, Status
 from import_worker.operator_work import prepare_deliveries, send_delivery
 from import_worker.parser import InvalidWorkbook, parse_workbook
@@ -80,12 +81,12 @@ async def prepare(sessions: async_sessionmaker[AsyncSession], batch_id: UUID, pa
                 parse_workbook, path, params, batch.file_sha256, filename=batch.filename
             )
         except InvalidWorkbook as exc:
-            add_errors(db, batch, [file_error(str(exc))])
+            await add_errors(db, batch, [file_error(str(exc))])
             finish(batch, Status.FAILED)
             return False
 
         batch.total_rows = parsed.total_rows
-        add_errors(db, batch, parsed.errors)
+        await add_errors(db, batch, parsed.errors)
         if params.import_type is ImportType.SNAPSHOT:
             for error in parsed.errors:
                 if error.row_number:
@@ -100,7 +101,7 @@ async def prepare(sessions: async_sessionmaker[AsyncSession], batch_id: UUID, pa
                     )
         if not parsed.rows:
             if not parsed.errors:
-                add_errors(db, batch, [file_error("Книга не содержит строк для импорта")])
+                await add_errors(db, batch, [file_error("Книга не содержит строк для импорта")])
             finish(batch, Status.FAILED)
             return False
         batch.apply_payload = ParsedImport(rows=parsed.rows).model_dump(
@@ -171,7 +172,7 @@ async def apply_claimed(
         try:
             result = await apply_import(clients, batch.id, batch.uploaded_by, params, parsed)
         except ApplyRejected:
-            add_errors(db, batch, [file_error("Clients Service отклонил параметры пакета")])
+            await add_errors(db, batch, [file_error("Clients Service отклонил параметры пакета")])
             finish(batch, Status.FAILED)
             return False
         errors = [
@@ -181,7 +182,7 @@ async def apply_claimed(
             )
             for error in result.errors
         ]
-        add_errors(db, batch, errors)
+        await add_errors(db, batch, errors)
         batch.success_count += result.accepted_rows + result.verified_rows
         if result.accepted_rows:
             batch.clients_applied_at = func.clock_timestamp()
@@ -345,7 +346,26 @@ async def run(settings: Settings) -> None:
                 operator_work = await stack.enter_async_context(
                     httpx.AsyncClient(base_url=settings.operator_work_url, timeout=30)
                 )
-            await consume(settings, sessions, clients, operator_work)
+            async with asyncio.TaskGroup() as tasks:
+                sender = None
+                if settings.errors_history_url:
+                    try:
+                        history = await stack.enter_async_context(
+                            httpx.AsyncClient(
+                                base_url=settings.errors_history_url,
+                                timeout=HTTP_TIMEOUT,
+                                trust_env=False,
+                            )
+                        )
+                    except httpx.InvalidURL, ValueError:
+                        logger.error("Некорректный IMPORT_ERRORS_HISTORY_URL")
+                    else:
+                        sender = tasks.create_task(deliver_errors(sessions, history))
+                try:
+                    await consume(settings, sessions, clients, operator_work)
+                finally:
+                    if sender is not None:
+                        sender.cancel()
     finally:
         await engine.dispose()
 

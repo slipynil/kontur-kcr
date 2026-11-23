@@ -70,6 +70,7 @@ services:
       <<: *import-environment
       IMPORT_LOCAL_CLIENTS_URL: ${IMPORT_LOCAL_CLIENTS_URL:-}
       IMPORT_OPERATOR_WORK_URL: ${IMPORT_OPERATOR_WORK_URL:-}
+      IMPORT_ERRORS_HISTORY_URL: ${IMPORT_ERRORS_HISTORY_URL:-}
     volumes:
       - import-uploads:/var/lib/import-uploads
     depends_on:
