@@ -30,8 +30,9 @@
    ```
 
    Все `change-me` заменить: `JWT_SECRET`,
-   пароли четырёх БД и RabbitMQ. Обязательно до первого деплоя: compose
+   пароли пяти БД и RabbitMQ. Обязательно до первого деплоя: compose
    падает при отсутствующих обязательных переменных (`:?` в compose.yaml).
+   Для Client History это `CLIENT_HISTORY_DB_PASSWORD`.
 
 Первая доставка CI создаст `/srv/kontur/server/compose.yaml`,
 `/srv/kontur/services/gateway/migrations/` и поднимет стек. Вручную запускать
@@ -46,10 +47,18 @@
 | clients | `kontur-kcr-clients` |
 | import-api / import-worker | `kontur-kcr-import-worker` |
 | operator-work | `kontur-kcr-operator-work` |
-| identity-db, clients-db, import-db, operator-work-db | `postgres:17` |
+| client-history | `kontur-kcr-client-history` |
+| identity-db, clients-db, import-db, operator-work-db, client-history-db | `postgres:17` |
 | rabbitmq | `rabbitmq:4` |
 
 Assistant Service пока не реализован и не развёрнут.
+
+Client History хранит хронику взаимодействия клиента ([ADR-0020](../docs/adr/0020-client-history-service.md)):
+имена авторов читает во внутреннем API Gateway, наличие клиента — в Clients
+(`CLIENT_HISTORY_GATEWAY_URL`, `CLIENT_HISTORY_CLIENTS_URL`, по умолчанию
+`http://gateway:8080` и `http://clients:8000`). Публичного маршрута у сервиса пока
+нет: чтение ленты через Gateway и источник фактов в Operator Work подключаются
+отдельными задачами.
 
 Миграции: Python-сервисы — one-shot контейнеры `alembic upgrade head` из тех же
 образов (пересоздаются при смене образа); gateway — `migrate/migrate` с

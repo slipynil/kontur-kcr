@@ -211,6 +211,50 @@ services:
       operator-work-db:
         condition: service_healthy
 
+  client-history-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CLIENT_HISTORY_DB_NAME:-client_history}
+      POSTGRES_USER: ${CLIENT_HISTORY_DB_USER:-client_history}
+      POSTGRES_PASSWORD: ${CLIENT_HISTORY_DB_PASSWORD:?CLIENT_HISTORY_DB_PASSWORD is required in server/.env}
+    volumes:
+      - client_history_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CLIENT_HISTORY_DB_USER:-client_history} -d ${CLIENT_HISTORY_DB_NAME:-client_history}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  client-history-migrate:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-client-history:${IMAGE_TAG:-latest}
+    restart: "no"
+    environment:
+      CLIENT_HISTORY_DATABASE_URL: postgresql+psycopg://${CLIENT_HISTORY_DB_USER:-client_history}:${CLIENT_HISTORY_DB_PASSWORD:?CLIENT_HISTORY_DB_PASSWORD is required in server/.env}@client-history-db:5432/${CLIENT_HISTORY_DB_NAME:-client_history}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      client-history-db:
+        condition: service_healthy
+
+  client-history:
+    image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-client-history:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CLIENT_HISTORY_DATABASE_URL: postgresql+psycopg://${CLIENT_HISTORY_DB_USER:-client_history}:${CLIENT_HISTORY_DB_PASSWORD:?CLIENT_HISTORY_DB_PASSWORD is required in server/.env}@client-history-db:5432/${CLIENT_HISTORY_DB_NAME:-client_history}
+      CLIENT_HISTORY_PORT: "8000"
+      # Имена авторов сервис читает во внутреннем API Gateway, наличие клиента — в Clients.
+      CLIENT_HISTORY_GATEWAY_URL: ${CLIENT_HISTORY_GATEWAY_URL:-http://gateway:8080}
+      CLIENT_HISTORY_CLIENTS_URL: ${CLIENT_HISTORY_CLIENTS_URL:-http://clients:8000}
+    depends_on:
+      client-history-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:' + __import__('os').environ['CLIENT_HISTORY_PORT'] + '/health/ready', timeout=5)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+
   frontend:
     image: ghcr.io/${GHCR_OWNER:-slipynil}/kontur-kcr-frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -225,5 +269,6 @@ volumes:
   clients_data:
   import_data:
   operator_work_data:
+  client_history_data:
   rabbitmq_data:
   import_uploads:

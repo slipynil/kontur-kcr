@@ -30,6 +30,10 @@ services:
     build:
       context: ../services/operator-work
 
+  client-history:
+    build:
+      context: ../services/client-history
+
   frontend:
     build:
       context: ../frontend
