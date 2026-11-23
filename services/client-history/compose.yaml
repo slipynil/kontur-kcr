@@ -1,0 +1,50 @@
+x-client-history-environment: &client-history-environment
+  CLIENT_HISTORY_DATABASE_URL: postgresql+psycopg://client_history:${CLIENT_HISTORY_POSTGRES_PASSWORD:-client-history-dev}@client-history-db:5432/client_history
+
+services:
+  client-history-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: client_history
+      POSTGRES_USER: client_history
+      POSTGRES_PASSWORD: ${CLIENT_HISTORY_POSTGRES_PASSWORD:-client-history-dev}
+    volumes:
+      - client-history-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U client_history -d client_history"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  client-history-migrate:
+    build:
+      context: .
+      target: runtime
+    environment: *client-history-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      client-history-db:
+        condition: service_healthy
+
+  client-history:
+    build:
+      context: .
+      target: runtime
+    environment:
+      <<: *client-history-environment
+      CLIENT_HISTORY_PORT: ${CLIENT_HISTORY_PORT:-8000}
+      CLIENT_HISTORY_GATEWAY_URL: ${CLIENT_HISTORY_GATEWAY_URL:-}
+      CLIENT_HISTORY_CLIENTS_URL: ${CLIENT_HISTORY_CLIENTS_URL:-}
+    ports:
+      - "127.0.0.1:${CLIENT_HISTORY_HOST_PORT:-8005}:${CLIENT_HISTORY_PORT:-8000}"
+    depends_on:
+      client-history-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:' + __import__('os').environ['CLIENT_HISTORY_PORT'] + '/health/ready', timeout=5)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+
+volumes:
+  client-history-db:

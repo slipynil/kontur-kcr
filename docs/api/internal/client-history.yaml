@@ -363,8 +363,11 @@ components:
           format: uuid
           description: Прежний ответственный; null, если клиент был свободен.
         assignment_id:
-          type: string
+          type:
+          - string
+          - 'null'
           format: uuid
+          description: Новое назначение; пусто у записей, перенесённых из журнала Operator Work до ADR-0020.
         kind:
           type: string
           enum: [TAKE, REASSIGN, INHERITED]
@@ -503,6 +506,64 @@ components:
           type: integer
           minimum: 0
           description: Число записей, удалённых первым применением команды.
+    StoredHistoryEvent:
+      allOf:
+      - $ref: '#/components/schemas/HistoryEvent'
+      - type: object
+        description: Запись хроники при чтении — поля, которые присваивает сервис, и поля совместимости публичного контракта.
+        required: [seq, source, author_id, comment_text, created_at]
+        properties:
+          seq:
+            type: integer
+            format: int64
+            description: Порядок событий с одной датой; присваивает база данных.
+          source:
+            type: string
+            enum: [OPERATOR_WORK]
+          author_id:
+            type: string
+            format: uuid
+            deprecated: true
+            description: 'Совпадает с actor_id; у события без автора — нулевой UUID.'
+          comment_text:
+            type: string
+            deprecated: true
+            description: 'Текст комментария или готовый заголовок системного события.'
+          created_at:
+            type: string
+            format: date-time
+            deprecated: true
+            description: Совпадает с recorded_at.
+          historical_event_date:
+            type:
+            - string
+            - 'null'
+            format: date-time
+            deprecated: true
+            description: 'Для HISTORICAL_COMMENT совпадает с occurred_at, иначе null.'
+          call_result:
+            deprecated: true
+            oneOf:
+            - $ref: '#/components/schemas/CallResult'
+            - type: 'null'
+          promised_date:
+            type:
+            - string
+            - 'null'
+            format: date
+            deprecated: true
+          wait_until:
+            type:
+            - string
+            - 'null'
+            format: date
+            deprecated: true
+          stage:
+            deprecated: true
+            oneOf:
+            - $ref: '#/components/schemas/Stage'
+            - type: 'null'
+            description: 'Для STAGE_CHANGE — to_stage; для звонка с применённым сроком — WAIT_DEADLINE.'
     HistoryEventListResponse:
       type: object
       required: [items, page, page_size, total]
@@ -510,7 +571,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/HistoryEvent'
+            $ref: '#/components/schemas/StoredHistoryEvent'
         page: { type: integer }
         page_size: { type: integer }
         total: { type: integer }

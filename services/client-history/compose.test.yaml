@@ -1,0 +1,12 @@
+services:
+  client-history-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      # Tests create and drop their own temporary databases in this PostgreSQL.
+      CLIENT_HISTORY_TEST_ADMIN_URL: postgresql+psycopg://client_history:${CLIENT_HISTORY_POSTGRES_PASSWORD:-client-history-dev}@client-history-db:5432/postgres
+    depends_on:
+      client-history-migrate:
+        condition: service_completed_successfully

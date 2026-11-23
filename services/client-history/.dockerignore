@@ -1,0 +1,11 @@
+# Whitelist: только то, что Dockerfile копирует в контекст сборки
+# (tests нужны для stage test, где внутри образа гоняется pytest).
+*
+!pyproject.toml
+!poetry.lock
+!client_history
+!migrations
+!alembic.ini
+!tests
+# Локальный мусор не тащим даже внутри разрешённых каталогов.
+**/__pycache__

@@ -22,6 +22,7 @@ depends = [
   "install:clients",
   "install:import-worker",
   "install:operator-work",
+  "install:client-history",
 ]
 
 [tasks."install:root"]
@@ -48,6 +49,10 @@ run = "poetry env use 3.14 && poetry install --no-interaction"
 dir = "services/operator-work"
 run = "poetry env use 3.14 && poetry install --no-root --no-interaction"
 
+[tasks."install:client-history"]
+dir = "services/client-history"
+run = "poetry env use 3.14 && poetry install --no-interaction"
+
 # --- Локальная сборка ---
 
 [tasks.build]
@@ -72,6 +77,7 @@ depends = [
   "clients:test",
   "import-worker:test",
   "operator-work:test",
+  "client-history:test",
 ]
 
 [tasks."gateway:test"]
@@ -94,6 +100,10 @@ run = "poetry run pytest -v"
 dir = "services/operator-work"
 run = "poetry run python -m pytest -v"
 
+[tasks."client-history:test"]
+dir = "services/client-history"
+run = "poetry run pytest -v"
+
 # --- Линт (зеркалит CI) ---
 
 [tasks.lint]
@@ -104,6 +114,7 @@ depends = [
   "clients:lint",
   "import-worker:lint",
   "operator-work:lint",
+  "client-history:lint",
 ]
 
 [tasks."gateway:lint"]
@@ -124,6 +135,10 @@ run = "poetry run ruff check . && poetry run ruff format --check ."
 
 [tasks."operator-work:lint"]
 dir = "services/operator-work"
+run = "poetry run ruff check . && poetry run ruff format --check ."
+
+[tasks."client-history:lint"]
+dir = "services/client-history"
 run = "poetry run ruff check . && poetry run ruff format --check ."
 
 # --- Локальный стек (server/compose.yaml + server/compose.build.yaml) и e2e ---
