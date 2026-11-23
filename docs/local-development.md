@@ -47,11 +47,13 @@ cp .env.example .env
   порта обновляйте оба места по этой таблице.
 - Import Worker — это два процесса: `import-api` (слушает порт) и consumer
   очереди RabbitMQ (портов не имеет).
-- Assistant Service и Client History Service ([ADR-0020](adr/0020-client-history-service.md))
-  ещё не реализованы; их значения зарезервированы.
-- Client History обращается к внутреннему API Gateway за именами авторов и к Clients
-  Service за наличием клиента. Адреса задаёт переменными своего `.env`; их имена
-  фиксируются в таблице при реализации сервиса.
+- Assistant Service ещё не реализован; его значения зарезервированы.
+- Client History Service ([ADR-0020](adr/0020-client-history-service.md)) реализован
+  в `services/client-history`; источник фактов (Operator Work) и маршрут чтения в Gateway
+  подключаются отдельно. Кроме URL базы он читает `CLIENT_HISTORY_GATEWAY_URL`
+  (имена авторов, внутренний API Gateway) и `CLIENT_HISTORY_CLIENTS_URL` (наличие клиента).
+  В стеке dev-сервера это `http://gateway:8080` и `http://clients:8000`; переменные
+  необязательны, их влияние описано в README сервиса.
 - `EXPOSE` в Dockerfile документирует дефолт; фактический порт определяет
   env-переменная в runtime (CMD в shell-форме раскрывает `${...}`).
 - Переменные окружения процесса имеют приоритет над `.env`-файлами.

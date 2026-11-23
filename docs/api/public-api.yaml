@@ -2040,8 +2040,8 @@ components:
           description: 'Для STAGE_CHANGE совпадает с payload.to_stage; для звонка с применённым сроком — WAIT_DEADLINE.'
     EventPayload:
       type: object
-      additionalProperties: false
-      description: Детали события; состав ключей зависит от `event_type`. PUBLICATION — без деталей.
+      additionalProperties: true
+      description: Детали события; состав ключей зависит от `event_type`. PUBLICATION — без деталей. Ключи зарезервированных типов EMAIL_SENT и CLAIM_UPDATE согласуются вместе с UC-14–19; строгий состав каждого типа задаёт внутренний контракт Client History.
       properties:
         call_result:
           $ref: '#/components/schemas/CallResult'
