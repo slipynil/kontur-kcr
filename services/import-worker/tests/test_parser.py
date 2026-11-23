@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from conftest import REGISTRY_HEADER, WorkbookFactory
+from conftest import REGISTRY_HEADER, SNAPSHOT_HEADER, WorkbookFactory
 from openpyxl import Workbook
 
 from import_worker.clients import fingerprint
@@ -47,11 +47,11 @@ def test_snapshot_mixed_rows_and_periods(
             {
                 "2 кв 2026": [
                     ["Код КЦР", None, None, "Всего", "Непередано", "Исходный квартал"],
-                    ["001", None, None, None, "6.0", "2026_Q1"],
+                    ["001", None, None, None, 6.0, "2026_Q1"],
                     ["001", None, None, 111, 0, "2026_Q2"],
                     ["001", None, None, 111, 3, "2026_Q2"],
-                    ["002", None, None, "111.5", 0, "2026_Q2"],
-                    ["003", None, None, "111.0", -1, "2026_Q2"],
+                    ["002", None, None, 111.5, 0, "2026_Q2"],
+                    ["003", None, None, 111.0, -1, "2026_Q2"],
                     [None, None, "Клиент без кода", 100, 2],
                     ["004", None, None, "#N/A", 2],
                     ["005", None, None, 10, 3],
@@ -94,7 +94,13 @@ def test_snapshot_uses_named_columns_and_reports_future_origins(
         xlsx(
             {
                 "II квартал 2026": [
-                    ["Непереданные оригиналы документов", "Исходный квартал", "Код КЦР", "Заметка"],
+                    [
+                        "Непереданные оригиналы документов",
+                        "Исходный квартал",
+                        "Код КЦР",
+                        "Заметка",
+                        "Документов всего",
+                    ],
                     [0, "2026_Q1", "001", "Не счётчик"],
                     [1, "2026_Q3", "002"],
                     [2, "2026_Q2", "003"],
@@ -258,8 +264,9 @@ def test_registry_matches_statuses_without_case_and_reports_rejected_rows(
 def test_id_format_and_fingerprint(tmp_path: Path) -> None:
     path = tmp_path / "format.xlsx"
     book = Workbook()
-    book.active.append([12, None, None, 111, 5])
-    book.active["A1"].number_format = "0000"
+    book.active.append(SNAPSHOT_HEADER)
+    book.active.append([12, 111, 5])
+    book.active["A2"].number_format = "0000"
     book.save(path)
     book.close()
     inputs = params()
@@ -272,15 +279,59 @@ def test_id_format_and_fingerprint(tmp_path: Path) -> None:
     assert fingerprint(inputs, row) != fingerprint(earlier, earlier_row)
 
 
-@pytest.mark.parametrize(("raw", "value"), [("111", 111), ("111.0", 111), ("0", 0), (None, None)])
-def test_counters(raw: str | None, value: int | None) -> None:
+@pytest.mark.parametrize(("raw", "value"), [(111, 111), (111.0, 111), (0, 0), (None, None)])
+def test_counters(raw: object, value: int | None) -> None:
     assert counter(raw, "Всего документов") == value
 
 
-@pytest.mark.parametrize("raw", ["111.5", "-1", "NaN", "2147483648"])
-def test_invalid_counters(raw: str) -> None:
+@pytest.mark.parametrize("raw", [111.5, -1, float("nan"), 2147483648, "111", True])
+def test_invalid_counters(raw: object) -> None:
     with pytest.raises(InvalidRow):
         counter(raw, "Всего документов")
+
+
+def test_snapshot_validates_headings_and_reports_both_counter_cells(
+    tmp_path: Path, xlsx: WorkbookFactory
+) -> None:
+    path = tmp_path / "stored-batch.xlsx"
+    path.write_bytes(
+        xlsx(
+            {
+                "Срез": [
+                    [],
+                    ["Название", "дОКУМЕНТОВ ВСЕГО", "КОД кцр", "ВСЕГО не отправлено документов"],
+                    ["Клиент", "11", "001", "=1/0"],
+                    ["Клиент", 111.0, "002", 0],
+                ],
+                "Неверный заголовок": [
+                    ["Код КЦР", "Опечатка", "Всего не отправлено документов"],
+                    ["003", 12, 1],
+                ],
+                "Дублирующийся заголовок": [
+                    [*SNAPSHOT_HEADER, "ВСЕГО документов"],
+                    ["004", 12, 1, 10],
+                ],
+                "Без заголовков": [["005", 12, 1]],
+            }
+        )
+    )
+    result = parse_workbook(path, params(), filename="uploaded.xlsx")
+    assert result.total_rows == 2
+    assert [row.item.client.kcr_code for row in result.rows] == ["002"]
+    assert result.rows[0].item.snapshot.total_documents == 111
+    assert [(error.sheet, error.row_number, error.kcr_code) for error in result.errors] == [
+        ("Срез", 3, "001"),
+        ("Срез", 3, "001"),
+        ("Неверный заголовок", 1, None),
+        ("Дублирующийся заголовок", 1, None),
+        ("Без заголовков", 1, None),
+    ]
+    assert "B3" in result.errors[0].reason
+    assert "D3" in result.errors[1].reason
+    assert "отсутствует заголовок «Документов всего»" in result.errors[2].reason
+    assert "D1" in result.errors[3].reason
+    assert "не найдена строка заголовков" in result.errors[4].reason
+    assert all("uploaded.xlsx" in error.reason for error in result.errors)
 
 
 def test_corrupt_workbook(tmp_path: Path) -> None:

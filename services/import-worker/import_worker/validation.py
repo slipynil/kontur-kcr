@@ -1,5 +1,4 @@
 import re
-from decimal import Decimal, InvalidOperation
 
 QUARTER = re.compile(r"[0-9]{4}_Q[1-4]")
 REGISTRY_STATUS_TAGS = {
@@ -20,13 +19,14 @@ def normalized_text(value: str) -> str:
     return " ".join(value.casefold().replace("ё", "е").split())
 
 
-def counter(value: str | None, label: str) -> int | None:
+def counter(value: object, label: str) -> int | None:
     if value is None:
         return None
-    try:
-        number = Decimal(value.replace(" ", "").replace("\xa0", "").replace(",", "."))
-    except InvalidOperation as exc:
-        raise InvalidRow(f"{label}: требуется целое неотрицательное число") from exc
-    if not number.is_finite() or not 0 <= number <= 2_147_483_647 or number % 1:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not 0 <= value <= 2_147_483_647
+        or value % 1
+    ):
         raise InvalidRow(f"{label}: требуется целое неотрицательное число")
-    return int(number)
+    return int(value)

@@ -11,7 +11,7 @@ import aio_pika
 import httpx
 import pytest
 from aio_pika.abc import AbstractIncomingMessage, AbstractRobustChannel
-from conftest import REGISTRY_HEADER, WorkbookFactory
+from conftest import REGISTRY_HEADER, SNAPSHOT_HEADER, WorkbookFactory
 from openpyxl import load_workbook
 from pamqp.commands import Basic
 from sqlalchemy import select
@@ -55,7 +55,10 @@ async def test_invalid_delivery(tmp_path: Path) -> None:
 
 
 async def test_worker_records_excel_errors_without_clients(
-    tmp_path: Path, xlsx: WorkbookFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    xlsx: WorkbookFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     db_url = os.getenv("IMPORT_TEST_DATABASE_URL")
     if not db_url:
@@ -71,7 +74,7 @@ async def test_worker_records_excel_errors_without_clients(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=create_app(settings)), base_url="http://import"
         ) as api:
-            invalid_only = xlsx({"Срез": [["bad", None, None, 9, -1]]})
+            invalid_only = xlsx({"Срез": [SNAPSHOT_HEADER, ["bad", 9, -1]]})
             batch_id = await upload(api, invalid_only, "SNAPSHOT", "2026-04-10")
             assert await publish_one(sessions, channel)
             message = delivery(exchange.publish.await_args.args[0].body)
@@ -80,10 +83,22 @@ async def test_worker_records_excel_errors_without_clients(
             message.ack.assert_awaited_once()
             report = (await api.get(f"/internal/v1/imports/{batch_id}")).json()
             assert report["status"] == "FAILED"
-            assert report["error_log"][0]["row_number"] == 1
+            assert report["error_log"] == [
+                {
+                    "sheet": "Срез",
+                    "row_number": 2,
+                    "kcr_code": "bad",
+                    "reason": "Файл «test.xlsx», C2 — Всего не отправлено документов: "
+                    "требуется целое неотрицательное число",
+                }
+            ]
+            assert any(
+                "test.xlsx" in record.message and "C2" in record.message
+                for record in caplog.records
+            )
             assert not list(tmp_path.iterdir())
 
-            mixed = xlsx({"Срез": [["bad", None, None, 9, -1], ["001", None, None, 9, 1]]})
+            mixed = xlsx({"Срез": [SNAPSHOT_HEADER, ["bad", 9, -1], ["001", 9, 1]]})
             batch_id = await upload(api, mixed, "SNAPSHOT", "2026-04-10")
             assert await publish_one(sessions, channel)
             message = delivery(exchange.publish.await_args.args[0].body)
@@ -96,7 +111,7 @@ async def test_worker_records_excel_errors_without_clients(
             assert report["clients_applied_at"] is None and report["error_count"] == 1
             async with sessions() as db:
                 batch = await db.get(ImportBatch, batch_id)
-                assert batch.apply_payload["rows"][0]["row_number"] == 2
+                assert batch.apply_payload["rows"][0]["row_number"] == 3
     finally:
         await engine.dispose()
 
@@ -245,7 +260,7 @@ async def test_postgres_upload_retry_and_report(
                 assert batch.selected_quarter is None and batch.snapshot_date is None
             assert not work_calls
 
-            header = ["Код КЦР", None, None, None, None, "Исходный квартал"]
+            header = ["Код КЦР", None, None, *SNAPSHOT_HEADER[1:], "Исходный квартал"]
             valid = [kcr, None, None, None, 0, "2026_Q1"]
             snapshot = xlsx(
                 {
@@ -528,7 +543,7 @@ async def test_live_clients_quarter_history(tmp_path: Path, xlsx: WorkbookFactor
             operator = {"X-User-Id": str(uuid4()), "X-User-Role": "OPERATOR"}
             first_quarter = {"work_quarter": "2026_Q1"}
             wait_until = "2036-11-21"
-            header = ["Код КЦР", None, None, None, None, "Исходный квартал"]
+            header = ["Код КЦР", None, None, *SNAPSHOT_HEADER[1:], "Исходный квартал"]
             cases = [
                 ("2026_Q1", "2026-03-30", 111, 10),
                 ("2026_Q2", "2026-04-05", None, 6),

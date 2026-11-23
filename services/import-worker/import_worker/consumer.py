@@ -76,7 +76,9 @@ async def prepare(sessions: async_sessionmaker[AsyncSession], batch_id: UUID, pa
 
         params = ImportParameters.model_validate(batch, from_attributes=True)
         try:
-            parsed = await asyncio.to_thread(parse_workbook, path, params, batch.file_sha256)
+            parsed = await asyncio.to_thread(
+                parse_workbook, path, params, batch.file_sha256, filename=batch.filename
+            )
         except InvalidWorkbook as exc:
             add_errors(db, batch, [file_error(str(exc))])
             finish(batch, Status.FAILED)
@@ -84,6 +86,18 @@ async def prepare(sessions: async_sessionmaker[AsyncSession], batch_id: UUID, pa
 
         batch.total_rows = parsed.total_rows
         add_errors(db, batch, parsed.errors)
+        if params.import_type is ImportType.SNAPSHOT:
+            for error in parsed.errors:
+                if error.row_number:
+                    logger.warning(
+                        "Ошибка среза %s, файл %r, лист %r, строка %d, код КЦР %r: %r",
+                        batch.id,
+                        batch.filename,
+                        error.sheet,
+                        error.row_number,
+                        error.kcr_code,
+                        error.reason,
+                    )
         if not parsed.rows:
             if not parsed.errors:
                 add_errors(db, batch, [file_error("Книга не содержит строк для импорта")])
