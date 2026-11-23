@@ -430,6 +430,8 @@ textarea { resize: vertical; min-height: 86px; }
 .form-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
 .report-result { border-top: 1px solid var(--line); margin-top: 25px; padding-top: 12px; }
 .report-actions { display: flex; justify-content: flex-end; margin-block: 14px 25px; }
+.import-errors table { min-inline-size: 32rem; }
+.import-errors td { overflow-wrap: anywhere; }
 .access-state { margin-top: clamp(30px,17vh,160px); }
 @media (max-width: 1190px) { :root { --rail: 226px; --gutter: 24px; } .side-rail { padding: 20px 16px; } }
 @media (max-width: 850px) {

@@ -216,6 +216,13 @@ export type TakeResponse = {
   assigned_at: string;
 };
 
+export type ImportErrorRow = {
+  sheet: string;
+  row_number: number;
+  kcr_code: string | null;
+  reason: string;
+};
+
 export type ImportBatch = {
   id: string;
   uploaded_by: string;
@@ -224,6 +231,7 @@ export type ImportBatch = {
   total_rows: number;
   success_count: number;
   error_count: number;
+  error_log?: ImportErrorRow[];
   created_at: string;
 } & (
   | { import_type: "REGISTRY" }

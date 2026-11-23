@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { newRequestId, queryString, readSession, request } from '@/lib/api';
 import { includeImport, readImportHistory, rememberImport } from '@/lib/import-history';
-import type { ImportBatch, User, UserListResponse, Role } from '@/lib/contracts';
+import type { ImportBatch, ImportErrorRow, User, UserListResponse, Role } from '@/lib/contracts';
 import { DateField } from './date-field';
 import { displayDate, Feedback, Pager, QuarterInput, quarterName, quarterPattern, useAction, useResource } from './api-ui';
 import { Badge, ConfirmActions, EmptyState, Metrics, Modal, PageHeader } from './presentation';
@@ -175,6 +175,34 @@ function UploadForm() {
   </>;
 }
 
+function ImportErrors({ errors }: { errors: ImportErrorRow[] }) {
+  const pageSize = 20;
+  const [requestedPage, setPage] = useState(1);
+  const page = Math.min(requestedPage, Math.ceil(errors.length / pageSize));
+  const offset = (page - 1) * pageSize;
+
+  return <>
+    <div className="section-header"><h3 id="import-errors-heading">Ошибки импорта</h3></div>
+    <div className="table-wrap import-errors" role="region" aria-labelledby="import-errors-heading" tabIndex={0}>
+      <table aria-labelledby="import-errors-heading">
+        <thead><tr>
+          <th scope="col">Лист</th>
+          <th scope="col">Строка</th>
+          <th scope="col">Код КЦР</th>
+          <th scope="col">Причина</th>
+        </tr></thead>
+        <tbody>{errors.slice(offset, offset + pageSize).map((error, index) => <tr key={offset + index}>
+          <td>{error.sheet || '—'}</td>
+          <td>{error.row_number || '—'}</td>
+          <td>{error.kcr_code ?? '—'}</td>
+          <td>{error.reason}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {errors.length > pageSize && <Pager page={page} pageSize={pageSize} total={errors.length} onChange={setPage} />}
+  </>;
+}
+
 function ImportReports() {
   const router = useRouter();
   const batchId = useSearchParams().get('batch') || '';
@@ -187,6 +215,7 @@ function ImportReports() {
   const operations = useRef<Record<string, string>>({});
   const report = useResource<ImportBatch>(batchId ? `/imports/${encodeURIComponent(batchId)}` : null, revision, true);
   const batch = report.data;
+  const errors = batch?.error_log ?? [];
   const processing = batch?.status === 'PROCESSING';
   const showRollback = !!batch && batch.id === rollbackId;
   const id = draft.batch === batchId ? draft.value : batchId;
@@ -248,6 +277,7 @@ function ImportReports() {
           <button type="button" className="button secondary" aria-haspopup="dialog" disabled={action.busy || report.loading}
             onClick={() => { action.reset(); setRollbackId(batch.id); }}>Откатить пакет</button>
         </div>}
+        {!processing && errors.length > 0 && <ImportErrors key={batch.id} errors={errors} />}
         <Modal open={showRollback} title="Откатить пакет?" description="Система проверит, что это последний применённый пакет."
           busy={action.busy} onClose={() => { setRollbackId(null); action.reset(); }}>
           <dl className="dialog-details">
