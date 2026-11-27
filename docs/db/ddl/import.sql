@@ -80,12 +80,26 @@ CREATE TABLE import_errors (
     sheet      TEXT        NOT NULL,   -- имя листа («1 кв 2026»)
     row_number INTEGER     NOT NULL,
     kcr_code   TEXT,                  -- если код удалось прочитать
-    reason     TEXT        NOT NULL   -- «нет Кода КЦР», «дубликат в листе», «код вне реестра», «составной период», «дробное значение»
+    reason     TEXT        NOT NULL,  -- «нет Кода КЦР», «дубликат в листе», «код вне реестра», «составной период», «дробное значение»
+    recorded_at TIMESTAMPTZ DEFAULT clock_timestamp()  -- NULL у строк до появления outbox
 );
 
 CREATE INDEX idx_import_errors_batch ON import_errors (batch_id);
 
 COMMENT ON TABLE import_errors IS 'Отсеянные строки файла. Основа виджета скачивания .xlsx с ошибками (spec.md §4.1).';
+
+CREATE TABLE import_errors_outbox (
+    source_error_id BIGINT PRIMARY KEY,
+    payload         TEXT NOT NULL,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    delivered_at    TIMESTAMPTZ,
+    rejected_status INTEGER
+);
+
+CREATE INDEX idx_import_errors_outbox_pending
+    ON import_errors_outbox (next_attempt_at, source_error_id)
+    WHERE delivered_at IS NULL AND rejected_status IS NULL;
 
 CREATE TABLE import_observations (
     fingerprint TEXT NOT NULL,

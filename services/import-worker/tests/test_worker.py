@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import json
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
+from itertools import count
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -17,7 +19,7 @@ from import_worker import broker, consumer, operator_work
 from import_worker.broker import Job
 from import_worker.clients import fingerprint
 from import_worker.config import Settings
-from import_worker.database import ImportBatch, ImportRollback, OperatorDelivery
+from import_worker.database import ImportBatch, ImportError, ImportRollback, OperatorDelivery
 from import_worker.models import ImportParameters, ParsedImport, Status
 
 
@@ -45,6 +47,16 @@ def batch(db: AsyncMock, settings: Settings, xlsx: WorkbookFactory) -> ImportBat
     db.get.return_value = batch
     db.scalar.return_value = None
     db.scalars.return_value = []
+    error_ids = count(1)
+
+    async def flush() -> None:
+        for call in db.add_all.call_args_list:
+            for row in call.args[0]:
+                if isinstance(row, ImportError) and row.id is None:
+                    row.id = next(error_ids)
+                    row.recorded_at = datetime.now(UTC)
+
+    db.flush.side_effect = flush
     return batch
 
 
@@ -115,7 +127,7 @@ async def test_retries_same_batch_after_lost_clients_response(
     assert {"selected_quarter", "snapshot_date"}.isdisjoint(requests[0])
     assert [item["client"]["kcr_code"] for item in requests[0]["items"]] == ["001", "002"]
     assert (batch.total_rows, batch.success_count, batch.error_count) == (2, 1, 1)
-    error = db.add_all.call_args.args[0][0]
+    error = db.add_all.call_args_list[0].args[0][0]
     assert (error.sheet, error.row_number, error.kcr_code) == ("Реестр", 3, "002")
     db.scalars.assert_not_awaited()
     assert batch.apply_payload is None and batch.clients_applied_at is not None
@@ -172,7 +184,7 @@ async def test_duplicate_observations_check_current_registry(
     assert batch.success_count == 2 - len(errors)
     assert batch.status == (Status.FAILED if clients_removed else Status.COMPLETED)
     if clients_removed:
-        logged = db.add_all.call_args.args[0]
+        logged = db.add_all.call_args_list[0].args[0]
         assert [(row.sheet, row.row_number, row.kcr_code) for row in logged] == [
             ("Срез", 2, "001"),
             ("Срез", 3, "002"),
@@ -224,7 +236,7 @@ async def test_changed_upload_fails_before_calling_clients(
     message.ack.assert_awaited_once()
     clients.post.assert_not_awaited()
     assert batch.status == Status.FAILED and batch.error_count == 1
-    assert db.add_all.call_args.args[0][0].row_number == 0
+    assert db.add_all.call_args_list[0].args[0][0].row_number == 0
     assert not path.exists()
 
 
@@ -248,6 +260,34 @@ async def test_publish_marks_batch_only_after_broker_ack(
     db.scalar.return_value = None
     assert not await broker.publish_one(sessions, channel)
     assert publish.await_count == 2
+
+
+async def test_worker_runs_history_sender_until_consumer_exits(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = replace(settings, errors_history_url="http://errors-history:8000")
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def send_errors(_sessions, client):
+        assert (client.base_url.scheme, client.base_url.host, client.base_url.port) == (
+            "http",
+            "errors-history",
+            8000,
+        )
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    async def consume(*_args):
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+    monkeypatch.setattr(consumer, "deliver_errors", send_errors)
+    monkeypatch.setattr(consumer, "consume", consume)
+    await consumer.run(settings)
+    assert stopped.is_set()
 
 
 @pytest.mark.parametrize("publisher", [True, False])

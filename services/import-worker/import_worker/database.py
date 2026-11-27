@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from uuid import UUID
 
@@ -46,6 +47,22 @@ class ImportError(Base):
     row_number: Mapped[int]
     kcr_code: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+
+class ImportErrorDelivery(Base):
+    __tablename__ = "import_errors_outbox"
+
+    source_error_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    payload: Mapped[str] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    attempt_count: Mapped[int] = mapped_column(server_default=text("0"))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_status: Mapped[int | None]
 
 
 class ImportObservation(Base):
@@ -133,8 +150,26 @@ async def report(db: AsyncSession, batch: ImportBatch) -> Batch:
     return result
 
 
-def add_errors(db: AsyncSession, batch: ImportBatch, errors: list[ImportErrorRow]) -> None:
-    db.add_all([ImportError(batch_id=batch.id, **row.model_dump()) for row in errors])
+async def add_errors(db: AsyncSession, batch: ImportBatch, errors: list[ImportErrorRow]) -> None:
+    if not errors:
+        return
+    rows = [ImportError(batch_id=batch.id, **error.model_dump()) for error in errors]
+    db.add_all(rows)
+    await db.flush()
+
+    deliveries = []
+    for row, error in zip(rows, errors, strict=True):
+        assert row.recorded_at is not None
+        event = {
+            "source_error_id": row.id,
+            "batch_id": str(batch.id),
+            "import_type": batch.import_type,
+            **error.model_dump(mode="json"),
+            "recorded_at": row.recorded_at.isoformat(),
+        }
+        payload = json.dumps({"errors": [event]}, ensure_ascii=False, separators=(",", ":"))
+        deliveries.append(ImportErrorDelivery(source_error_id=row.id, payload=payload))
+    db.add_all(deliveries)
     batch.error_count += len(errors)
 
 
