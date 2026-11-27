@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Контур КЦР — Публичное API (внешний контур)
-  version: 1.9.0
+  version: 1.10.0
   summary: Единое внешнее API системы «Контур КЦР» через Gateway / Identity Service.
   description: 'Актуальные правила — spec.md 1.8 и ADR-0002 (уточнения пользователя от 05.11.2026).
 
@@ -19,7 +19,7 @@ info:
     Rollback только последнего пакета; удаление клиента очищает его работу; удаление квартала сохраняет остальные
     кварталы и общую историю.
 
-    ИИ использует облачный API стороннего провайдера; конкретные функции отложены до отдельного обсуждения.
+    ИИ использует облачный API стороннего провайдера; операции ассистента только на чтение (ADR-0022, spec.md §3.4).
 
 
     Публичные операции требуют Bearer JWT; ADMIN управляет импортом/удалением, OPERATOR работает в пуле.
@@ -39,7 +39,12 @@ info:
 
     Уточнение 17.11.2026: публикация пула обзвона доступна администратору через публичные маршруты
     PUT /api/v1/pool/publication и PUT /api/v1/clients/{kcr_code}/publication; опубликованный пул читается
-    через GET /api/v1/pool (spec.md §3.3, «Публикация списка на обзвон»).'
+    через GET /api/v1/pool (spec.md §3.3, «Публикация списка на обзвон»).
+
+
+    Уточнение 27.11.2026 (ADR-0022): операции ассистента согласованы как только чтение — сводка перед звонком,
+    чат по клиенту потоком UI message stream и отбор словами для ADMIN. Ассистент не меняет этапы, статусы,
+    назначения и состав обзвона.'
 servers:
 - url: https://{host}
   description: Единая внешняя точка входа (nginx → Gateway / Identity).
@@ -59,7 +64,7 @@ tags:
 - name: OperatorWork
   description: Рабочее место оператора. Проксируется в Operator Work Service.
 - name: Assistant
-  description: Облачный ИИ; операции являются предложениями до согласования функций.
+  description: ИИ-помощник по данным сервиса (сервис ai-assistent); только чтение, ответы опираются на факты сервиса (ADR-0022).
 security:
 - bearerAuth: []
 # Область видимости клиентских операций для OPERATOR — ADR-0014 и ADR-0018.
@@ -828,9 +833,11 @@ paths:
       - Assistant
       operationId: getAssistantSummary
       x-operator-visibility: current-published
-      summary: Сводка «Контекст перед звонком» [Функции не согласованы]
-      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
-        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
+      summary: Сводка «Контекст перед звонком»
+      description: 'Сводка из 5–7 пунктов по фактам сервиса: непереданные документы и их периоды, изменение к прошлому
+        срезу, какой по счёту предстоит звонок, когда звонили в прошлый раз, что и к какому сроку обещал клиент и
+        выполнены ли обещания. Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются
+        из контекста.'
       x-roles:
       - ADMIN
       - OPERATOR
@@ -845,15 +852,29 @@ paths:
                 $ref: '#/components/schemas/AssistantSummaryResponse'
         '404':
           $ref: '#/components/responses/NotFound'
-      x-status: proposal-pending-ai-scope
+        '503':
+          description: 'ASSISTANT_UNAVAILABLE: облачный провайдер или внутренний сервис недоступен; повторить позже.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/assistant/filter-query:
     post:
       tags:
       - Assistant
       operationId: assistantFilterQuery
-      summary: Отбор словами [Функции не согласованы]
-      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
-        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
+      summary: Приоритетный список клиентов на обзвон по запросу словами
+      description: 'Критерии запроса переводятся в фильтры реестра (`GET /api/v1/clients`); отбор выполняет Clients
+        Service, а не модель. Условия без фильтра в реестре — исключение признака и наличие ответственного — применяет
+        сервис ассистента. Модель формулирует причину попадания клиента только по фактам отобранной записи.
+
+
+        `criteria` возвращает применённые условия, `not_applied` — условия запроса, которые отбор не учёл. Список
+        ничего не публикует: передача операторам остаётся отдельным действием администратора.
+
+
+        Если критерии не определены, операция отвечает `422 INPUT_REQUIRED` с вопросом и формами; запрос повторяется
+        с ответом. Удалённые данные исключаются из контекста.'
       x-roles:
       - ADMIN
       requestBody:
@@ -863,10 +884,11 @@ paths:
             schema:
               $ref: '#/components/schemas/FilterQueryRequest'
             example:
-              query: Не VIP, непереданных >25%, без изменений
+              query: Не VIP, непереданных >25%, без изменений, ещё не в работе
+              limit: 200
       responses:
         '200':
-          description: Подобранные клиенты с причинами соответствия.
+          description: Отобранные клиенты с причинами соответствия.
           content:
             application/json:
               schema:
@@ -880,36 +902,95 @@ paths:
               example:
                 code: INVALID_QUERY
                 message: Не удалось разобрать текст запроса
-      x-status: proposal-pending-ai-scope
-  /api/v1/assistant/chat:
+        '422':
+          description: 'INPUT_REQUIRED: критерии не определены, нужен ответ пользователя. В `details.requests` —
+            формы запроса на ввод.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'ASSISTANT_UNAVAILABLE: облачный провайдер или внутренний сервис недоступен; повторить позже.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/assistant/chat/{kcr_code}:
     post:
       tags:
       - Assistant
       operationId: assistantChat
-      summary: Вопрос по карточке клиента [Функции не согласованы]
-      description: Предложение API; конкретная функция и её приёмочные критерии отложены до отдельного обсуждения.
-        Модель вызывается через облачный API стороннего провайдера. Удалённые данные исключаются из контекста.
+      x-operator-visibility: current-published
+      summary: Вопрос о состоянии и динамике клиента
+      description: 'Ответ на вопрос о текущем состоянии клиента и динамике изменения статуса передачи документов за
+        выбранный период. Ответ передаётся потоком по протоколу UI message stream (AI SDK): тело — Server-Sent Events,
+        каждая строка `data:` несёт часть ответа в JSON, поток завершается маркером `data: [DONE]`.
+
+
+        Части потока: `text-start`, `text-delta`, `text-end` — текст ответа; `start-step`, `finish-step`, `finish` —
+        границы шагов и сообщения; `tool-input-*` и `tool-output-available` — вызовы инструментов чтения и их
+        результаты; `error` — ошибка.
+
+
+        `data-event-references` — в `data` массив ссылок на записи хроники и наблюдений журнала, на которых основан
+        ответ; может быть пустым.
+
+
+        Запрос на ввод (MCP input required): если период не определён, ассистент возвращает вызов клиентского
+        инструмента `request_input` без результата — в `input` один `InputRequest`. Клиент показывает форму по
+        `requested_schema` и передаёт `InputResponse` как результат этого вызова в следующем запросе; сервис
+        повторяет вызов инструмента с ответом. При `decline` и `cancel` ассистент отвечает без недостающих данных.
+
+
+        Ответ основан только на фактах сервиса; при нехватке данных ассистент прямо сообщает об этом. Удалённые
+        данные исключаются из контекста.'
       x-roles:
       - ADMIN
+      - OPERATOR
+      parameters:
+      - $ref: '#/components/parameters/KcrCode'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ChatRequest'
-            example:
-              kcr_code: 6671-0042
-              message: Обещал ли клиент передать оригиналы и когда?
       responses:
         '200':
-          description: Ответ ассистента со ссылками на события.
+          description: Поток ответа по протоколу UI message stream.
+          headers:
+            x-vercel-ai-ui-message-stream:
+              required: true
+              schema:
+                type: string
+                const: v1
+              description: Версия протокола потока.
+            cache-control:
+              required: true
+              schema:
+                type: string
+                const: no-cache
+            x-accel-buffering:
+              required: true
+              schema:
+                type: string
+                const: 'no'
+              description: Запрет буферизации для nginx.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Строки Server-Sent Events с частями ответа.
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: 'ASSISTANT_UNAVAILABLE: облачный провайдер или внутренний сервис недоступен; повторить позже.'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-      x-status: proposal-pending-ai-scope
+                $ref: '#/components/schemas/Error'
   /api/v1/imports:
     post:
       tags:
@@ -2325,12 +2406,72 @@ components:
       properties:
         query:
           type: string
+          minLength: 1
+          maxLength: 2000
           description: Запрос на естественном языке.
           example: Не VIP, непереданных >25%, без изменений
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Максимальное число клиентов в списке — объём выборки под возможности операторов. По умолчанию
+            применяется настройка сервиса.
+          example: 200
+    SelectionCriteria:
+      type: object
+      description: Применённые условия отбора. Имена полей совпадают с параметрами `GET /api/v1/clients`;
+        `exclude_tags` и `assignment` применяет сервис ассистента.
+      additionalProperties: false
+      properties:
+        quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал сравнения с предшествующим.
+        work_quarter:
+          type: string
+          pattern: ^\d{4}_Q[1-4]$
+          description: Квартал обзвона.
+        dynamics:
+          $ref: '#/components/schemas/Dynamics'
+        duration:
+          $ref: '#/components/schemas/Duration'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          description: Признаки, которые клиент должен иметь.
+        exclude_tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          description: Признаки, которых у клиента не должно быть.
+        assignment:
+          type: string
+          enum:
+          - FREE
+          - ASSIGNED
+          description: Наличие активного ответственного в текущем опубликованном цикле.
+        min_unsubmitted_documents:
+          type: integer
+          minimum: 0
+        max_unsubmitted_documents:
+          type: integer
+          minimum: 0
+        min_unsubmitted_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        max_unsubmitted_percent:
+          type: number
+          minimum: 0
+          maximum: 100
     FilterQueryResponse:
       type: object
       required:
       - items
+      - total
+      - criteria
+      - not_applied
       properties:
         items:
           type: array
@@ -2344,23 +2485,90 @@ components:
                 type: string
               reason:
                 type: string
-                description: Текстовая причина соответствия запросу.
+                description: Причина попадания в список по фактам отобранной записи.
                 example: Не VIP, непереданных 32%, динамика NO_CHANGE
+        total:
+          type: integer
+          minimum: 0
+          description: Число клиентов, подходящих под применённые условия, до ограничения `limit`.
+        criteria:
+          $ref: '#/components/schemas/SelectionCriteria'
+        not_applied:
+          type: array
+          items:
+            type: string
+          description: Условия запроса, которые отбор не учёл; может быть пустым.
+          example:
+          - обещали передать до конца месяца
+    UIMessage:
+      type: object
+      description: Сообщение диалога в формате AI SDK UI message.
+      required:
+      - id
+      - role
+      - parts
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum:
+          - user
+          - assistant
+        parts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            description: 'Часть сообщения: текст, вызов инструмента или результат инструмента. Состав частей
+              определяется протоколом AI SDK.'
     ChatRequest:
       type: object
       required:
-      - kcr_code
-      - message
+      - messages
       properties:
-        kcr_code:
+        messages:
+          type: array
+          minItems: 1
+          description: История диалога; последнее сообщение задаёт новый вопрос или результат клиентского инструмента.
+          items:
+            $ref: '#/components/schemas/UIMessage'
+    InputRequest:
+      type: object
+      description: Запрос на ввод — сообщение и схема полей формы.
+      required:
+      - key
+      - message
+      - requested_schema
+      properties:
+        key:
           type: string
-          description: Клиент, по которому задаётся вопрос.
+          description: Имя запрашиваемого данного; совпадает с именем поля в `requested_schema`.
         message:
           type: string
-          minLength: 1
+          description: Вопрос пользователю.
+        requested_schema:
+          type: object
+          additionalProperties: true
+          description: Плоская JSON Schema из примитивных полей формы.
+    InputResponse:
+      type: object
+      required:
+      - action
+      properties:
+        action:
+          type: string
+          enum:
+          - accept
+          - decline
+          - cancel
+        content:
+          type: object
+          additionalProperties: true
+          description: Значения полей формы по `requested_schema`; только при `accept`.
     EventReference:
       type: object
-      description: Ссылка на событие, на котором основан ответ (`spec.md` §3.4).
+      description: Ссылка на запись хроники или наблюдение журнала, на которой основан ответ (`spec.md` §3.4).
       required:
       - event_id
       - event_date
@@ -2371,21 +2579,11 @@ components:
         event_date:
           type: string
           format: date-time
-          description: Дата события (`historical_event_date`, если заполнена, иначе `created_at`).
-    ChatResponse:
-      type: object
-      required:
-      - answer
-      - event_references
-      properties:
-        answer:
+          description: 'Дата записи: для события хроники — `occurred_at`, для наблюдения журнала — дата среза.'
+        quarter:
           type: string
-          description: Ответ строго на основе контекста БД по клиенту.
-        event_references:
-          type: array
-          items:
-            $ref: '#/components/schemas/EventReference'
-          description: Обязательные ссылки на даты событий; может быть пустым.
+          pattern: ^\d{4}_Q[1-4]$
+          description: Исходный квартал наблюдения журнала; для события хроники отсутствует.
     RecoveryCommand:
       type: object
       additionalProperties: false
