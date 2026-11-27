@@ -246,6 +246,21 @@ export type AssistantSummaryResponse = {
 
 export type FilterQueryRequest = {
   query: string;
+  limit?: number;
+};
+
+export type SelectionCriteria = {
+  quarter?: string;
+  work_quarter?: string;
+  dynamics?: Dynamics;
+  duration?: Duration;
+  tags?: (Tag)[];
+  exclude_tags?: (Tag)[];
+  assignment?: "FREE" | "ASSIGNED";
+  min_unsubmitted_documents?: number;
+  max_unsubmitted_documents?: number;
+  min_unsubmitted_percent?: number;
+  max_unsubmitted_percent?: number;
 };
 
 export type FilterQueryResponse = {
@@ -253,21 +268,37 @@ export type FilterQueryResponse = {
   kcr_code: string;
   reason: string;
 })[];
+  total: number;
+  criteria: SelectionCriteria;
+  not_applied: (string)[];
+};
+
+// UIMessage of the public API: shape of the AI SDK UI message protocol.
+export type AssistantUIMessage = {
+  id: string;
+  role: "user" | "assistant";
+  parts: (Record<string, unknown> & { type: string })[];
 };
 
 export type ChatRequest = {
-  kcr_code: string;
+  messages: (AssistantUIMessage)[];
+};
+
+export type InputRequest = {
+  key: string;
   message: string;
+  requested_schema: Record<string, unknown>;
+};
+
+export type InputResponse = {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
 };
 
 export type EventReference = {
   event_id: string;
   event_date: string;
-};
-
-export type ChatResponse = {
-  answer: string;
-  event_references: (EventReference)[];
+  quarter?: string;
 };
 
 export type RecoveryCommand = {
