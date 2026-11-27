@@ -1,5 +1,6 @@
  - Сначала читай spec.md и docs/adr/
- - Микросервисы на Python: Assistant service, Operator Work Service, Import Worker, Clients Service, Client History Service
+ - Микросервисы на Python: Operator Work Service, Import Worker, Clients Service, Client History Service
+ - ИИ-помощник ai-assistent: TypeScript (Vercel AI SDK, MCP TypeScript SDK v2), только чтение — docs/adr/0022-ai-assistent-typescript-mcp.md
  - Микросервисы на Go: Gateway/Identity
  - Архитектура взаимодействия сервиса на C4 Model L2 в docs/c4-l2-container-diagram.html
  - API-спеки (OpenAPI 3.1): публичный контур — docs/api/public-api.yaml, внутренние контракты микросервисов — docs/api/internal/ (по одному файлу на сервис)
