@@ -1,0 +1,6 @@
+# Build output of `npm run build` (src/** -> dist/**).
+dist/
+*.tsbuildinfo
+
+# Local environment: copy .env.example and adjust; never commit real keys.
+.env
