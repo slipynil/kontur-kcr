@@ -18,3 +18,16 @@ it('reads the internal Gateway address at runtime', () => {
   process.env.GATEWAY_INTERNAL_URL = 'http://replacement:9000';
   expect(proxy(request).headers.get('x-middleware-rewrite')).toBe('http://replacement:9000/api/v1/auth/login');
 });
+
+it('leaves the chat to its streaming route handler instead of rewriting', () => {
+  const response = proxy(new NextRequest('http://localhost:3000/api/v1/assistant/chat/6671-0042', { method: 'POST' }));
+  expect(response.headers.get('x-middleware-rewrite')).toBeNull();
+  expect(response.headers.get('x-middleware-next')).toBe('1');
+});
+
+it.each([['GET', '/api/v1/assistant/summary/6671-0042'], ['POST', '/api/v1/assistant/filter-query'], ['POST', '/api/v1/assistant/chat']])(
+  'keeps the rewrite for %s %s', (method, path) => {
+    const response = proxy(new NextRequest(`http://localhost:3000${path}`, { method }));
+    expect(response.headers.get('x-middleware-rewrite')).toBe(`http://127.0.0.1:8080${path}`);
+  },
+);
