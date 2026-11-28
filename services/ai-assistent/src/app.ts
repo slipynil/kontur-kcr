@@ -3,6 +3,7 @@ import type { Config } from './config.js';
 import { createLogger, type Logger } from './log.js';
 import { HTTP_HOST, closeServer, createHttpServer, listen } from './http/server.js';
 import { healthRoute } from './http/routes.js';
+import { createMcpServer, MCP_HOST } from './mcp.js';
 
 /** Upper bound of a graceful shutdown; connections still open are dropped afterwards. */
 export const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -26,13 +27,24 @@ export interface AppDependencies {
 export function createApp(config: Config, deps: AppDependencies = {}): App {
   const logger = deps.logger ?? createLogger({ level: config.log.level });
   const httpServer = createHttpServer({ logger, routes: [healthRoute()] });
+  let mcp: Awaited<ReturnType<typeof createMcpServer>> | undefined;
   let stopping = false;
 
   return {
     config,
     logger,
     async start() {
+      mcp = await createMcpServer(config);
+      if (stopping) { await mcp.close(); return; }
+      await listen(mcp.server, MCP_HOST, config.mcpPort);
+      if (stopping) { await closeServer(mcp.server, SHUTDOWN_TIMEOUT_MS); await mcp.close(); return; }
+      try {
       await listen(httpServer, HTTP_HOST, config.port);
+      } catch (error) {
+        await closeServer(mcp.server, SHUTDOWN_TIMEOUT_MS);
+        await mcp.close();
+        throw error;
+      }
       if (!httpServer.listening) {
         if (stopping) {
           // `stop()` closed the socket before it could bind.
@@ -54,6 +66,7 @@ export function createApp(config: Config, deps: AppDependencies = {}): App {
     async stop() {
       stopping = true;
       await closeServer(httpServer, SHUTDOWN_TIMEOUT_MS);
+      if (mcp) { await closeServer(mcp.server, SHUTDOWN_TIMEOUT_MS); await mcp.close(); }
       logger.info('http server stopped');
     },
     httpAddress() {

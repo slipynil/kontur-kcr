@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { LOG_LEVELS, type LogLevel } from './log.js';
+import type { UpstreamConfig } from './upstreams.js';
 
 export const SERVICE_NAME = 'ai-assistent';
 
@@ -9,6 +10,8 @@ export const DEFAULT_PORT = 8000;
 export const DEFAULT_MCP_PORT = 8001;
 
 export interface Config {
+  readonly upstreams: UpstreamConfig;
+  readonly provider: { readonly baseURL?: string; readonly apiKey?: string; readonly model?: string };
   /** Port of the public HTTP server (`0.0.0.0`). */
   readonly port: number;
   /** Port of the embedded MCP server on `127.0.0.1`. */
@@ -48,6 +51,13 @@ const logLevelSchema = z.preprocess(
 
 /** Environment variables of the service; object keys are the variable names. */
 const schema = z.object({
+  CLIENTS_ENDPOINT: z.url().default('http://clients:8000'),
+  OPERATOR_WORK_ENDPOINT: z.url().default('http://operator-work:8000'),
+  CLIENT_HISTORY_ENDPOINT: z.url().default('http://client-history:8000'),
+  ASSISTANT_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1).max(300000).default(10000),
+  ASSISTANT_PROVIDER_BASE_URL: z.url().optional(),
+  ASSISTANT_PROVIDER_API_KEY: z.string().optional(),
+  ASSISTANT_MODEL: z.string().optional(),
   ASSISTANT_PORT: portSchema.default(DEFAULT_PORT),
   ASSISTANT_MCP_PORT: portSchema.default(DEFAULT_MCP_PORT),
   AI_ASSISTENT_LOG_LEVEL: logLevelSchema.default('info'),
@@ -79,7 +89,18 @@ export function parseConfig(env: Readonly<Record<string, string | undefined>>): 
     );
   }
   const value = result.data;
+  for (const variable of ['CLIENTS_ENDPOINT', 'OPERATOR_WORK_ENDPOINT', 'CLIENT_HISTORY_ENDPOINT', 'ASSISTANT_PROVIDER_BASE_URL'] as const) {
+    const raw = value[variable];
+    if (raw && (!['http:', 'https:'].includes(new URL(raw).protocol) || new URL(raw).username || new URL(raw).password || new URL(raw).search || new URL(raw).hash)) {
+      throw new ConfigError([{ variable, message: 'Expected an HTTP(S) URL without credentials, query or fragment' }]);
+    }
+  }
   return Object.freeze({
+    upstreams: Object.freeze({ clients: value.CLIENTS_ENDPOINT.replace(/\/$/, ''),
+      operatorWork: value.OPERATOR_WORK_ENDPOINT.replace(/\/$/, ''),
+      clientHistory: value.CLIENT_HISTORY_ENDPOINT.replace(/\/$/, ''), timeoutMs: value.ASSISTANT_UPSTREAM_TIMEOUT_MS }),
+    provider: Object.freeze({ baseURL: value.ASSISTANT_PROVIDER_BASE_URL,
+      apiKey: value.ASSISTANT_PROVIDER_API_KEY, model: value.ASSISTANT_MODEL }),
     port: value.ASSISTANT_PORT,
     mcpPort: value.ASSISTANT_MCP_PORT,
     log: Object.freeze({ level: value.AI_ASSISTENT_LOG_LEVEL }),

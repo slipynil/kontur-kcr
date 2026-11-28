@@ -22,6 +22,8 @@ function issuesOf(env: Record<string, string>): ConfigError['issues'] {
 describe('parseConfig', () => {
   it('applies the documented defaults when nothing is set', () => {
     expect(parseConfig({})).toEqual({
+      upstreams: { clients: 'http://clients:8000', operatorWork: 'http://operator-work:8000', clientHistory: 'http://client-history:8000', timeoutMs: 10000 },
+      provider: { baseURL: undefined, apiKey: undefined, model: undefined },
       port: DEFAULT_PORT,
       mcpPort: DEFAULT_MCP_PORT,
       log: { level: 'info' },
@@ -33,11 +35,12 @@ describe('parseConfig', () => {
   it('reads explicit values', () => {
     expect(
       parseConfig({ ASSISTANT_PORT: ' 9000 ', ASSISTANT_MCP_PORT: '9001', AI_ASSISTENT_LOG_LEVEL: 'WARN' }),
-    ).toEqual({ port: 9000, mcpPort: 9001, log: { level: 'warn' } });
+    ).toEqual({ ...parseConfig({}), port: 9000, mcpPort: 9001, log: { level: 'warn' } });
   });
 
   it('treats blank values as unset', () => {
     expect(parseConfig({ ASSISTANT_PORT: '   ', AI_ASSISTENT_LOG_LEVEL: '' })).toEqual({
+      ...parseConfig({}),
       port: DEFAULT_PORT,
       mcpPort: DEFAULT_MCP_PORT,
       log: { level: 'info' },
@@ -98,6 +101,8 @@ describe('parseConfig', () => {
   });
 
   it('lists its variables under the names the README documents', () => {
-    expect(CONFIG_VARIABLES).toEqual(['ASSISTANT_PORT', 'ASSISTANT_MCP_PORT', 'AI_ASSISTENT_LOG_LEVEL']);
+    expect(CONFIG_VARIABLES).toEqual(['CLIENTS_ENDPOINT', 'OPERATOR_WORK_ENDPOINT', 'CLIENT_HISTORY_ENDPOINT',
+      'ASSISTANT_UPSTREAM_TIMEOUT_MS', 'ASSISTANT_PROVIDER_BASE_URL', 'ASSISTANT_PROVIDER_API_KEY', 'ASSISTANT_MODEL',
+      'ASSISTANT_PORT', 'ASSISTANT_MCP_PORT', 'AI_ASSISTENT_LOG_LEVEL']);
   });
 });

@@ -30,11 +30,12 @@ describe('runUntilShutdown', () => {
       poll();
     });
     expect((await request(`http://127.0.0.1:${portOf(app)}/healthz`)).status).toBe(200);
+    log.lines.length = 0;
 
     signals.fire('SIGTERM');
     await expect(run).resolves.toBe(0);
     expect(app.httpAddress()).toBeNull();
-    expect(log.lines.map((line) => [line.msg, line.signal]).slice(1)).toEqual([
+    expect(log.lines.map((line) => [line.msg, line.signal])).toEqual([
       ['received signal, shutting down', 'SIGTERM'],
       ['http server stopped', undefined],
       ['service stopped', undefined],

@@ -110,12 +110,13 @@ describe('logger', () => {
 
   it('writes to stdout by default', () => {
     const write = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    let written: string[] = [];
     try {
       createLogger({ level: 'error' }).error('to stdout', { code: 'X' });
+      written = write.mock.calls.map(([chunk]) => String(chunk));
     } finally {
       write.mockRestore();
     }
-    const written = write.mock.calls.map(([chunk]) => String(chunk));
     expect(written).toHaveLength(1);
     const line = JSON.parse(written[0] ?? '') as LogLine;
     expect(line).toMatchObject({ level: 'error', msg: 'to stdout', code: 'X' });

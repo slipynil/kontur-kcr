@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { Config } from '../src/config.js';
+import { parseConfig } from '../src/config.js';
 import type { SignalSource } from '../src/lifecycle.js';
 import { createLogger, type Logger, type LoggerSink, type LogLevel } from '../src/log.js';
 
@@ -56,6 +57,7 @@ export async function request(url: string, init: RequestInit = {}): Promise<Http
 /** Minimal valid configuration for tests: ephemeral ports on both listeners. */
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return Object.freeze({
+    ...parseConfig({}),
     port: 0,
     mcpPort: 0,
     log: Object.freeze({ level: 'info' as const }),
